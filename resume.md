@@ -1,7 +1,7 @@
 # Resume: porting the freesynd-enhanced features to syndicate-plus
 
 Where the work stands, for the next session. Everything is committed locally on `main`; nothing is pushed
-(the remote is Onur BUYUKCAGLAR's repo; never push). Last commit: `baa31b6` "Steadier motion and squad numbers".
+(the remote is Onur BUYUKCAGLAR's repo; never push). See `git log` for the last commit.
 
 ## Ground rules from the user
 
@@ -68,23 +68,18 @@ Group 4 so far, the renderer (`src/game/render.c`, fresh code, 99.7% the same pi
   12 px, holding 0.4 s when not found. The selected agents' numbers blink yellow/red: that is the game's own blink
   (irregular because the game draws ~10 times a second).
 
-## Proposed next (the user asked, answer given, waiting for "go ahead")
+## Done: steady simulation (our clock drives the mission's ticks)
 
-**Steady simulation: our clock drives the game's mission ticks.** Findings: each tick is a fixed step; the game
-paces its loop by counting VGA retraces (making retrace waits return at once ran it at ~38 ticks/s, so the pace
-is the retrace waits; a "latch missed retraces" fix gave 27/s: both reverted, gameplay speed must not change). The
-loop is tick, tick, then draw + wait ~85 ms. Plan:
-1. Find the mission main loop around the mission-tick function (`mission_tick` in the GameAddrs table), its
-   retrace wait and the city drawing it calls.
-2. In missions replace that wait with a fixed clock: one tick every 50 ms (the measured average; make it a
-   setting). Same updates in the same order; only even spacing.
-3. Skip the game's own city drawing in missions (ours replaces it); keep anything that changes state (animation
-   counters, sound, scanner); side panel and scanner still drawn by the game.
-4. Playback then needs ~1 tick behind (~50 ms), no stalls; the 60 fps cap can be lifted for 120/144 Hz.
-5. Prove unchanged gameplay: tick spacing and speed measured headless before and after; the same scripted mission
-   on the virtual clock compared; 18 tests pass. Then the American Revolt addresses.
-Risk: something in the draw step that changes state. Note: the squad-number detection reads the game's picture,
-so if its city drawing is skipped the numbers need another source (the game's selection state in memory).
+The mission loop is `0x4001e0` (Syndicate); each pass is one tick, and its wait is in `frame_wait` (`0x408810`,
+American Revolt `0x408700`): it waits until the game's timer interrupt (handler `0x417a90`) has counted `speed`
+(`0x445304`, 7; the game's keys change it 3..12) interrupts in `wait_count` (`0x450b50`), but skips the wait when
+the count is still 0, so on a fast CPU the ticks came in pairs. Timers: Syndicate ~72 Hz (10 ticks/s as designed,
+~20 with the pairs), American Revolt 120 Hz (17/s). `on_frame_wait` (additions.c) now starts each tick on a steady
+clock, `speed` 120ths of a second apart (17.1 ticks/s: an agent without mods walks 15 units a tick = 256 units/s,
+FreeSynd's speed; the user chose to match FreeSynd), waiting with `rt_poll()` so frames and sound go on, then sets
+the count so the game's own wait passes. Snapshots are stamped with the slot time; the playback runs 2 ticks behind.
+Measured: 100% of frames within 10% of the same speed, 0 stalls (was 66%, 7). `SYND_PACE=off` gives the game's own
+pace. Addresses for all six programs are in the GameAddrs table (frame_wait, speed, wait_count).
 
 ## Still to do after that
 

@@ -245,16 +245,15 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
 }
 
 /* ---- where things are: a snapshot at each tick of the game, drawn on a steady clock ----
- * The game's ticks come unevenly: two at once (one retrace apart) then nothing for ~85 ms, and their rate wanders
- * (19 to 23 a second, a few ticks ahead or behind over seconds).  Drawing between the two last ones as they come
- * makes things rush and stop.  Instead a playback clock goes through the snapshots at the ticks' rate over the last
- * four seconds, about PLAY_BEHIND ticks behind the newest (enough not to run out in the gaps), and is brought back
- * to it by running a little faster or slower (PLAY_GAIN for each tick off, its average over a second; at most
- * PLAY_ADJUST), which the eye does not see. */
+ * The ticks start on a steady clock (additions.c, on_frame_wait) and each snapshot is given the time its tick
+ * started, but it is taken later, after the game's drawing (0-40 ms).  A playback clock goes through the snapshots
+ * at the ticks' rate over the last four seconds, PLAY_BEHIND ticks behind the newest (enough to cover that delay),
+ * and is brought back to it by running a little faster or slower (PLAY_GAIN for each tick off, its average over a
+ * second; at most PLAY_ADJUST), which the eye does not see.  Measured: every frame within 2% of the same speed. */
 #define NB_OBJS (256 + 64 + 400 + 512 + 256)
 #define TELEPORT 512   /* a move of more than 2 tiles in one tick is not drawn in between */
 #define NB_HIST 16
-#define PLAY_BEHIND 3.5
+#define PLAY_BEHIND 2.0
 #define PLAY_ADJUST 0.1
 #define PLAY_GAIN 0.03
 #define PLAY_FILTER_US 1000000.0

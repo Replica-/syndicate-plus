@@ -72,28 +72,38 @@ typedef struct GameAddrs {
     uint32_t colours;      /* (bytes, by company colour) the colours of the companies in a mission's palette */
     uint32_t data;         /* the pointer to HSPR's table, followed by the pointers to HFRA, HELE, the map and HBLK
                             * (render.c) at data_offsets */
+    /* the pace of a mission */
+    uint32_t frame_wait;   /* the mission loop's wait for the next tick (the timer counted `speed` interrupts) */
+    uint32_t speed;        /* (32 bits) the interrupts a tick waits for (7; the game's keys change it, 3..12) */
+    uint32_t wait_count;   /* (8 bits) the interrupts counted since the last tick */
     int ar;                /* American Revolt: its pointers are further apart */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
-     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u, 0},
+     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u,
+     0x408810u, 0x445304u, 0x450b50u, 0},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu, 0},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu,
+     0x408810u, 0x442afcu, 0x44e348u, 0},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u, 0},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u,
+     0x408810u, 0x442b60u, 0x44e3acu, 0},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
-     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu, 1},
+     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu,
+     0x408700u, 0x4552ccu, 0x4662b1u, 1},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
-     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu, 1},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu,
+     0x408700u, 0x4529bcu, 0x4639a1u, 1},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
-     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u, 1},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u,
+     0x408700u, 0x452a24u, 0x463a09u, 1},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -1079,6 +1089,45 @@ static void watch_move_orders(void)
     }
 }
 
+/* ---- a steady pace: the mission's ticks on this program's clock ----
+ * The game waits in its mission loop (frame_wait) for its timer to count `speed` (7) interrupts since the last
+ * tick, but does not wait at all when none came yet: on a fast CPU a tick with no wait follows most ticks that
+ * waited, so the ticks come in pairs (~14 ms apart, then ~85 ms).  Syndicate's timer runs at ~72 a second (10 ticks
+ * a second as designed, ~20 with the pairs), American Revolt's at 120 (17 a second as designed).  Here each tick
+ * starts on a steady clock instead, `speed` 120ths of a second apart (17 a second: an agent without mods walks 15
+ * units a tick, 256 a second, as in FreeSynd), and the game's own wait is then passed at once.  The ticks do the
+ * same; only when they come changes.  SYND_PACE=off: the game's own pace. */
+#define PACE_HZ 120u
+static uint64_t g_pace_next; /* when the next tick starts */
+static uint64_t g_pace_slot; /* when the last one started (0: not paced) */
+static uint64_t g_pace_period;
+
+static int on_frame_wait(uint32_t addr)
+{
+    uint64_t now = host_time_us(), period;
+    int32_t n = (int32_t)RD32(g_addrs->speed);
+    const char *e = getenv("SYND_PACE");
+    (void)addr;
+    g_pace_slot = 0;
+    if (!in_mission() || (e != NULL && strcmp(e, "off") == 0)) return 0;
+    if (n < 1) n = 1;
+    if (n > 12) n = 12;
+    period = 1000000u * (uint64_t)n / PACE_HZ;
+    /* late (a pause, a slow tick): start again from now, no catching up */
+    if (g_pace_next == 0 || now > g_pace_next + period) g_pace_next = now;
+    while (now < g_pace_next && !host_should_quit()) {
+        uint64_t left = g_pace_next - now;
+        if (left > 1500u) host_sleep_us(left > 2500u ? 2000u : (uint32_t)(left - 500u));
+        rt_poll(); /* interrupts, frames and sound go on */
+        now = host_time_us();
+    }
+    g_pace_slot = g_pace_next;
+    g_pace_period = period;
+    g_pace_next += period;
+    WR8(g_addrs->wait_count, 0xFFu); /* the game's wait is over */
+    return 0;
+}
+
 static int on_mission_tick(uint32_t addr)
 {
     int slot = g_centre_slot;
@@ -1099,7 +1148,9 @@ static int on_mission_tick(uint32_t addr)
     g_tick_us = host_time_us();
     if (renderer_on()) {
         sync_camera();
-        render_tick(g_tick_us);
+        /* paced: the tick is the one that started on the last slot (the snapshot then has its exact time; it is
+         * taken later, after the game's drawing, which takes more or less time) */
+        render_tick(g_pace_slot != 0 && g_tick_us - g_pace_slot < 2 * g_pace_period ? g_pace_slot : g_tick_us);
     }
     watch_move_orders();
     watch_hits(0);
@@ -1150,5 +1201,6 @@ void additions_install(int game)
         render_set_addrs(&ra);
     }
     hook_add(g_addrs->mission_tick, on_mission_tick);
+    hook_add(g_addrs->frame_wait, on_frame_wait);
     hook_add(g_addrs->draw_scanner, on_draw_scanner);
 }
