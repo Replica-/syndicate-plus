@@ -792,34 +792,36 @@ static uint32_t hat_colour(int ped)
     return c == g_overlay_pal[HAT_COLOUR] ? 0 : c;
 }
 
+/* the pointer table's current entry (HPOINTER: 6 bytes, pointer to the pixels, width, height): from the pointer
+ * to HSPR's table, +0x10 in Syndicate (0x445324), +0x14 in American Revolt */
+#define POINTER_CURRENT(ar) ((ar) ? 0x14u : 0x10u)
 #define LABEL_SPRITE 1070  /* the numbers 1 to 4 of the squad: sprites 1070 + 2 x slot in yellow, + 1 in red */
 #define LABEL_DX (-2)      /* the top left of their coloured pixels from the agent's feet (as the game draws them) */
 #define LABEL_DY (-40)
 #define LABEL_RED 14       /* their colours in the game's palette: red, yellow (the selected agents) */
 #define LABEL_YELLOW 11
 
-/* the city between the game's last two ticks; the game's pointer is taken from its frame (the pixels where its
- * frame and the city as it is now differ, around it) */
+/* the city on the playback clock (render.c), with the pointer and the squad's numbers over it */
 static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb)
 {
-    static uint32_t game[640 * 480], now_city[640 * 480];
     uint32_t company;
     int x, y, mx, my, slot;
     g_overlay_pal = pal;
     render_hat_colour = hat_colour;
-    memcpy(game, rgb, sizeof game);
-    render_city(now_city, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, 0);
     for (y = VIEW_TOP; y < VIEW_BOTTOM; y++)
         for (x = VIEW_LEFT; x < 640; x++) rgb[y * 640 + x] = 0;
     render_city(rgb, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, rt_display_us);
-    /* the pointer, where the game has it (in its 400 lines from line 40 of the frame); it drew it there up to a
-     * frame of its own ago, so a little around */
-    mx = (int16_t)RD16(g_addrs->data + (g_addrs->ar ? 0x84u : 0x7cu));
-    my = (int16_t)RD16(g_addrs->data + (g_addrs->ar ? 0x86u : 0x7eu)) + VIEW_TOP;
-    for (y = my - 24; y < my + 40; y++)
-        for (x = mx - 24; x < mx + 40; x++)
-            if (x >= VIEW_LEFT && x < 640 && y >= VIEW_TOP && y < VIEW_BOTTOM && game[y * 640 + x] != now_city[y * 640 + x])
-                rgb[y * 640 + x] = game[y * 640 + x];
+    /* the pointer: the game's (the entry of its pointer table it uses), drawn where the mouse is now, as the game
+     * draws it (its top left corner 16 pixels up and left of the mouse; the game's mouse runs over its 400 lines
+     * from line 40 of the frame); over the side panel and the bars the game's own picture shows it */
+    mouse_get(&mx, &my, NULL);
+    my += VIEW_TOP;
+    {
+        uint32_t entry = RD32(g_addrs->data + POINTER_CURRENT(g_addrs->ar));
+        if (entry != 0)
+            render_image(rgb, 640, 480, pal, RD32(entry), M[entry + 4u], M[entry + 5u], mx - 16, my - 16, VIEW_LEFT,
+                         VIEW_TOP, 640, VIEW_BOTTOM);
+    }
     /* the numbers over the agents of the squad: drawn again over each agent where the smooth city has it, with the
      * game's own sprites; whether the game shows a number, and in yellow (the selected agents) or red, is read from
      * its picture where it drew it */

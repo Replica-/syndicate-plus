@@ -284,6 +284,24 @@ static int32_t lerp(int32_t a, int32_t b, int t) /* t 0..256 */
     return a + (b - a) * t / 256;
 }
 
+void render_image(uint32_t *rgb, int w, int h, const uint32_t *pal, uint32_t pixels, int iw, int ih, int x, int y, int x0,
+                  int y0, int x1, int y1)
+{
+    Target t = {rgb, w, h, x0, y0, x1, y1, pal};
+    static uint8_t img[64 * 64];
+    int row, blk, stride = (iw + 7) / 8;
+    if (iw <= 0 || ih <= 0 || iw > 64 || ih > 64) return;
+    for (row = 0; row < ih; row++)
+        for (blk = 0; blk < stride; blk++) {
+            uint8_t block[8];
+            const uint8_t *b = M + pixels + (uint32_t)((row * stride + blk) * 5);
+            int i;
+            decode_bits(b, b + 1, 1, block);
+            for (i = 0; i < 8 && blk * 8 + i < iw; i++) img[row * iw + blk * 8 + i] = block[i];
+        }
+    blit(&t, img, iw, ih, x, y, 0, 0);
+}
+
 int render_sprite_ink(int id, int *x, int *y)
 {
     int sw, sh, i, j, mx = 9999, my = 9999;
