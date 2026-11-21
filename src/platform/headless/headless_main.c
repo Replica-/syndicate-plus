@@ -137,6 +137,9 @@ int host_canvas_width(void)
  * that picture (the city drawn by the GPU under the frame) */
 static int g_gpu_w, g_gpu_h, g_gpu_on, g_frame_city;
 static uint32_t *g_gpu_pixels;
+/* --screenshot MS:FILE (with --gpu): the picture captured as the window's screenshots are, at MS */
+static uint32_t g_shot_ms;
+static const char *g_shot_file;
 
 int host_city_gpu(void)
 {
@@ -207,7 +210,17 @@ static const uint32_t *gpu_picture(const uint32_t *pixels, int w, int h, int *ow
     r.right = r.left + pw;
     r.bottom = r.top + ph;
     if (h == 240) w = 320, h = 200;
+    if (g_shot_file != NULL && (host_time_us() - g_start_us) / 1000u >= g_shot_ms) gpu_capture();
     gpu_present(pixels, w, h, r, 1);
+    {
+        uint32_t *shot;
+        int sw, sh;
+        if (gpu_capture_take(&shot, &sw, &sh)) {
+            if (!record_screenshot(g_shot_file, shot, sw, sh)) fprintf(stderr, "cannot write %s\n", g_shot_file);
+            free(shot);
+            g_shot_file = NULL;
+        }
+    }
     if (!gpu_read(g_gpu_pixels)) return pixels;
     *ow = g_gpu_w;
     *oh = g_gpu_h;
@@ -443,6 +456,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--cycles")) rt_set_cpu_speed(atoi(v)), i++;
         else if (!strcmp(a, "--gpu") && sscanf(v, "%dx%d", &g_gpu_w, &g_gpu_h) == 2) i++;
 #ifdef _WIN32
+        else if (!strcmp(a, "--screenshot") && strchr(v, ':')) g_shot_ms = (uint32_t)atoi(v), g_shot_file = strchr(v, ':') + 1, i++;
         else if (!strcmp(a, "--time")) gpu_set_time(!strcmp(v, "night") ? 2 : !strcmp(v, "dusk") ? 1 : 0), i++;
 #endif
         else if (!strcmp(a, "--wide")) g_canvas_w = atoi(v) < 640 ? 640 : atoi(v) > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : atoi(v) & ~1, i++;

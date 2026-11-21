@@ -461,7 +461,9 @@ void record_audio(const int16_t *frames, size_t count)
 
 int record_screenshot(const char *path, const uint32_t *pixels, int w, int h)
 {
-    const int ow = 1280, oh = 960;
+    /* the game's frames twice their size (4:3 whatever their resolution; a wide mission frame keeps its shape); a
+     * picture as the window shows it (larger) as it is */
+    int ow = w <= 640 ? 1280 : h == 480 ? w * 2 : w, oh = w <= 640 || h == 480 ? 960 : h;
     uint8_t *rgb = (uint8_t *)malloc((size_t)ow * oh * 3);
     int x, y, ok;
     if (rgb == NULL || w <= 0 || h <= 0) {

@@ -51,6 +51,10 @@ static int g_tex_w, g_tex_h, g_city_vb_cap;
 static int g_win_w, g_win_h;
 /* offscreen (gpu_init(NULL): the headless tests): the picture is drawn into a texture and read back */
 static ID3D11Texture2D *g_off, *g_off_read;
+/* a capture (a screenshot) of the next picture */
+static volatile LONG g_capture_wanted;
+static uint32_t *g_capture;
+static int g_capture_w, g_capture_h;
 
 static const char k_shader[] =
     "cbuffer C : register(b0) { float2 tex_size; float2 scale; float sharp; float3 pad; };\n"
@@ -894,6 +898,55 @@ static void draw_city(RECT dst, int fw, int fh)
     }
 }
 
+/* the picture's rectangle `dst`, before it is shown */
+static void capture(RECT dst)
+{
+    ID3D11Texture2D *src = g_off, *read = NULL;
+    D3D11_TEXTURE2D_DESC td;
+    D3D11_MAPPED_SUBRESOURCE map;
+    int w = dst.right - dst.left, h = dst.bottom - dst.top, y;
+    if (w <= 0 || h <= 0) return;
+    if (g_swap != NULL && FAILED(IDXGISwapChain1_GetBuffer(g_swap, 0, &IID_ID3D11Texture2D, (void **)&src))) return;
+    ID3D11Texture2D_GetDesc(src, &td);
+    td.Usage = D3D11_USAGE_STAGING;
+    td.BindFlags = 0;
+    td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    td.MiscFlags = 0;
+    if (SUCCEEDED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &read))) {
+        ID3D11DeviceContext_CopyResource(g_ctx, (ID3D11Resource *)read, (ID3D11Resource *)src);
+        if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)read, 0, D3D11_MAP_READ, 0, &map))) {
+            free(g_capture);
+            g_capture = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)w * (size_t)h);
+            if (g_capture != NULL) {
+                for (y = 0; y < h; y++)
+                    memcpy(g_capture + (size_t)y * w,
+                           (const uint8_t *)map.pData + (size_t)(dst.top + y) * map.RowPitch + (size_t)dst.left * 4u,
+                           (size_t)w * 4u);
+                g_capture_w = w;
+                g_capture_h = h;
+            }
+            ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)read, 0);
+        }
+        RELEASE(read);
+    }
+    if (g_swap != NULL) RELEASE(src);
+}
+
+void gpu_capture(void)
+{
+    InterlockedExchange(&g_capture_wanted, 1);
+}
+
+int gpu_capture_take(uint32_t **pixels, int *w, int *h)
+{
+    if (g_capture == NULL) return 0;
+    *pixels = g_capture;
+    *w = g_capture_w;
+    *h = g_capture_h;
+    g_capture = NULL;
+    return 1;
+}
+
 void gpu_present(const uint32_t *pixels, int w, int h, RECT dst, int sharp)
 {
     static const float black[4] = {0, 0, 0, 1};
@@ -938,6 +991,10 @@ void gpu_present(const uint32_t *pixels, int w, int h, RECT dst, int sharp)
         ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_cb);
         ID3D11DeviceContext_OMSetBlendState(g_ctx, g_blend, NULL, 0xFFFFFFFFu);
         ID3D11DeviceContext_Draw(g_ctx, 3, 0);
+    }
+    if (g_capture_wanted) {
+        InterlockedExchange(&g_capture_wanted, 0);
+        capture(dst);
     }
     if (g_swap != NULL)
         IDXGISwapChain1_Present(g_swap, 1, 0);

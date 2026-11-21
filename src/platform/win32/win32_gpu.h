@@ -13,6 +13,9 @@
 int gpu_init(HWND hwnd);
 /* offscreen: the last picture presented (w x h of gpu_resize, 0x??RRGGBB); 0 if there is none */
 int gpu_read(uint32_t *pixels);
+/* the next picture presented is kept (its rectangle `dst`): gpu_capture_take then gives it (malloc'd, 0x??RRGGBB) */
+void gpu_capture(void);
+int gpu_capture_take(uint32_t **pixels, int *w, int *h);
 void gpu_shutdown(void);
 /* the window's client area changed size */
 void gpu_resize(int w, int h);

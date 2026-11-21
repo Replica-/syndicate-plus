@@ -288,6 +288,28 @@ def wide_zoom(ctx):
 
 
 @test()
+def gpu_night(ctx):
+    """(Windows) the picture as Direct3D makes it, offscreen: at night the city is darker than by day but its lamps
+    still light it, and a screenshot is the picture as the window shows it"""
+    if os.name != 'nt':
+        return
+    shot = os.path.join(ctx.dir, 'shot.png')
+    day = ctx.run('day', 27.5, start=SYN, extra=['--gpu', '1280x720', '--time', 'day'], inputs=TO_MISSION)
+    night = ctx.run('night', 27.5, start=SYN, extra=['--gpu', '1280x720', '--time', 'night', '--screenshot', '27000:' + shot],
+                    inputs=TO_MISSION)
+    d, n = day.at(27000), night.at(27000)
+    check((d.w, d.h) == (1280, 720), 'the GPU picture is not 1280 x 720: ' + name(d))
+
+    def light(f, x0, y0, x1, y1):
+        return sum(colour_mean(f, x0, y0, x1, y1)) / 3
+    city = (0.3, 0.2, 0.95, 0.9)
+    check(light(n, *city) < light(d, *city) * 0.6, 'night is not darker than day: %s %s' % (name(d), name(n)))
+    # the lit pads (top left of the city) are much brighter than the dark ground
+    check(light(n, 0.25, 0.1, 0.45, 0.3) > light(n, 0.6, 0.5, 0.9, 0.8) * 2, 'no lamps lit at night: ' + name(n))
+    check(os.path.exists(shot), 'no screenshot ' + shot)
+
+
+@test()
 def save_load(ctx):
     """save a game named ABC in line 4 (1-3 hold the auto saves), then load it in a new run: the funds stored in the
     save show up"""

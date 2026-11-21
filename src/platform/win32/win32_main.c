@@ -84,16 +84,14 @@ static SRWLOCK g_frame_lock = SRWLOCK_INIT;
 static uint32_t g_frame[FRAME_MAX_W * FRAME_MAX_H];
 static int g_fw, g_fh;
 static int g_crt_on;
-static volatile LONG g_shot_wanted; /* a screenshot: the next frame drawn whole by the CPU */
 static int g_frame_city;            /* the frame being made has the city on the GPU */
 #define WM_APP_SHOT (WM_APP + 7)
-static void screenshot_of(const uint32_t *pixels, int w, int h);
 
-/* the city on the GPU: not while the frame must hold all of the picture (a video, a screenshot, the CRT filter) or
- * without Direct3D */
+/* the city on the GPU: not while the frame must hold all of the picture (a video, the CRT filter) or without
+ * Direct3D */
 int host_city_gpu(void)
 {
-    return g_gpu && !g_crt_on && !record_active() && !g_shot_wanted;
+    return g_gpu && !g_crt_on && !record_active();
 }
 
 void host_city_reset(void)
@@ -116,13 +114,7 @@ void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, 
 void host_present(const uint32_t *pixels, int w, int h)
 {
     if (w <= 0 || h <= 0 || w > FRAME_MAX_W || h > FRAME_MAX_H) return;
-    if (!g_frame_city) {
-        if (g_gpu) gpu_city_off();
-        if (g_shot_wanted) {
-            InterlockedExchange(&g_shot_wanted, 0);
-            screenshot_of(pixels, w, h);
-        }
-    }
+    if (!g_frame_city && g_gpu) gpu_city_off();
     g_frame_city = 0;
     AcquireSRWLockExclusive(&g_frame_lock);
     memcpy(g_frame, pixels, sizeof(uint32_t) * (size_t)(w * h));
@@ -236,6 +228,8 @@ static void gdi_image(HDC dc, const uint32_t *pixels, int w, int h, RECT r)
                   SRCCOPY);
 }
 
+static void save_capture(void);
+
 /* the picture on the GPU: the frame is copied out under the lock, which is released before the (vsync) present,
  * so the game thread never waits for the display */
 static void gpu_paint(HWND h)
@@ -254,6 +248,7 @@ static void gpu_paint(HWND h)
     if (w > 0) memcpy(copy, g_frame, sizeof(uint32_t) * (size_t)(w * hh));
     ReleaseSRWLockShared(&g_frame_lock);
     gpu_present(w > 0 ? copy : NULL, w, hh, r, 1);
+    save_capture();
 }
 
 static void paint(HWND h)
@@ -991,46 +986,53 @@ static void toggle_record(void)
     update_title();
 }
 
-/* the screenshot is taken of the next frame made by the CPU whole (the city on the GPU is not in the frame):
- * copied on the game thread, saved on the window's */
+/* a screenshot: with Direct3D the picture as it is shown (the window's resolution, the city lit), taken from the
+ * next picture drawn (save_capture); else the frame */
 static uint32_t g_shot[FRAME_MAX_W * FRAME_MAX_H];
 static int g_shot_w, g_shot_h;
 
-static void screenshot_of(const uint32_t *pixels, int w, int h)
-{
-    memcpy(g_shot, pixels, sizeof(uint32_t) * (size_t)(w * h));
-    g_shot_w = w;
-    g_shot_h = h;
-    if (g_hwnd != NULL) PostMessageW(g_hwnd, WM_APP_SHOT, 0, 0);
-}
-
 static void screenshot(void)
 {
-    if (!g_gpu) {
-        /* the frame is the whole picture */
-        AcquireSRWLockShared(&g_frame_lock);
-        if (g_fw > 0) memcpy(g_shot, g_frame, sizeof(uint32_t) * (size_t)(g_fw * g_fh));
-        g_shot_w = g_fw;
-        g_shot_h = g_fh;
-        ReleaseSRWLockShared(&g_frame_lock);
-        PostMessageW(g_hwnd, WM_APP_SHOT, 0, 0);
+    if (g_gpu) {
+        gpu_capture();
+        InvalidateRect(g_hwnd, NULL, FALSE);
         return;
     }
-    InterlockedExchange(&g_shot_wanted, 1);
+    AcquireSRWLockShared(&g_frame_lock);
+    if (g_fw > 0) memcpy(g_shot, g_frame, sizeof(uint32_t) * (size_t)(g_fw * g_fh));
+    g_shot_w = g_fw;
+    g_shot_h = g_fh;
+    ReleaseSRWLockShared(&g_frame_lock);
+    PostMessageW(g_hwnd, WM_APP_SHOT, 0, 0);
 }
 
-static void save_screenshot(void)
+static void save_png(const uint32_t *pixels, int w, int h)
 {
     char dir[MAX_PATH * 3], path[MAX_PATH * 3 + 64];
     SYSTEMTIME t;
-    int w = g_shot_w, h = g_shot_h;
-    const uint32_t *copy = g_shot;
-    if (w <= 0) return;
     media_dir(L"Screenshots", dir, (int)sizeof dir);
     GetLocalTime(&t);
     snprintf(path, sizeof path, "%s/syndicate_%04u%02u%02u_%02u%02u%02u_%03u.png", dir, t.wYear, t.wMonth, t.wDay,
              t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
-    if (record_screenshot(path, copy, w, h)) MessageBeep(MB_OK);
+    if (record_screenshot(path, pixels, w, h)) MessageBeep(MB_OK);
+}
+
+/* the picture captured by Direct3D, if one was asked for */
+static void save_capture(void)
+{
+    uint32_t *pixels;
+    int w, h;
+    if (!gpu_capture_take(&pixels, &w, &h)) return;
+    save_png(pixels, w, h);
+    free(pixels);
+}
+
+static void save_screenshot(void)
+{
+    int w = g_shot_w, h = g_shot_h;
+    const uint32_t *copy = g_shot;
+    if (w <= 0) return;
+    save_png(copy, w, h);
 }
 
 /* ==== the window ========================================================================================= */
