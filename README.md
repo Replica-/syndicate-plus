@@ -144,6 +144,13 @@ recorded as a video); `.vscode/`.  The tests run on that build with
 Started directly, the games need the sound card's arguments the launcher gives them, as in `SYND\SYND.INF`:
 `--start "SYNDICAT\MAIN.EXE /c0 /iirq7 /idma1 /iio220"` (the tests' `/s` plays without sound).
 
+### True colour and the GPU
+
+The game is shown in true colour on the GPU (Direct3D 11 on Windows): the core turns each frame of the original
+into 32-bit colour, this version draws its additions over it with any colour and transparency, and the window
+scales it with sharp bilinear filtering (every pixel of the game stays a sharp square, of the same size, at any
+window size), with vsync.  GDI is only used when Direct3D cannot start.
+
 ## Tests
 
     python3 tests/run_tests.py           # about 20 s to 1.5 minutes; --quick leaves out the full-length intro

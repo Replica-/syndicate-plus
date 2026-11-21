@@ -2,7 +2,8 @@
  * keyboard and the mouse and plays its sound.  The portable core (game_main) runs on its own thread; this file
  * is the UI thread.
  *
- * The window follows the system's colour preference (dark or light title bar and menus, changing at once when
+ * The picture is drawn on the GPU (Direct3D 11, win32_gpu.c), with GDI only when Direct3D cannot start.  The
+ * window follows the system's colour preference (dark or light title bar and menus, changing at once when
  * the preference changes); its system menu has "Full screen" (also Alt+Enter), "CRT scanlines" (also Alt+S;
  * off at first, remembered in Syndicate64.ini), the music and sound volumes (remembered), "Record video" (also
  * F12; an MP4 with the sound, made by ffmpeg, in the Videos folder beside the settings), "Screenshot" (also F11;
@@ -44,6 +45,7 @@
 #include "../../rt/host.h"
 #include "../../video/crt.h"
 #include "../../video/record.h"
+#include "win32_gpu.h"
 
 #define APP_CAPTIONW L"Syndicate Plus 64bit"
 #define APP_VERSIONW L"1.0.0"
@@ -71,6 +73,7 @@ static char g_game_dir_u8[1024], g_user_dir_u8[1024];
 static int g_minimized, g_modal;
 static int g_in_menu, g_clipped;
 static wchar_t g_ini[MAX_PATH * 2]; /* Syndicate64.ini: next to the program, else in %LOCALAPPDATA%/Syndicate64 */
+static int g_gpu; /* the picture is drawn with Direct3D 11 (win32_gpu.c); else with GDI */
 
 /* ==== the picture ======================================================================================= */
 #define FRAME_MAX_W 640
@@ -136,13 +139,12 @@ static void CALLBACK crt_work(PTP_CALLBACK_INSTANCE inst, PVOID ctx, PTP_WORK wo
     }
 }
 
-/* called with g_frame_lock held shared; on success it releases the lock, draws the filtered picture into `r`
- * and returns 1; otherwise returns 0 with the lock still held */
-static int crt_paint(HDC dc, RECT r)
+/* called with g_frame_lock held shared; on success it releases the lock, leaves the filtered picture of the size
+ * of `r` in g_crt_buf and returns 1; otherwise returns 0 with the lock still held */
+static int crt_filter(RECT r)
 {
     int dw = r.right - r.left, dh = r.bottom - r.top, n, i;
     size_t need = (size_t)dw * (size_t)dh;
-    BITMAPINFO bi;
     SYSTEM_INFO si;
     if (dw <= 0 || dh <= 0) return 0;
     if (g_crt == NULL && (g_crt = crt_create()) == NULL) return 0;
@@ -168,24 +170,56 @@ static int crt_paint(HDC dc, RECT r)
     }
     crt_work(NULL, NULL, NULL); /* this thread helps too */
     if (g_crt_work != NULL) WaitForThreadpoolWorkCallbacks(g_crt_work, FALSE);
+    return 1;
+}
+
+static void gdi_image(HDC dc, const uint32_t *pixels, int w, int h, RECT r)
+{
+    BITMAPINFO bi;
     memset(&bi, 0, sizeof bi);
     bi.bmiHeader.biSize = sizeof bi.bmiHeader;
-    bi.bmiHeader.biWidth = dw;
-    bi.bmiHeader.biHeight = -dh;
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
     bi.bmiHeader.biCompression = BI_RGB;
-    SetDIBitsToDevice(dc, r.left, r.top, (DWORD)dw, (DWORD)dh, 0, 0, 0, (UINT)dh, g_crt_buf, &bi, DIB_RGB_COLORS);
-    return 1;
+    SetStretchBltMode(dc, COLORONCOLOR);
+    StretchDIBits(dc, r.left, r.top, r.right - r.left, r.bottom - r.top, 0, 0, w, h, pixels, &bi, DIB_RGB_COLORS,
+                  SRCCOPY);
+}
+
+/* the picture on the GPU: the frame is copied out under the lock, which is released before the (vsync) present,
+ * so the game thread never waits for the display */
+static void gpu_paint(HWND h)
+{
+    static uint32_t copy[FRAME_MAX_W * FRAME_MAX_H];
+    RECT r = picture_rect(h);
+    int w, hh;
+    ValidateRect(h, NULL);
+    AcquireSRWLockShared(&g_frame_lock);
+    if (g_fw > 0 && g_crt_on && crt_filter(r)) { /* crt_filter released the lock */
+        gpu_present(g_crt_buf, r.right - r.left, r.bottom - r.top, r, 0);
+        return;
+    }
+    w = g_fw;
+    hh = g_fh;
+    if (w > 0) memcpy(copy, g_frame, sizeof(uint32_t) * (size_t)(w * hh));
+    ReleaseSRWLockShared(&g_frame_lock);
+    gpu_present(w > 0 ? copy : NULL, w, hh, r, 1);
 }
 
 static void paint(HWND h)
 {
     PAINTSTRUCT ps;
-    HDC dc = BeginPaint(h, &ps);
+    HDC dc;
     RECT c, r = picture_rect(h);
     HBRUSH black = (HBRUSH)GetStockObject(BLACK_BRUSH);
     RECT bar;
+    if (g_gpu) {
+        gpu_paint(h);
+        return;
+    }
+    dc = BeginPaint(h, &ps);
     GetClientRect(h, &c);
     /* the bars around the picture */
     bar = c;
@@ -203,23 +237,13 @@ static void paint(HWND h)
     bar.right = c.right;
     FillRect(dc, &bar, black);
     AcquireSRWLockShared(&g_frame_lock);
-    if (g_fw > 0 && g_crt_on && crt_paint(dc, r)) {
-        /* drawn (crt_paint released the lock) */
+    if (g_fw > 0 && g_crt_on && crt_filter(r)) { /* crt_filter released the lock */
+        gdi_image(dc, g_crt_buf, r.right - r.left, r.bottom - r.top, r);
         EndPaint(h, &ps);
         return;
     }
     if (g_fw > 0) {
-        BITMAPINFO bi;
-        memset(&bi, 0, sizeof bi);
-        bi.bmiHeader.biSize = sizeof bi.bmiHeader;
-        bi.bmiHeader.biWidth = g_fw;
-        bi.bmiHeader.biHeight = -g_fh;
-        bi.bmiHeader.biPlanes = 1;
-        bi.bmiHeader.biBitCount = 32;
-        bi.bmiHeader.biCompression = BI_RGB;
-        SetStretchBltMode(dc, COLORONCOLOR);
-        StretchDIBits(dc, r.left, r.top, r.right - r.left, r.bottom - r.top, 0, 0, g_fw, g_fh, g_frame, &bi,
-                      DIB_RGB_COLORS, SRCCOPY);
+        gdi_image(dc, g_frame, g_fw, g_fh, r);
     } else {
         FillRect(dc, &r, black);
     }
@@ -939,6 +963,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         return 0;
     case WM_SIZE:
         g_minimized = w == SIZE_MINIMIZED;
+        if (g_gpu && !g_minimized) gpu_resize(LOWORD(l), HIWORD(l));
         update_pause();
         InvalidateRect(h, NULL, FALSE);
         return 0;
@@ -1113,6 +1138,8 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         ExitProcess(3);
         return 0;
     case WM_DESTROY:
+        if (g_gpu) gpu_shutdown();
+        g_gpu = 0;
         if (g_clipped) ClipCursor(NULL); /* a clip outlives the window that set it */
         g_clipped = 0;
         PostQuitMessage(0);
@@ -1386,6 +1413,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, APP_CAPTIONW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                              wr.right - wr.left, wr.bottom - wr.top, NULL, NULL, inst, NULL);
     if (g_hwnd == NULL) return 1;
+    g_gpu = gpu_init(g_hwnd);
     ShowWindow(g_hwnd, show);
     UpdateWindow(g_hwnd);
     if (full) set_fullscreen(1);

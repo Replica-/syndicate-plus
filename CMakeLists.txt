@@ -94,9 +94,11 @@ if(WIN32)
   # the game: Syndicate64.exe (both games in one program)
   add_executable(syndicate64 WIN32
     src/platform/win32/win32_main.c
+    src/platform/win32/win32_gpu.c
     src/platform/win32/win32_sys.c
     res/syndicate64.rc)
-  target_link_libraries(syndicate64 PRIVATE syncore synvideo winmm dwmapi uxtheme shell32 ole32 advapi32 user32 gdi32)
+  target_link_libraries(syndicate64 PRIVATE syncore synvideo winmm dwmapi uxtheme shell32 ole32 advapi32 user32 gdi32
+                        d3d11 dxgi d3dcompiler dxguid)
   target_compile_definitions(syndicate64 PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
   set_target_properties(syndicate64 PROPERTIES OUTPUT_NAME Syndicate64)
   if(MSVC)
