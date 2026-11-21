@@ -42,6 +42,7 @@ void kbd_init(void)
 void rt_key_event(uint32_t scancode, int down)
 {
     scancode = game_key_filter(scancode, down);
+    if (scancode == 0) return; /* the game layer kept it */
     host_lock();
     if (scancode & 0xE000u) {
         if ((g_kq_tail + 1) % KQ != g_kq_head) {
@@ -310,6 +311,7 @@ void bios_int33(void)
         host_lock();
         mouse_get(&x, &y, &b);
         host_unlock();
+        game_mouse_filter(&x, &y);
         set_reg16(&R.ebx, b);
         set_reg16(&R.ecx, x);
         set_reg16(&R.edx, y);
@@ -329,16 +331,19 @@ void bios_int33(void)
         host_lock();
         set_reg16(&R.eax, g_mbuttons);
         if (ax == 5) {
+            x = g_press_x[i];
+            y = g_press_y[i];
             set_reg16(&R.ebx, g_press_count[i]);
-            set_reg16(&R.ecx, g_press_x[i]);
-            set_reg16(&R.edx, g_press_y[i]);
             g_press_count[i] = 0;
         } else {
+            x = g_rel_x[i];
+            y = g_rel_y[i];
             set_reg16(&R.ebx, g_release_count[i]);
-            set_reg16(&R.ecx, g_rel_x[i]);
-            set_reg16(&R.edx, g_rel_y[i]);
             g_release_count[i] = 0;
         }
+        game_mouse_filter(&x, &y);
+        set_reg16(&R.ecx, x);
+        set_reg16(&R.edx, y);
         host_unlock();
         return;
     case 0x0007:
@@ -417,6 +422,7 @@ int mouse_poll_handler(void)
     mouse_get(&x, &y, NULL);
     host_unlock();
     if (ev == 0) return 0;
+    game_mouse_filter(&x, &y);
     g_mickx += x - g_mh_lastx; /* as the motion counters: 1 mickey per pixel across, 2 down */
     g_micky += (y - g_mh_lasty) * 2;
     g_mh_lastx = x;

@@ -101,6 +101,16 @@ with the position (the sliding: the pose was read from the newest data while the
 shown unless bit 0 of its +0xa byte is set (the game's own rule, 0x40d528; the corpses: their byte left the list
 of values accepted); the playback clock is 1 tick behind (was 1.5). Corpses not checked on a real death.
 
+Inputs not on the game's clock (the user: "nor should the panning"): in missions the view is this program's
+(additions.c `move_view` every frame: arrows, WASD, the pointer within 2 px of an edge, 480 px/s, not beyond the
+game's camera limits at view + 0x1be32); the game never gets those keys; at each tick `sync_camera` gives the game
+the nearest camera (set_view); a camera the game moved itself by 3 steps or more (mission start) and the
+double-press centring make the view glide there (snapping within 2 units); `game_mouse_filter` (devices.c calls
+it for int 33h 3, 5, 6 and the event handler) moves the mouse position the game reads over the city by the
+difference between the view and its camera, so clicks land where they are seen (checked: the move marker lands
+under the click after a pan). Note: a downscaled screenshot of the dithered ground looks a different colour when
+the picture is shifted by a pixel (that was not a bug).
+
 ## Next: group 4, the new renderer (fresh MIT code)
 
 Plan: (1) read the game's decompressed data from memory: in English Syndicate the pointers are at `0x44535c` (map,

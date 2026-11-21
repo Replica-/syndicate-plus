@@ -216,6 +216,15 @@ static uint64_t g_last_tick_us, g_play_us;
 static double g_period_us = 50000.0; /* the ticks' average period */
 static double g_play = -1.0;     /* the playback clock, in ticks */
 static int32_t g_vx, g_vy;       /* the view of the frame being drawn */
+static int g_own_view;           /* render_set_view: the view is this program's, not the game's */
+static int32_t g_own_vx, g_own_vy;
+
+void render_set_view(int own, int32_t vx, int32_t vy)
+{
+    g_own_view = own;
+    g_own_vx = vx;
+    g_own_vy = vy;
+}
 
 static void read_view(int32_t *vx, int32_t *vy)
 {
@@ -403,8 +412,8 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     if (mx <= 0 || my <= 0 || mz <= 0 || mx > 256 || my > 256 || mz > 16) return;
     /* on the playback clock (now_us 0: as the game is now) */
     if (now_us != 0 && playback(now_us, &sa, &sb, &t256)) {
-        g_vx = lerp(sa->vx, sb->vx, t256);
-        g_vy = lerp(sa->vy, sb->vy, t256);
+        g_vx = g_own_view ? g_own_vx : lerp(sa->vx, sb->vx, t256);
+        g_vy = g_own_view ? g_own_vy : lerp(sa->vy, sb->vy, t256);
     } else {
         t256 = -1;
         read_view(&g_vx, &g_vy);

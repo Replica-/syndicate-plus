@@ -6,8 +6,10 @@
  * the player found in those lines is first moved to a free line further down.  A save the player makes in one of
  * the auto save lines goes to the first free line from the fourth on instead (none free: not saved).
  *
- * Keys in missions: W, A, S and D scroll the view as the arrow keys do; 1 to 4 select an agent (the game's own)
- * and pressed twice within 0.4 s centre the view on it.
+ * Keys in missions: the arrow keys and W, A, S, D (and the pointer at an edge of the screen) scroll the view at
+ * once, at every frame shown: the view is this program's, and the game's camera follows it at its ticks (the
+ * clicks on the city are moved by the difference, so they go where they are seen); 1 to 4 select an agent (the
+ * game's own) and pressed twice within 0.4 s centre the view on it.
  *
  * A hit sprays blood out of the person hit, away from the shooter.
  *
@@ -356,6 +358,7 @@ static void cheat_names(void)
 #define SC_D 0x20u
 
 static volatile uint64_t g_tick_us;   /* the last tick of a mission */
+static volatile int g_pan[4];         /* scroll keys held: left, right, up, down */
 static volatile int g_centre_slot;    /* 1-4: centre the view on that agent at the next tick */
 static uint64_t g_press_us[4];
 static uint8_t g_down[256], g_moved[256]; /* keys held; held keys that scroll in place of an arrow key */
@@ -369,7 +372,17 @@ uint32_t game_key_filter(uint32_t sc, int down)
 {
     uint32_t k = sc & 0xFFu;
     int was_down;
-    if (sc & 0xE000u) return sc;
+    if (sc & 0xE000u) {
+        /* the arrows (extended keys): this program's view too */
+        static uint8_t moved[256];
+        int dir = k == 0x4B ? 0 : k == 0x4D ? 1 : k == 0x48 ? 2 : k == 0x50 ? 3 : -1;
+        if (dir < 0) return sc;
+        if (down && !moved[k]) moved[k] = (uint8_t)in_mission();
+        if (!moved[k]) return sc;
+        if (!down) moved[k] = 0;
+        g_pan[dir] = down;
+        return 0;
+    }
     was_down = g_down[k];
     g_down[k] = (uint8_t)(down != 0);
     /* 1-4 pressed twice (not held) */
@@ -383,15 +396,124 @@ uint32_t game_key_filter(uint32_t sc, int down)
             g_press_us[slot] = now;
         }
     }
-    /* W, A, S, D: the arrow keys (a key pressed in a mission stays one until it is released) */
+    /* W, A, S, D and the arrows scroll this program's view (a key pressed in a mission does until it is released);
+     * the game does not get them */
     if (k == SC_W || k == SC_A || k == SC_S || k == SC_D) {
         if (down && !was_down) g_moved[k] = (uint8_t)in_mission();
         if (g_moved[k]) {
             if (!down) g_moved[k] = 0;
-            return k == SC_W ? 0xE048u : k == SC_A ? 0xE04Bu : k == SC_S ? 0xE050u : 0xE04Du;
+            g_pan[k == SC_A ? 0 : k == SC_D ? 1 : k == SC_W ? 2 : 3] = down;
+            return 0;
         }
     }
     return sc;
+}
+
+/* ---- the view: this program's in missions, the game's camera following it ---- */
+#define PAN_PX_S 480.0      /* scrolling speed, pixels of the city a second */
+#define EDGE_PX 2           /* the pointer this close to an edge of the screen scrolls */
+#define FOLLOW_UNITS 3      /* the game moved its camera this far itself (camera units): the view goes there */
+#define VIEW_LIMITS 0x1be32u /* from the view: the camera's limits (16 bits min x, min y, max x, max y) */
+
+static double g_view_x, g_view_y;     /* the view (world units) */
+static int g_view_on;                 /* set for this mission */
+static int32_t g_cam_set_x, g_cam_set_y; /* the camera this program gave the game last (camera units) */
+static double g_glide_x, g_glide_y;   /* where the view glides to (the game moved its camera itself) */
+static int g_gliding;
+static uint64_t g_view_us;
+
+static void game_camera(int32_t *x, int32_t *y)
+{
+    *x = (int16_t)RD16(g_addrs->view);
+    *y = (int16_t)RD16(g_addrs->view + 2u);
+}
+
+/* every frame: the keys held and the pointer at the edges move the view */
+static void move_view(void)
+{
+    uint64_t now = host_time_us();
+    double dt = g_view_us != 0 && now > g_view_us ? (double)(now - g_view_us) / 1e6 : 0.0, sx = 0, sy = 0;
+    int mx, my;
+    if (dt > 0.1) dt = 0.1;
+    g_view_us = now;
+    if (!g_view_on) return;
+    mouse_get(&mx, &my, NULL);
+    sx = (g_pan[1] || mx >= 639 - EDGE_PX ? 1 : 0) - (g_pan[0] || mx <= EDGE_PX ? 1 : 0);
+    sy = (g_pan[3] || my >= 399 - EDGE_PX ? 1 : 0) - (g_pan[2] || my <= EDGE_PX ? 1 : 0);
+    if (sx != 0 || sy != 0) {
+        /* screen right is world (+1, -1) at 1/4 px a unit, screen down (+1, +1) at 1/8 */
+        double px = sx * PAN_PX_S * dt, py = sy * PAN_PX_S * dt;
+        double nx = g_view_x + px * 2.0 + py * 4.0, ny = g_view_y - px * 2.0 + py * 4.0;
+        /* not beyond the game's limits for its camera (as the game stops scrolling there) */
+        int32_t cx = (int32_t)((nx + 64.0) / 128.0), cy = (int32_t)((ny + 64.0) / 128.0);
+        uint32_t lim = g_addrs->view + VIEW_LIMITS;
+        if (cx >= (int16_t)RD16(lim) && cx <= (int16_t)RD16(lim + 4u) && cy >= (int16_t)RD16(lim + 2u) &&
+            cy <= (int16_t)RD16(lim + 6u)) {
+            g_view_x = nx;
+            g_view_y = ny;
+        }
+        g_gliding = 0;
+    } else if (g_gliding) {
+        double k = dt * 12.0 > 1.0 ? 1.0 : dt * 12.0;
+        g_view_x += (g_glide_x - g_view_x) * k;
+        g_view_y += (g_glide_y - g_view_y) * k;
+        if (fabs(g_glide_x - g_view_x) < 2.0 && fabs(g_glide_y - g_view_y) < 2.0) {
+            g_view_x = g_glide_x; /* there: exactly where the game's camera is */
+            g_view_y = g_glide_y;
+            g_gliding = 0;
+        }
+    }
+    render_set_view(1, (int32_t)g_view_x, (int32_t)g_view_y);
+}
+
+/* at a tick: the game's camera follows the view (the nearest it can be); a camera the game moved itself (the start
+ * of a mission, centring on an agent) takes the view there */
+static void sync_camera(void)
+{
+    int32_t cx, cy;
+    uint32_t args[2];
+    game_camera(&cx, &cy);
+    if (!g_view_on) {
+        g_view_x = cx * 128.0;
+        g_view_y = cy * 128.0;
+        g_cam_set_x = cx;
+        g_cam_set_y = cy;
+        g_view_on = 1;
+        g_gliding = 0;
+        render_set_view(1, (int32_t)g_view_x, (int32_t)g_view_y);
+        return;
+    }
+    if (abs(cx - g_cam_set_x) >= FOLLOW_UNITS || abs(cy - g_cam_set_y) >= FOLLOW_UNITS) {
+        g_glide_x = cx * 128.0;
+        g_glide_y = cy * 128.0;
+        g_gliding = 1;
+        g_cam_set_x = cx;
+        g_cam_set_y = cy;
+        return;
+    }
+    args[0] = (uint32_t)(int32_t)((g_view_x + 64.0) / 128.0);
+    args[1] = (uint32_t)(int32_t)((g_view_y + 64.0) / 128.0);
+    if ((int32_t)args[0] != cx || (int32_t)args[1] != cy) guest_call(g_addrs->set_view, args, 2);
+    game_camera(&cx, &cy);
+    g_cam_set_x = cx;
+    g_cam_set_y = cy;
+}
+
+void game_mouse_filter(int *x, int *y)
+{
+    int32_t cx, cy;
+    double dx, dy;
+    if (!g_view_on || g_addrs == NULL || !in_mission() || *x < 128 /* the map's left edge */ || *y < 0 || *y >= 400) return;
+    /* a point of the city seen at x, y from the view is where the game's camera puts it this much further */
+    game_camera(&cx, &cy);
+    dx = g_view_x - cx * 128.0;
+    dy = g_view_y - cy * 128.0;
+    *x += (int)((dx - dy) / 8.0);
+    *y += (int)((dx + dy) / 16.0);
+    if (*x < 128) *x = 128;
+    if (*x > 639) *x = 639;
+    if (*y < 0) *y = 0;
+    if (*y > 399) *y = 399;
 }
 
 static void centre_on_agent(int slot)
@@ -405,6 +527,16 @@ static void centre_on_agent(int slot)
     args[0] = (uint32_t)(int16_t)(((int16_t)RD16(ped + PED_X) - 0xa00 - z) >> 7);
     args[1] = (uint32_t)(int16_t)(((int16_t)RD16(ped + PED_Y) - 0x200 - z) >> 7);
     guest_call(g_addrs->set_view, args, 2);
+    if (g_view_on) {
+        /* this program's view glides there */
+        int32_t cx, cy;
+        game_camera(&cx, &cy);
+        g_glide_x = cx * 128.0;
+        g_glide_y = cy * 128.0;
+        g_gliding = 1;
+        g_cam_set_x = cx;
+        g_cam_set_y = cy;
+    }
 }
 
 /* ---- drawing over the mission ---- */
@@ -808,6 +940,7 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
     int x, y, mx, my, slot;
     g_overlay_pal = pal;
     render_hat_colour = hat_colour;
+    move_view();
     for (y = VIEW_TOP; y < VIEW_BOTTOM; y++)
         for (x = VIEW_LEFT; x < 640; x++) rgb[y * 640 + x] = 0;
     render_city(rgb, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, rt_display_us);
@@ -916,9 +1049,14 @@ static int on_mission_tick(uint32_t addr)
         memset(g_drops, 0, sizeof g_drops);
         watch_hits(1);
         render_reset();
+        g_view_on = 0;
+        render_set_view(0, 0, 0);
     }
     g_tick_us = host_time_us();
-    if (renderer_on()) render_tick(g_tick_us);
+    if (renderer_on()) {
+        sync_camera();
+        render_tick(g_tick_us);
+    }
     watch_move_orders();
     watch_hits(0);
     if (slot) {

@@ -17,6 +17,8 @@ void render_set_addrs(const RenderAddrs *a);
  * is shown at that time on a steady playback clock about 1.5 ticks behind the game (render_tick), so that things
  * move smoothly and evenly at any frame rate */
 void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1, uint64_t now_us);
+/* the view to draw from (world units) instead of the game's (own: 1), so that it moves at once with the keys */
+void render_set_view(int own, int32_t vx, int32_t vy);
 /* a tick of the mission: where things are now */
 void render_tick(uint64_t now_us);
 /* a new mission: no tick before */
