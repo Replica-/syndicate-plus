@@ -131,6 +131,7 @@ static const uint8_t *tile(int id)
 
 /* ---- sprites: decoded when first drawn ---- */
 #define NB_SPRITES 4096
+static uint8_t g_hat_rows[NB_SPRITES]; /* the rows of a sprite with its hat; 0: it has none; 255: not known yet */
 static uint8_t *g_sprites[NB_SPRITES];
 static uint32_t g_sprites_at;
 
@@ -146,6 +147,7 @@ static const uint8_t *sprite(int id, int *w, int *h)
             g_sprites[i] = NULL;
         }
         g_sprites_at = rd32(P_SPRITE_TAB);
+        memset(g_hat_rows, 255, sizeof g_hat_rows);
         memset(g_defined, 0, sizeof g_defined);
         host_city_reset();
     }
@@ -307,35 +309,39 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
     }
 }
 
-/* `hat`: the colour of the hat: colour 6 in the frame's top HAT_ROWS rows (the head; what the agent holds uses
- * colour 6 too, lower) */
-#define HAT_ROWS 6
+/* `hat`: the colour of the hat: colour 6 of the sprites that are heads, whose colour 6 is all in their top
+ * HAT_ROWS rows (what the agents hold uses colour 6 too, anywhere in it) */
+#define HAT_ROWS 5
+
+static int hat_rows(int id, const uint8_t *s, int sw, int sh)
+{
+    if (id < 0 || id >= NB_SPRITES) return 0;
+    if (g_hat_rows[id] == 255) {
+        int x, y, top = -1, last = -1;
+        for (y = 0; y < sh; y++)
+            for (x = 0; x < sw; x++) {
+                uint8_t c = s[y * sw + x];
+                if (c == 255) continue;
+                if (top < 0) top = y;
+                if (c == HAT_INDEX) last = y;
+            }
+        g_hat_rows[id] = (uint8_t)(last >= 0 && last - top < HAT_ROWS ? last + 1 : 0);
+    }
+    return g_hat_rows[id];
+}
 static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, float fay, uint32_t hat)
 {
     uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), f = frames + (uint32_t)frame * 8u;
     uint32_t e = rd16(f);
-    int guard = 0, top = 32767;
-    if (hat != 0) {
-        /* the top of the frame */
-        uint32_t k = e;
-        for (guard = 0; guard <= 64; guard++) {
-            int oy = (int16_t)rd16(elements + k * 10u + 4u);
-            if (oy < top) top = oy;
-            k = rd16(elements + k * 10u + 8u);
-            if (k == 0) break;
-        }
-        guard = 0;
-    }
+    int guard = 0;
     for (;;) {
         uint32_t ea = elements + e * 10u;
         int sw, sh, id = rd16(ea) / 6, ox = (int16_t)rd16(ea + 2u), oy = (int16_t)rd16(ea + 4u);
         const uint8_t *s = sprite(id, &sw, &sh);
-        {
-            int rows = top + HAT_ROWS - oy; /* the element's rows in the hat's */
-            if (rows > 255) rows = 255;
-            if (s != NULL)
-                put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
-                    hat != 0 && rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
+        if (s != NULL) {
+            int rows = hat != 0 ? hat_rows(id, s, sw, sh) : 0;
+            put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
+                rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
         }
         e = rd16(ea + 8u);
         if (e == 0 || ++guard > 64) break;
@@ -807,23 +813,17 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
     h->colour = colour;
 }
 
-/* things that light up what is around them (as FreeSynd's): a shot's flash (the effects' list: lights and glows,
- * by day too), a car's headlights (ahead of it, the way it last moved, and its red rear lights) */
+/* things that light up what is around them (as FreeSynd's): a car's headlights (ahead of it, the way it last
+ * moved, and its red rear lights) */
 #define LIST_CARS 1
-#define LIST_EFFECTS 4
 #define LIST_STATICS 2
-#define FLASH_COLOUR 0xFFB050u
 #define HEADLIGHT_COLOUR 0xFFF5D7u
 #define REAR_LIGHT_COLOUR 0xFF281Eu
 
 static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_t vx, int32_t vy)
 {
     float fx, fy;
-    if (li == LIST_EFFECTS) {
-        project_f(x, y, z, &fx, &fy);
-        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy - 8.0f, 80, 80, FLASH_COLOUR);
-        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy - 8.0f, 12, 12, FLASH_COLOUR | HOST_LIGHT_GLOW);
-    } else if (li == LIST_CARS && i < 64) {
+    if (li == LIST_CARS && i < 64) {
         float d = sqrtf((float)vx * vx + (float)vy * vy);
         int k;
         if (d > 2.0f) {
@@ -1111,7 +1111,7 @@ int render_obj_dx = 128, render_obj_dy = 56;  /* a frame's anchor from the proje
 uint32_t (*render_hat_colour)(int ped);       /* the colour of an agent's hat (0: as drawn) */
 
 typedef struct Obj {
-    int key;      /* tile column (x + y * max x) */
+    int key;      /* the diagonal row of tiles it stands in (tile x + tile y) */
     int z;        /* the level it stands on */
     int x, y, zw; /* where it is drawn (world units) */
     uint32_t a;   /* its record */
@@ -1120,10 +1120,14 @@ typedef struct Obj {
     uint8_t glow; /* how it glows in the dark (HostCityQuad.glow) */
 } Obj;
 
+/* back to front: the diagonal row of tiles, the level, then the exact depth (x + y) and height */
 static int cmp_obj(const void *a, const void *b)
 {
     const Obj *p = (const Obj *)a, *q = (const Obj *)b;
-    return p->key != q->key ? p->key - q->key : p->z - q->z;
+    if (p->key != q->key) return p->key - q->key;
+    if (p->z != q->z) return p->z - q->z;
+    if (p->x + p->y != q->x + q->y) return (p->x + p->y) - (q->x + q->y);
+    return p->zw - q->zw;
 }
 
 /* the people's places in the frame last drawn */
@@ -1255,10 +1259,10 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                 project_f(x, y, z, &sfx, &sfy);
                 objs[nobj].glow = (uint8_t)static_lights(a, frame, sfx + (float)render_obj_dx, sfy + (float)render_obj_dy);
             }
-            if (t.gpu && (li == LIST_CARS || li == LIST_EFFECTS))
+            if (t.gpu && li == LIST_CARS)
                 object_lights(li, (int)i, x, y, z, t256 >= 0 ? sb->pos[n][0] - sa->pos[n][0] : 0,
                               t256 >= 0 ? sb->pos[n][1] - sa->pos[n][1] : 0);
-            objs[nobj].key = (x >> 8) + (y >> 8) * mx;
+            objs[nobj].key = (x >> 8) + (y >> 8);
             objs[nobj].z = z >> 7;
             objs[nobj].x = x;
             objs[nobj].y = y;
@@ -1271,25 +1275,19 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     }
     qsort(objs, (size_t)nobj, sizeof objs[0], cmp_obj);
     memset(g_ped_drawn, 0, sizeof g_ped_drawn);
-    /* back to front: diagonal rows, then each column from the ground up with what stands in it */
+    /* back to front: diagonal rows of tiles; in each, level by level, the tiles of the level then what stands on it,
+     * nearest last (an object is drawn with its diagonal, not its column: two agents side by side overlap as they
+     * stand) */
     for (s = 0; s < mx + my - 1; s++) {
-        int tx;
-        for (tx = 0; tx < mx; tx++) {
-            int ty = s - tx, tz, key;
-            uint32_t col;
-            if (ty < 0 || ty >= my) continue;
-            key = tx + ty * mx;
-            col = rd32(cols + (uint32_t)key * 4u);
-            {
-                int lo = 0, hi = nobj;
-                while (lo < hi) {
-                    int mid = (lo + hi) / 2;
-                    if (objs[mid].key < key) lo = mid + 1;
-                    else hi = mid;
-                }
-                k = lo;
-            }
-            for (tz = 0; tz < mz; tz++) {
+        int tx, tz;
+        while (k < nobj && objs[k].key < s) k++;
+        for (tz = 0; tz < mz; tz++) {
+            for (tx = 0; tx < mx; tx++) {
+                int ty = s - tx;
+                uint32_t col;
+                if (ty < 0 || ty >= my) continue;
+                col = rd32(cols + (uint32_t)(tx + ty * mx) * 4u);
+                {
                 int tid = M[col + (uint32_t)tz];
                 const uint8_t *tl = tile(tid);
                 int fx, fy;
@@ -1314,10 +1312,11 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         }
                     }
                 }
-                for (; k < nobj && objs[k].key == key && objs[k].z <= tz; k++) draw_obj(&t, &objs[k]);
+                }
             }
-            for (; k < nobj && objs[k].key == key; k++) draw_obj(&t, &objs[k]);
+            for (; k < nobj && objs[k].key == s && objs[k].z <= tz; k++) draw_obj(&t, &objs[k]);
         }
+        for (; k < nobj && objs[k].key == s; k++) draw_obj(&t, &objs[k]);
     }
     if (t.gpu) {
         /* a city that moved is a new frame (the frame's pixels may not have changed) */

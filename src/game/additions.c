@@ -1730,20 +1730,43 @@ static void mission_menu(uint32_t *rgb, int w)
 #define MARKER_COLOUR 0x5aff5au
 
 
-/* the side panel of a mission in true colour: the agents in their boxes wear the colour chosen (the game draws their
- * hats in its own company colour) */
+/* the side panel of a mission in true colour: the agents in their boxes wear the colour chosen. The game draws their
+ * hats in its own company colour, and the boxes' backgrounds in it too: only the small spots of it (a hat) are
+ * the colour chosen, the large ones (a background) stay as the game draws them */
+#define PANEL_TOP 40
+#define PANEL_BOTTOM 200
+#define HAT_SPOT 24 /* a spot of the colour this big at most is a hat */
 static void panel_true_colour(const uint8_t *index, uint32_t *rgb, int w)
 {
-    static const int boxes[2][2] = {{40, 90}, {136, 186}}; /* the two rows of agents' boxes */
-    int x, y, b, idx;
+    static uint8_t seen[(PANEL_BOTTOM - PANEL_TOP) * 128];
+    static int stack[(PANEL_BOTTOM - PANEL_TOP) * 128], spot[(PANEL_BOTTOM - PANEL_TOP) * 128];
+    int x, y, idx;
     uint32_t c;
     if (g_player_pick < NB_GAME_COLOURS) return;
     idx = player_colour_index();
     c = k_pick_colours[g_player_pick];
-    for (b = 0; b < 2; b++)
-        for (y = boxes[b][0]; y < boxes[b][1]; y++)
-            for (x = 0; x < VIEW_LEFT; x++)
-                if (index[y * 640 + x] == idx) rgb[y * w + x] = c;
+    memset(seen, 0, sizeof seen);
+    for (y = PANEL_TOP; y < PANEL_BOTTOM; y++)
+        for (x = 0; x < VIEW_LEFT; x++) {
+            int i = (y - PANEL_TOP) * 128 + x, n = 0, sp = 0, k;
+            if (seen[i] || index[y * 640 + x] != idx) continue;
+            /* the spot of the colour this pixel is in */
+            seen[i] = 1;
+            stack[sp++] = i;
+            while (sp > 0) {
+                int j = stack[--sp], jx = j % 128, jy = j / 128, d;
+                spot[n++] = j;
+                for (d = 0; d < 4; d++) {
+                    int nx = jx + (d == 0) - (d == 1), ny = jy + (d == 2) - (d == 3), ni = ny * 128 + nx;
+                    if (nx < 0 || nx >= VIEW_LEFT || ny < 0 || ny >= PANEL_BOTTOM - PANEL_TOP || seen[ni]) continue;
+                    if (index[(ny + PANEL_TOP) * 640 + nx] != idx) continue;
+                    seen[ni] = 1;
+                    stack[sp++] = ni;
+                }
+            }
+            if (n <= HAT_SPOT)
+                for (k = 0; k < n; k++) rgb[(spot[k] / 128 + PANEL_TOP) * w + spot[k] % 128] = c;
+        }
 }
 
 int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h)
