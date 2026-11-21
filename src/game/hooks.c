@@ -16,6 +16,11 @@ uint8_t rt_hook_bits[RT_HOOK_SPAN / 8u];
 
 static const RtModuleDef *g_def;
 static int g_game; /* GAME_* of the running program */
+static struct {
+    uint32_t addr;
+    HookFn fn;
+} g_table[64];
+static int g_nhooks;
 
 /* ---- census ---- */
 static const char *g_census_file;
@@ -46,15 +51,21 @@ static int census(uint32_t addr)
 }
 
 /* ---- the hooks of each program ---- */
-static void set_hook(uint32_t addr)
+void hook_add(uint32_t addr, HookFn fn)
 {
     uint32_t i = addr - RT_HOOK_BASE;
-    if (i < RT_HOOK_SPAN) rt_hook_bits[i >> 3] |= (uint8_t)(1u << (i & 7u));
+    if (i >= RT_HOOK_SPAN || g_nhooks == (int)(sizeof g_table / sizeof g_table[0])) {
+        rt_log("hooks: cannot hook %08x", addr);
+        return;
+    }
+    rt_hook_bits[i >> 3] |= (uint8_t)(1u << (i & 7u));
+    g_table[g_nhooks].addr = addr;
+    g_table[g_nhooks].fn = fn;
+    g_nhooks++;
 }
 
 void game_hooks_install(const RtModuleDef *def)
 {
-    const HookDef *h;
     if (g_census_file == NULL && getenv("SYND_CENSUS") != NULL) {
         g_census_file = getenv("SYND_CENSUS");
         g_census_first = (uint32_t *)calloc(RT_HOOK_SPAN, sizeof(uint32_t));
@@ -66,12 +77,12 @@ void game_hooks_install(const RtModuleDef *def)
     g_def = def;
     g_game = game_of_module(def);
     memset(rt_hook_bits, 0, sizeof rt_hook_bits);
+    g_nhooks = 0;
     if (g_census_file != NULL) {
         memset(rt_hook_bits, 0xFF, sizeof rt_hook_bits);
         return;
     }
-    for (h = g_hooks; h->fn != NULL; h++)
-        if (h->game == g_game) set_hook(h->addr);
+    additions_install(g_game);
 }
 
 void game_hooks_end(void)
@@ -81,10 +92,10 @@ void game_hooks_end(void)
 
 int rt_hook(uint32_t addr)
 {
-    const HookDef *h;
+    int i;
     if (g_census_file != NULL) return census(addr);
-    for (h = g_hooks; h->fn != NULL; h++)
-        if (h->addr == addr && h->game == g_game) return h->fn(addr);
+    for (i = 0; i < g_nhooks; i++)
+        if (g_table[i].addr == addr) return g_table[i].fn(addr);
     return 0;
 }
 

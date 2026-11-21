@@ -20,17 +20,15 @@ enum {
     GAME_AR_G
 };
 
-/* a hook: called on entry of the function at `addr` of program `game`, with the guest's registers and stack as
- * at the call; returns 1 when it did the function's work itself (and popped the return address), 0 to let the
- * function run */
-typedef struct HookDef {
-    int game;
-    uint32_t addr;
-    int (*fn)(uint32_t addr);
-} HookDef;
+/* a hook: called on entry of a function of the running program, with the guest's registers and stack as at the
+ * call; returns 1 when it did the function's work itself (and popped the return address), 0 to let the function
+ * run */
+typedef int (*HookFn)(uint32_t addr);
 
-/* additions.c: every hook, ended by one with fn == NULL */
-extern const HookDef g_hooks[];
+/* hooks.c: hooks `addr` of the running program */
+void hook_add(uint32_t addr, HookFn fn);
+/* additions.c: adds the hooks of program `game` (GAME_*) */
+void additions_install(int game);
 
 /* game.c */
 int game_of_module(const RtModuleDef *def);

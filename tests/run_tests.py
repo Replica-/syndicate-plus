@@ -296,6 +296,31 @@ def auto_save(ctx):
 
 
 @test()
+def minigun_squad(ctx):
+    """MINIGUN SQUAD as the company name (here in a save, cheats apply when a game is loaded): all 18 agents get
+    every mod at version 3 and 8 miniguns, and the funds stay"""
+    ctx.run('save', 19, start=SYN, inputs=SKIP_INTRO + [
+        '10000:f3', '12000:click@19600;%d' % LINE4, '13000:x', '15500:enter', '16500:click@19600;58700'])
+    path = os.path.join(ctx.user, 'Syndicate', '03.GAM')
+    data = bytearray(open(path, 'rb').read())
+    data[20 + 0x11:20 + 0x11 + 14] = b'MINIGUN SQUAD\0'                # the company name
+    with open(path, 'wb') as f:
+        f.write(data)
+    ctx.run('cheat', 24, start=SYN, inputs=SKIP_INTRO + [
+        '10000:f3', '12000:click@19600;%d' % LINE4, '13000:click@8500;58700',                     # load line 4
+        '16000:f3', '18000:click@19600;%d' % (LINE4 + 3930), '19000:z', '20500:enter', '21500:click@19600;58700'])
+    with open(os.path.join(ctx.user, 'Syndicate', '04.GAM'), 'rb') as f:
+        comp = f.read()[20:]
+    for a in range(18):
+        o = 0x11d + a * 40
+        mods = struct.unpack_from('<H', comp, o + 3)[0]
+        weapons = [struct.unpack_from('<H', comp, o + 10 + 4 * k)[0] for k in range(8)]
+        check(mods & 0x1ffe == 0x1ffe, 'agent %d has the mods %04x' % (a, mods))
+        check(weapons == [6] * 8, 'agent %d has the weapons %s' % (a, weapons))
+    check(struct.unpack_from('<I', comp, 0)[0] == 30000, 'the funds changed')
+
+
+@test()
 def save_revolt(ctx):
     """American Revolt saves into a folder of its own, apart from Syndicate's (both name their saves 00.GAM...);
     a save in line 1 goes to line 4, as line 1 holds an auto save"""
