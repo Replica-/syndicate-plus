@@ -12,7 +12,8 @@
  * A move order shows a green diamond on the floor where the agents go, shrinking and fading out in 0.6 s.
  *
  * The scanner (the map at the bottom left of a mission) shows more around the leader: 6 pixels a tile instead of
- * 8, and with a scanner (the weapon) 2 instead of 4.
+ * 8, and with a scanner (the weapon) 2 instead of 4.  With a scanner it also shows doors (cyan), criminals (orange)
+ * and armed people (red).
  *
  * The MINIGUN SQUAD cheat, as the company or player name (Configure Company), like the game's own cheats: every
  * weapon and mod researched, and the 18 agents of the company with every mod at version 3 and a minigun in each
@@ -49,27 +50,28 @@ typedef struct GameAddrs {
     uint32_t peds;         /* the people of the mission, PED_SIZE bytes each */
     uint32_t draw_scanner; /* draw_scanner(leader ped, pixels a tile: 8, or 4 with a scanner) */
     uint32_t view;         /* (16 bits x, y) the view's position (world / 128) */
+    uint32_t statics;      /* the objects of the mission (doors, ...): NB_STATICS of STATIC_SIZE bytes */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
-     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u},
+     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
-     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u},
+     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
-     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
-     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -412,12 +414,71 @@ static void diamond(uint8_t *pix, int w, int cx, int cy, int hw, int edge, uint8
     }
 }
 
+/* ---- what a scanner adds to the scanner ---- */
+#define NB_PEDS 256
+#define PED_LOCATION 0xau     /* 4: on the map */
+#define PED_STATE 0xbu        /* 0x11: dead */
+#define PED_TYPE 0x1cu        /* 1 pedestrian, 2 agent, 4 police, 8 guard, 16 criminal */
+#define PED_PERSUADER 0x20u   /* (16 bits) who persuaded it (0: nobody) */
+#define PED_WEAPON 0x44u      /* (16 bits) the weapon in its hands (0: none) */
+#define NB_STATICS 400
+#define STATIC_SIZE 30u
+#define STATIC_DESC 0xau      /* 4, 6, 7: on the map */
+#define STATIC_SUBTYPE 0x19u  /* 0x0c-0x0f a door, 0x26 a large door */
+#define SCANNER_X 0           /* the scanner in a 640 x 480 frame */
+#define SCANNER_Y 312
+#define SCANNER_SIZE 128
+
+static uint32_t g_scanner_leader; /* the ped the scanner is centred on */
+static int g_scanner_scale;       /* its pixels a tile */
+static int g_scanner_on;          /* an agent carries a scanner */
+
+static void scanner_dot(uint8_t *pix, int w, int32_t x, int32_t y, int size, uint8_t c)
+{
+    int32_t lx = (int16_t)RD16(g_scanner_leader + PED_X), ly = (int16_t)RD16(g_scanner_leader + PED_Y);
+    int px = SCANNER_X + SCANNER_SIZE / 2 + (int)((x - lx) * g_scanner_scale / 256);
+    int py = SCANNER_Y + SCANNER_SIZE / 2 + (int)((y - ly) * g_scanner_scale / 256);
+    int i, j;
+    for (j = 0; j < size; j++)
+        for (i = 0; i < size; i++) {
+            int qx = px + i - size / 2, qy = py + j - size / 2;
+            if (qx >= SCANNER_X && qx < SCANNER_X + SCANNER_SIZE && qy >= SCANNER_Y && qy < SCANNER_Y + SCANNER_SIZE)
+                pix[qy * w + qx] = c;
+        }
+}
+
+static void draw_scanner_extras(uint8_t *pix, int w, const uint32_t *pal)
+{
+    uint8_t door = nearest_colour(pal, 60, 220, 255), criminal = nearest_colour(pal, 255, 150, 30);
+    uint8_t armed = nearest_colour(pal, 255, 60, 40);
+    int i;
+    if (!g_scanner_on || g_scanner_leader == 0) return;
+    for (i = 0; i < NB_STATICS; i++) {
+        uint32_t o = g_addrs->statics + (uint32_t)i * STATIC_SIZE;
+        uint8_t sub = M[o + STATIC_SUBTYPE], desc = M[o + STATIC_DESC];
+        if ((desc == 4 || desc == 6 || desc == 7) && ((sub >= 0x0c && sub <= 0x0f) || sub == 0x26))
+            scanner_dot(pix, w, (int16_t)RD16(o + PED_X), (int16_t)RD16(o + PED_Y), 2, door);
+    }
+    for (i = 0; i < NB_PEDS; i++) {
+        uint32_t p = g_addrs->peds + (uint32_t)i * PED_SIZE;
+        uint8_t type = M[p + PED_TYPE];
+        if (M[p + PED_LOCATION] != 4 || M[p + PED_STATE] == 0x11 || RD16(p + PED_PERSUADER) != 0) continue;
+        if (type != 1 && type != 16) continue;
+        if (RD16(p + PED_WEAPON) != 0)
+            scanner_dot(pix, w, (int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), 3, armed);
+        else if (type == 16)
+            scanner_dot(pix, w, (int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), 2, criminal);
+    }
+}
+
 void game_overlay(uint8_t *pixels, int w, int h, const uint32_t *palette)
 {
     uint64_t age;
     int fx, fy, hw, density;
     uint8_t c;
-    if (g_addrs == NULL || w != 640 || h != 480 || !in_mission() || g_marker_us == 0) return;
+    if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return;
+    draw_scanner_extras(pixels, w, palette);
+    if (g_marker_us == 0) return;
     age = host_time_us() - g_marker_us;
     if (age >= MARKER_US) {
         g_marker_us = 0;
@@ -476,8 +537,12 @@ static int on_draw_scanner(uint32_t addr)
 {
     uint32_t scale = RD32(R.esp + 8u) & 0xFFFFu;
     (void)addr;
-    if (scale == 8u) WR32(R.esp + 8u, 6u);
-    else if (scale == 4u) WR32(R.esp + 8u, 2u);
+    g_scanner_on = scale == 4u;
+    if (scale == 8u) scale = 6u;
+    else if (scale == 4u) scale = 2u;
+    WR32(R.esp + 8u, scale);
+    g_scanner_leader = RD32(R.esp + 4u);
+    g_scanner_scale = (int)scale;
     return 0;
 }
 

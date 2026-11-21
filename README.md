@@ -113,7 +113,8 @@ A move order shows a green diamond on the floor where the agents go, shrinking a
 ### The scanner
 
 The scanner (the map at the bottom left of a mission) shows more of the city around the leader: 6 pixels a tile
-instead of 8, and 2 instead of 4 when an agent of the squad carries a scanner.
+instead of 8, and 2 instead of 4 when an agent of the squad carries a scanner.  With a scanner it also shows the
+doors (cyan), the criminals (orange) and the people holding a weapon (red).
 
 ### MINIGUN SQUAD
 
