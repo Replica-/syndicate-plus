@@ -203,7 +203,7 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->image = (uint16_t)image;
     q->flip = (uint8_t)((flipped != 0) | (image < IMAGE_SPRITES ? g_shade << 1 : 0));
     q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0));
-    q->hat = hat != 0 ? (hat | 0xFF000000u) : 0;
+    q->hat = hat; /* its top byte: the rows of the image with the hat */
 }
 
 #define HAT_INDEX 6 /* the hats' colour in the agents' sprites */
@@ -268,7 +268,7 @@ static void blit_scaled(const Target *t, const uint8_t *src, int sw, int sh, flo
             if (sx < 0 || sx >= sw) continue;
             c = src[sy * sw + (flipped ? sw - 1 - sx : sx)];
             if (c == 255) continue;
-            put_pixel(t, x, y, hat != 0 && c == HAT_INDEX ? hat : t->pal[c]);
+            put_pixel(t, x, y, c == HAT_INDEX && sy < (int)(hat >> 24) ? hat & 0xFFFFFFu : t->pal[c]);
         }
     }
 }
@@ -298,12 +298,14 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
             int tx = dx + x;
             uint8_t c = src[y * sw + (flipped ? sw - 1 - x : x)];
             if (c == 255 || tx < t->x0 || tx >= t->x1) continue;
-            put_pixel(t, tx, ty, hat != 0 && c == HAT_INDEX ? hat : t->pal[c]);
+            put_pixel(t, tx, ty, c == HAT_INDEX && y < (int)(hat >> 24) ? hat & 0xFFFFFFu : t->pal[c]);
         }
     }
 }
 
-/* `hat`: the colour of the hat, the frame's topmost element (the head; what the agent holds uses colour 6 too) */
+/* `hat`: the colour of the hat: colour 6 in the frame's top HAT_ROWS rows (the head; what the agent holds uses
+ * colour 6 too, lower) */
+#define HAT_ROWS 6
 static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, float fay, uint32_t hat)
 {
     uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), f = frames + (uint32_t)frame * 8u;
@@ -324,9 +326,13 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
         uint32_t ea = elements + e * 10u;
         int sw, sh, id = rd16(ea) / 6, ox = (int16_t)rd16(ea + 2u), oy = (int16_t)rd16(ea + 4u);
         const uint8_t *s = sprite(id, &sw, &sh);
-        if (s != NULL)
-            put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
-                oy <= top + 2 ? hat : 0);
+        {
+            int rows = top + HAT_ROWS - oy; /* the element's rows in the hat's */
+            if (rows > 255) rows = 255;
+            if (s != NULL)
+                put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
+                    hat != 0 && rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
+        }
         e = rd16(ea + 8u);
         if (e == 0 || ++guard > 64) break;
     }

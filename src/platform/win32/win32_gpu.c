@@ -104,7 +104,7 @@ static const char k_city_shader[] =
     "    if (p.x < (int)i.rect.x || p.y < (int)i.rect.y || p.x >= (int)i.rect.z || p.y >= (int)i.rect.w) return 0;\n"
     "    c = atlas.Load(int3(p, 0));\n"
     "    if (c == 255) return 0;\n"
-    "    if (c == 6 && (i.hat >> 24) != 0)\n"
+    "    if (c == 6 && p.y - (int)i.rect.y < (int)(i.hat >> 24))\n"
     "        return float4(((i.hat >> 16) & 255) / 255.0, ((i.hat >> 8) & 255) / 255.0, (i.hat & 255) / 255.0, 1);\n"
     "    return float4(pal.Load(int3(c, 0, 0)).rgb * (1 - shadow * ((i.glow >> 8) & 127) / 127.0), 1);\n"
     "}\n"

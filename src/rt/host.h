@@ -54,7 +54,8 @@ typedef struct HostCityQuad {
     uint16_t image;
     uint8_t flip;     /* bit 0: drawn mirrored; bits 1-7: in the sun's shadow, 0..127 (a tile) */
     uint8_t glow;     /* in the dark: 0 nothing shines, 1 its brightest pixels, 2 all of it */
-    uint32_t hat;     /* a colour for the pixels of colour 6 (0x00RRGGBB with 0xFF000000 set), or 0 */
+    uint32_t hat;     /* a colour for the pixels of colour 6 (0x00RRGGBB) in the image's top rows (the top byte: how
+                       * many; 0: none) */
 } HostCityQuad;
 /* a light in the city (a lamp): a soft ellipse of light, centre x, y, radii rx, ry (frame pixels) */
 typedef struct HostCityLight {

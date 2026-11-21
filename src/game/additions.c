@@ -1263,6 +1263,13 @@ static void frame_box(uint32_t *rgb, int w, int h, int x0, int y0, int x1, int y
     }
 }
 
+/* the player's company's colour as the game has it (its palette entry) */
+static int player_colour_index(void)
+{
+    uint32_t company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+    return M[g_addrs->colours + (uint32_t)(M[company + COMPANY_COLOUR] & 7u)];
+}
+
 /* the menus in true colour: what the game draws in the player's company colour (its palette entry for the game's
  * colour nearest the one chosen) is in the colour chosen */
 static void menu_true_colour(const uint8_t *index, uint32_t *rgb, int w, int h)
@@ -1270,8 +1277,8 @@ static void menu_true_colour(const uint8_t *index, uint32_t *rgb, int w, int h)
     int i, near, idx;
     uint32_t c;
     if (g_player_pick < NB_GAME_COLOURS) return;
-    near = nearest_game_colour(g_player_pick);
-    idx = M[g_addrs->colours + (uint32_t)near];
+    near = config_shown() && g_config_colour >= 0 ? g_config_colour : -1; /* Configure Company: the one it edits */
+    idx = near >= 0 ? M[g_addrs->colours + (uint32_t)near] : player_colour_index();
     c = k_pick_colours[g_player_pick];
     for (i = 0; i < w * h; i++)
         if (index[i] == idx) rgb[i] = c;
@@ -1715,6 +1722,23 @@ static void mission_menu(uint32_t *rgb, int w)
 
 #define MARKER_COLOUR 0x5aff5au
 
+
+/* the side panel of a mission in true colour: the agents in their boxes wear the colour chosen (the game draws their
+ * hats in its own company colour) */
+static void panel_true_colour(const uint8_t *index, uint32_t *rgb, int w)
+{
+    static const int boxes[2][2] = {{40, 90}, {136, 186}}; /* the two rows of agents' boxes */
+    int x, y, b, idx;
+    uint32_t c;
+    if (g_player_pick < NB_GAME_COLOURS) return;
+    idx = player_colour_index();
+    c = k_pick_colours[g_player_pick];
+    for (b = 0; b < 2; b++)
+        for (y = boxes[b][0]; y < boxes[b][1]; y++)
+            for (x = 0; x < VIEW_LEFT; x++)
+                if (index[y * 640 + x] == idx) rgb[y * w + x] = c;
+}
+
 int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h)
 {
     uint64_t age;
@@ -1727,6 +1751,7 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     }
     if (g_addrs == NULL || w < 640 || h != 480 || !in_mission()) return 0;
     g_cw = w;
+    panel_true_colour(index, rgb, w);
     if (getenv("SYND_RENDER_TEST") != NULL) {
         render_test(rgb, palette);
     } else if (renderer_on()) {
