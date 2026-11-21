@@ -57,6 +57,7 @@
 #define SC_APP_SCREENSHOT 0x10C0u
 #define SC_APP_FPS 0x10D0u
 #define SC_APP_TIME 0x1300u /* + 0x10 * time (0 day, 1 dusk, 2 night) */
+#define SC_APP_SHADOWS 0x10E0u
 #define SC_APP_MUSIC_VOL 0x1100u /* + 0x10 * step (0..4): off, 25%, 50%, 75%, 100% */
 #define SC_APP_SOUND_VOL 0x1200u
 #define WM_APP_GAME_DONE (WM_APP + 1)
@@ -915,6 +916,16 @@ static void set_time(int t)
     if (g_ini[0]) WritePrivateProfileStringW(L"video", L"time", k_time_names[t], g_ini);
 }
 
+static int g_shadows = 1;
+
+static void toggle_shadows(void)
+{
+    g_shadows = !g_shadows;
+    gpu_set_shadows(g_shadows);
+    CheckMenuItem(GetSystemMenu(g_hwnd, FALSE), SC_APP_SHADOWS, g_shadows ? MF_CHECKED : MF_UNCHECKED);
+    if (g_ini[0]) WritePrivateProfileStringW(L"video", L"shadows", g_shadows ? L"1" : L"0", g_ini);
+}
+
 static void toggle_fps(void)
 {
     g_fps_on = !g_fps_on;
@@ -1064,6 +1075,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             AppendMenuW(times, MF_STRING | (g_time == 1 ? MF_CHECKED : 0), SC_APP_TIME + 0x10u, L"D&usk");
             AppendMenuW(times, MF_STRING | (g_time == 2 ? MF_CHECKED : 0), SC_APP_TIME + 0x20u, L"&Night");
             AppendMenuW(sm, MF_POPUP, (UINT_PTR)times, L"&Time of day (missions)");
+            AppendMenuW(sm, MF_STRING | (g_shadows ? MF_CHECKED : 0), SC_APP_SHADOWS, L"Sun s&hadows (missions)");
         }
         AppendMenuW(sm, MF_STRING, SC_APP_RECORD, L"&Record video\tF12");
         AppendMenuW(sm, MF_STRING, SC_APP_SCREENSHOT, L"Scree&nshot\tF11");
@@ -1129,6 +1141,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             return 0;
         case SC_APP_FPS:
             toggle_fps();
+            return 0;
+        case SC_APP_SHADOWS:
+            toggle_shadows();
             return 0;
         case SC_APP_TIME: case SC_APP_TIME + 0x10u: case SC_APP_TIME + 0x20u:
             set_time((int)(((w & 0xFFF0u) - SC_APP_TIME) / 0x10u));
@@ -1519,6 +1534,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
         for (k = 0; k < 3; k++)
             if (!_wcsicmp(t, k_time_names[k])) g_time = k;
         gpu_set_time(g_time);
+        g_shadows = GetPrivateProfileIntW(L"video", L"shadows", 1, g_ini) != 0;
+        gpu_set_shadows(g_shadows);
     }
     rt_set_show_fps(g_fps_on);
     if (music_dir[0] == 0)

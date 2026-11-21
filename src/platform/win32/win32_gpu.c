@@ -41,6 +41,7 @@ static ID3D11RenderTargetView *g_lit_rtv[3];
 static ID3D11ShaderResourceView *g_lit_srv[3];
 static int g_lit_w, g_lit_h;
 static volatile LONG g_time; /* 0 day (the game's own look), 1 dusk, 2 night */
+static volatile LONG g_shadows = 1; /* the sun's shadows */
 static ID3D11SamplerState *g_linear;
 static ID3D11BlendState *g_blend;
 static ID3D11RasterizerState *g_scissor;
@@ -85,7 +86,7 @@ static const char k_shader[] =
 
 /* the city: an image's corner, its texels there, its rectangle in the atlas, its hat colour */
 static const char k_city_shader[] =
-    "cbuffer C : register(b0) { float2 frame_size; float scale; float pad; };\n"
+    "cbuffer C : register(b0) { float2 frame_size; float scale; float shadow; };\n"
     "Texture2D<uint> atlas : register(t0);\n"
     "Texture2D<float4> pal : register(t1);\n"
     "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2;"
@@ -105,10 +106,11 @@ static const char k_city_shader[] =
     "    if (c == 255) return 0;\n"
     "    if (c == 6 && (i.hat >> 24) != 0)\n"
     "        return float4(((i.hat >> 16) & 255) / 255.0, ((i.hat >> 8) & 255) / 255.0, (i.hat & 255) / 255.0, 1);\n"
-    "    return float4(pal.Load(int3(c, 0, 0)).rgb, 1);\n"
+    "    return float4(pal.Load(int3(c, 0, 0)).rgb * (1 - shadow * ((i.glow >> 8) & 127) / 127.0), 1);\n"
     "}\n"
     /* what of a texel glows: all of it (glow 2), or its colour if bright (1) */
     "float4 glowing(float4 c, uint glow) {\n"
+    "    glow &= 3;\n"
     "    if (glow == 2 || (glow == 1 && dot(c.rgb, float3(0.3, 0.6, 0.1)) > 0.7)) return c;\n"
     "    return float4(0, 0, 0, c.a);\n"
     "}\n"
@@ -166,7 +168,7 @@ typedef struct Consts {
 } Consts;
 
 typedef struct CityConsts {
-    float frame_size[2], scale, pad;
+    float frame_size[2], scale, shadow;
 } CityConsts;
 
 typedef struct CityVertex {
@@ -264,6 +266,11 @@ void gpu_city_image(int id, int w, int h, const uint8_t *pixels)
     im->pixels = (uint8_t *)malloc((size_t)(w * h));
     if (im->pixels != NULL) memcpy(im->pixels, pixels, (size_t)(w * h));
     ReleaseSRWLockExclusive(&g_city_lock);
+}
+
+void gpu_set_shadows(int on)
+{
+    InterlockedExchange(&g_shadows, on != 0);
 }
 
 void gpu_set_time(int time)
@@ -732,8 +739,8 @@ static void draw_city(RECT dst, int fw, int fh)
         if (im->w == 0) continue;
         x1 = x0 + (float)im->w * zoom;
         y1 = y0 + (float)im->h * zoom;
-        u0 = q->flip ? (float)(im->ax + im->w) : (float)im->ax;
-        u1 = q->flip ? (float)im->ax : (float)(im->ax + im->w);
+        u0 = (q->flip & 1) ? (float)(im->ax + im->w) : (float)im->ax;
+        u1 = (q->flip & 1) ? (float)im->ax : (float)(im->ax + im->w);
         for (k = 0; k < 4; k++) {
             c[k].x = (k & 1) ? x1 : x0;
             c[k].y = (k & 2) ? y1 : y0;
@@ -744,7 +751,7 @@ static void draw_city(RECT dst, int fw, int fh)
             c[k].rect[2] = (float)(im->ax + im->w);
             c[k].rect[3] = (float)(im->ay + im->h);
             c[k].hat = q->hat;
-            c[k].glow = q->glow;
+            c[k].glow = q->glow | (uint32_t)(q->flip >> 1) << 8; /* the shadow above the glow */
         }
         verts[nv++] = c[0];
         verts[nv++] = c[1];
@@ -804,7 +811,7 @@ static void draw_city(RECT dst, int fw, int fh)
     cc.frame_size[0] = (float)fw;
     cc.frame_size[1] = (float)fh;
     cc.scale = sx * zoom > 1.0f ? sx * zoom : 1.0f; /* window pixels a texel */
-    cc.pad = 0;
+    cc.shadow = g_shadows ? 0.42f : 0.0f; /* how dark the sun's shadows are */
     if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_city_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
         memcpy(map.pData, &cc, sizeof cc);
         ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_city_cb, 0);

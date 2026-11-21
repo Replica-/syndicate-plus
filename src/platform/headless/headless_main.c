@@ -457,6 +457,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--gpu") && sscanf(v, "%dx%d", &g_gpu_w, &g_gpu_h) == 2) i++;
 #ifdef _WIN32
         else if (!strcmp(a, "--screenshot") && strchr(v, ':')) g_shot_ms = (uint32_t)atoi(v), g_shot_file = strchr(v, ':') + 1, i++;
+        else if (!strcmp(a, "--shadows")) gpu_set_shadows(strcmp(v, "off") != 0), i++;
         else if (!strcmp(a, "--time")) gpu_set_time(!strcmp(v, "night") ? 2 : !strcmp(v, "dusk") ? 1 : 0), i++;
 #endif
         else if (!strcmp(a, "--wide")) g_canvas_w = atoi(v) < 640 ? 640 : atoi(v) > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : atoi(v) & ~1, i++;

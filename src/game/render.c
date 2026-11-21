@@ -178,6 +178,8 @@ typedef struct Target {
 static HostCityQuad *g_quads;
 static int g_nquads, g_quads_cap;
 
+static int g_shade; /* the shadow of the tile being put (0..127) */
+
 static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat, int glow)
 {
     HostCityQuad *q;
@@ -196,7 +198,7 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->x = x;
     q->y = y;
     q->image = (uint16_t)image;
-    q->flip = (uint8_t)(flipped != 0);
+    q->flip = (uint8_t)((flipped != 0) | (image < IMAGE_SPRITES ? g_shade << 1 : 0));
     q->glow = (uint8_t)glow;
     q->hat = hat != 0 ? (hat | 0xFF000000u) : 0;
 }
@@ -622,10 +624,17 @@ static HostCityLight g_lights[NB_LIGHTS];
 static int g_nlights;
 
 static float g_car_dir[64][2];
+#define NB_FRAME_LIGHTS 4096
+static struct {
+    uint16_t frame, known, lit;
+    float ox, oy;
+    uint32_t colour;
+} g_frame_light[NB_FRAME_LIGHTS];
 
 static void lights_forget(void)
 {
     memset(g_tile_light, 0, sizeof g_tile_light);
+    memset(g_frame_light, 0, sizeof g_frame_light);
     memset(g_car_dir, 0, sizeof g_car_dir);
     g_tile_set_loaded = 0;
 }
@@ -716,6 +725,7 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
  * the way it last moved) */
 #define LIST_CARS 1
 #define LIST_EFFECTS 4
+#define LIST_STATICS 2
 #define FLASH_COLOUR 0xFFB050u
 #define HEADLIGHT_COLOUR 0xFFF2D8u
 
@@ -750,6 +760,57 @@ static struct {
 } g_drawn[NB_DRAWN];
 static int g_ndrawn;
 
+/* a line of the frame (any slope), blended */
+static void line(uint32_t *rgb, int w, int h, float x0, float y0, float x1, float y1, int cx0, int cy0, int cx1, int cy1,
+                 uint32_t c)
+{
+    int n = (int)(fabsf(x1 - x0) > fabsf(y1 - y0) ? fabsf(x1 - x0) : fabsf(y1 - y0)) + 1, i;
+    (void)h;
+    for (i = 0; i <= n; i++) {
+        int x = (int)floorf(x0 + (x1 - x0) * (float)i / (float)n + 0.5f), y = (int)floorf(y0 + (y1 - y0) * (float)i / (float)n + 0.5f);
+        if (x >= cx0 && x < cx1 && y >= cy0 && y < cy1) rgb[y * w + x] = c;
+    }
+}
+
+void render_floor_outline(uint32_t *rgb, int w, int h, int level, uint32_t colour, int x0, int y0, int x1, int y1)
+{
+    uint32_t map, cols;
+    int mx, my, mz, tx, ty;
+    if (g_ra.map == 0 || level < 0) return;
+    map = rd32(P_MAP);
+    cols = map + 12u;
+    mx = (int)rd32(map);
+    my = (int)rd32(map + 4u);
+    mz = (int)rd32(map + 8u);
+    if (mx <= 0 || my <= 0 || mx > 256 || my > 256 || level >= mz) return;
+    for (ty = 0; ty < my; ty++)
+        for (tx = 0; tx < mx; tx++) {
+            static const int nb[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+            /* the corners of the top of the square, clockwise from x, y */
+            float cx[4], cy[4];
+            int k, z = (level + 1) * 128;
+            uint32_t col = rd32(cols + (uint32_t)(tx + ty * mx) * 4u);
+            if (tile(M[col + (uint32_t)level]) == NULL) continue;
+            for (k = 0; k < 4; k++) {
+                int wx = (tx + (k == 1 || k == 2)) * 256, wy = (ty + (k >= 2)) * 256;
+                project_f(wx, wy, z, &cx[k], &cy[k]);
+                cx[k] = zoom_x(cx[k] + (float)render_obj_dx);
+                cy[k] = zoom_y(cy[k] + (float)render_obj_dy);
+            }
+            if (cx[0] < x0 - 64 || cx[0] > x1 + 64 || cy[0] < y0 - 64 || cy[0] > y1 + 64) continue;
+            /* an edge where the floor ends */
+            for (k = 0; k < 4; k++) {
+                int nx = tx + nb[k][0], ny = ty + nb[k][1];
+                uint32_t ncol;
+                if (nx >= 0 && ny >= 0 && nx < mx && ny < my) {
+                    ncol = rd32(cols + (uint32_t)(nx + ny * mx) * 4u);
+                    if (tile(M[ncol + (uint32_t)level]) != NULL) continue;
+                }
+                line(rgb, w, h, cx[k], cy[k], cx[(k + 1) & 3], cy[(k + 1) & 3], x0, y0, x1, y1, colour);
+            }
+        }
+}
+
 int render_tile_at(int sx, int sy, int *id, int *rx, int *ry, int *rw, int *rh)
 {
     float lx = g_zcx + ((float)sx - g_zcx) / (float)g_zoom, ly = g_zcy + ((float)sy - g_zcy) / (float)g_zoom;
@@ -766,6 +827,75 @@ int render_tile_at(int sx, int sy, int *id, int *rx, int *ry, int *rw, int *rh)
         *rw = (int)ceilf(TILE_W * (float)g_zoom);
         *rh = (int)ceilf(TILE_H * (float)g_zoom);
         return 1;
+    }
+    return 0;
+}
+
+/* a frame with a few bright, strongly coloured pixels (a traffic light, a signal): a small light of that colour,
+ * found once for each frame (its centre from the frame's anchor) */
+
+static int signal_pixel(uint32_t c)
+{
+    int r = (int)((c >> 16) & 0xFF), g = (int)((c >> 8) & 0xFF), b = (int)(c & 0xFF);
+    int mx = r > g ? (r > b ? r : b) : (g > b ? g : b), mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    return mx >= 200 && mn * 100 <= mx * 45;
+}
+
+static void frame_lights(int frame, float ax, float ay)
+{
+    int slot = frame % NB_FRAME_LIGHTS;
+    if (g_light_palette == NULL || frame <= 0) return;
+    if (!g_frame_light[slot].known || g_frame_light[slot].frame != frame) {
+        uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), e = rd16(frames + (uint32_t)frame * 8u);
+        int guard = 0, n = 0;
+        double sx = 0, sy = 0, cr = 0, cg = 0, cb = 0, mx;
+        for (;;) {
+            uint32_t ea = elements + e * 10u;
+            int sw, sh, x, y, ox = (int16_t)rd16(ea + 2u), oy = (int16_t)rd16(ea + 4u), flip = rd16(ea + 6u) != 0;
+            const uint8_t *px = sprite(rd16(ea) / 6, &sw, &sh);
+            for (y = 0; px != NULL && y < sh; y++)
+                for (x = 0; x < sw; x++) {
+                    uint8_t c = px[y * sw + (flip ? sw - 1 - x : x)];
+                    if (c == 255 || !signal_pixel(g_light_palette[c])) continue;
+                    n++;
+                    sx += ox + x;
+                    sy += oy + y;
+                    cr += (g_light_palette[c] >> 16) & 0xFF;
+                    cg += (g_light_palette[c] >> 8) & 0xFF;
+                    cb += g_light_palette[c] & 0xFF;
+                }
+            e = rd16(ea + 8u);
+            if (e == 0 || ++guard > 64) break;
+        }
+        g_frame_light[slot].frame = (uint16_t)frame;
+        g_frame_light[slot].known = 1;
+        g_frame_light[slot].lit = n > 0 && n <= 20;
+        if (n > 0) {
+            g_frame_light[slot].ox = (float)(sx / n);
+            g_frame_light[slot].oy = (float)(sy / n);
+            mx = cr > cg ? (cr > cb ? cr : cb) : (cg > cb ? cg : cb);
+            g_frame_light[slot].colour =
+                (uint32_t)(cr / mx * 255.0) << 16 | (uint32_t)(cg / mx * 255.0) << 8 | (uint32_t)(cb / mx * 255.0);
+        }
+    }
+    if (!g_frame_light[slot].lit) return;
+    /* a bright core, a soft glow around it */
+    add_light(ax + g_frame_light[slot].ox, ay + g_frame_light[slot].oy, 7, 7, g_frame_light[slot].colour);
+    add_light(ax + g_frame_light[slot].ox, ay + g_frame_light[slot].oy, 26, 18, g_frame_light[slot].colour);
+}
+
+/* the sun, high at the top left of the screen (from world -x, at 45 degrees): a tile with a solid tile above it
+ * towards the sun is in its shadow (0..127, more when the shade is nearer) */
+static int sun_shade(uint32_t cols, int mx, int my, int mz, int tx, int ty, int tz)
+{
+    int d;
+    (void)my;
+    for (d = 1; d <= 4; d++) {
+        int x = tx - d, z = tz + d;
+        uint32_t col;
+        if (x < 0 || z >= mz) break;
+        col = rd32(cols + (uint32_t)(x + ty * mx) * 4u);
+        if (tile(M[col + (uint32_t)z]) != NULL) return 127 - (d - 1) * 24;
     }
     return 0;
 }
@@ -924,6 +1054,11 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                 z = (int16_t)rd16(a + 8u);
             }
             if (x < 0 || y < 0 || x >= mx * 256 || y >= my * 256) continue;
+            if (t.gpu && li == LIST_STATICS) {
+                float sfx, sfy;
+                project_f(x, y, z, &sfx, &sfy);
+                frame_lights(frame, sfx + (float)render_obj_dx, sfy + (float)render_obj_dy);
+            }
             if (t.gpu && (li == LIST_CARS || li == LIST_EFFECTS))
                 object_lights(li, (int)i, x, y, z, t256 >= 0 ? sb->pos[n][0] - sa->pos[n][0] : 0,
                               t256 >= 0 ? sb->pos[n][1] - sa->pos[n][1] : 0);
@@ -968,8 +1103,10 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         fy + render_tile_dy + TILE_H > ly0 - 2 && fy + render_tile_dy < ly1 + 2) {
                         float ffx, ffy;
                         project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
+                        g_shade = t.gpu ? sun_shade(cols, mx, my, mz, tx, ty, tz) : 0;
                         put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
                             ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
+                        g_shade = 0;
                         if (t.gpu) tile_lights_at(tid, ffx + (float)render_tile_dx, ffy + (float)render_tile_dy);
                         if (g_ndrawn < NB_DRAWN) {
                             g_drawn[g_ndrawn].id = (uint8_t)tid;
