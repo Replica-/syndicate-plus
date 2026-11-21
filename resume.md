@@ -87,6 +87,13 @@ To do next: hear back from the user on how it feels in the window; the animation
 only at the game's ticks (walk cycles); then widescreen and zoom (the renderer can draw any rectangle at any
 view), lighting, see-inside-buildings.
 
+Artifacts fixed after the user's second play test: the squad's numbers (were copied from the game's picture,
+came out cut with bits of heads) are drawn with the game's sprites 1070-1077 (yellow 1070 + 2 x slot, red + 1;
+placed by their coloured pixels 2 px left of the feet and 40 above; yellow/red/shown read from the game's
+picture, palette indices 11/14); the pointer is the game's HPOINTER entry in use (sprite table pointer + 0x10,
+American Revolt + 0x14) drawn at the newest mouse position (top left 16 px up-left). Nothing over the city is
+copied from the game's picture any more. During shooting the renderer still matches the game (99.5-99.7%).
+
 ## Next: group 4, the new renderer (fresh MIT code)
 
 Plan: (1) read the game's decompressed data from memory: in English Syndicate the pointers are at `0x44535c` (map,
