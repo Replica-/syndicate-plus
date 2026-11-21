@@ -355,6 +355,25 @@ def mission_menu(ctx):
 
 
 @test()
+def company_picker(ctx):
+    """Configure Company shows every colour and logo in grids: a click on a colour beyond the game's 8 (gold) and on
+    the sixth logo, then Accept, give the company the game's nearest colour (yellow, 4) and logo 5"""
+    import struct
+    dump = os.path.join(ctx.dir, 'mem.bin')
+
+    def at(x, y):   # a point of the 320 x 200 screen
+        return '%d;%d' % (x * 65536 // 320, y * 65536 // 200)
+    ctx.run('pick', 17, start=SYN, extra=['--mem-dump', '16800:' + dump], inputs=SKIP_INTRO + [
+        '10000:f1', '12000:move@' + at(257, 85), '12500:click@' + at(257, 85), '13500:move@' + at(224, 112),
+        '14000:click@' + at(224, 112), '15000:move@' + at(40, 179), '15500:click@' + at(40, 179)])
+    mem = open(dump, 'rb').read()
+    company = 0x44e49c - 0x400000   # the player's (the first)
+    check((mem[company + 0xf], mem[company + 0x10]) == (4, 5),
+          'the company has colour %d and logo %d' % (mem[company + 0xf], mem[company + 0x10]))
+    check(os.path.exists(os.path.join(ctx.user, 'company_colour.txt')), 'the colour chosen is not kept')
+
+
+@test()
 def save_load(ctx):
     """save a game named ABC in line 4 (1-3 hold the auto saves), then load it in a new run: the funds stored in the
     save show up"""

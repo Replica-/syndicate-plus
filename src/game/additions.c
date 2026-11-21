@@ -81,6 +81,10 @@ typedef struct GameAddrs {
     uint32_t unpack;       /* unpack(packed, out): the game's RNC unpacker */
     uint32_t palette_ids;  /* (bytes, by mission) the palette of each mission: HPALnn */
     uint32_t mission;      /* (16 bits) the mission being played */
+    uint32_t draw_logo;    /* draw_logo(logo, colour, x, y, w, h, logos): a company's logo */
+    uint32_t logo_ret;     /* where Configure Company draws its own (the return address) */
+    uint32_t logo_local;   /* there: the logo it edits, from the stack pointer */
+    uint32_t colour_local; /* and the colour */
     int ar;                /* American Revolt: its pointers are further apart */
 } GameAddrs;
 
@@ -88,27 +92,27 @@ static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
      0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u,
-     0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x42caa4u, 0x444170u, 0x450b2eu, 0},
+     0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x42caa4u, 0x444170u, 0x450b2eu, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu,
-     0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x42c994u, 0x442088u, 0x44e326u, 0},
+     0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x42c994u, 0x442088u, 0x44e326u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u,
-     0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x42c994u, 0x4420ecu, 0x44e38au, 0},
+     0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x42c994u, 0x4420ecu, 0x44e38au, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
      0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu,
-     0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x42e204u, 0x4540d8u, 0x463c14u, 1},
+     0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x42e204u, 0x4540d8u, 0x463c14u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu,
-     0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x42e184u, 0x451f18u, 0x461304u, 1},
+     0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x42e184u, 0x451f18u, 0x461304u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u,
-     0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x42e184u, 0x451f80u, 0x46136cu, 1},
+     0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x42e184u, 0x451f80u, 0x46136cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -1114,12 +1118,174 @@ static int renderer_on(void)
     return g_addrs != NULL && (e == NULL || strcmp(e, "off") != 0);
 }
 
-/* the player's company in a colour of the player's choice (game_set_player_colour; 0: the game's) */
+/* the player's company in a colour of the player's choice (0: the game's own) */
 static volatile uint32_t g_player_colour;
 
 void game_set_player_colour(uint32_t rgb)
 {
     g_player_colour = rgb;
+}
+
+/* ---- Configure Company: every colour and logo in two grids under the game's panel, one click each ----
+ * The game's 8 company colours (as its preview draws them), then 16 more: one of these is shown in true colour
+ * (the agents' hats), the game keeping the nearest of its own (the world map, its menus). */
+#define NB_GAME_COLOURS 8
+#define NB_PICK_COLOURS 24
+#define NB_LOGOS 40
+static const uint32_t k_pick_colours[NB_PICK_COLOURS] = {
+    0xAA2400, 0x4D5979, 0xFF3C08, 0xFFA65D, 0xE3DB28, 0xDFFFFF, 0x967918, 0x008EBA, /* the game's */
+    0xDC143C, 0xFF8C00, 0xFFD700, 0x9ACD32, 0x2ECC71, 0x00C896, 0x00E5FF, 0x5DADE2,
+    0x2F4FD8, 0x5B2C9F, 0x9B59B6, 0xFF00C8, 0xFF8FB8, 0xF4F4F4, 0x8A9AA8, 0x303030,
+};
+#define PLAYER_COLOUR_FILE "company_colour.txt"
+static uint32_t g_config_us;      /* Configure Company was drawn then */
+static uint32_t g_config_logos;   /* the game's logos (32 x 32, 254 the colour) */
+static int g_config_logo, g_config_colour = -1; /* the game's, as it edits them */
+static volatile int g_pick_logo = -1, g_pick_colour = -1;
+static int g_player_pick;         /* the colour chosen (0..23) */
+
+static void player_colour_save(void)
+{
+    char path[1200];
+    FILE *f;
+    snprintf(path, sizeof path, "%s/%s", rt_user_dir, PLAYER_COLOUR_FILE);
+    f = fopen(path, "w");
+    if (f == NULL) return;
+    fprintf(f, "%d\n", g_player_pick);
+    fclose(f);
+}
+
+static void player_colour_load(void)
+{
+    char path[1200];
+    FILE *f;
+    int k = -1;
+    snprintf(path, sizeof path, "%s/%s", rt_user_dir, PLAYER_COLOUR_FILE);
+    f = fopen(path, "r");
+    if (f == NULL) return;
+    if (fscanf(f, "%d", &k) == 1 && k >= NB_GAME_COLOURS && k < NB_PICK_COLOURS) {
+        g_player_pick = k;
+        g_player_colour = 0xFF000000u | k_pick_colours[k];
+    }
+    fclose(f);
+}
+
+/* the game's own colour nearest to colour k */
+static int nearest_game_colour(int k)
+{
+    int i, best = 0;
+    long bd = -1;
+    for (i = 0; i < NB_GAME_COLOURS; i++) {
+        long d = 0;
+        int c;
+        for (c = 0; c < 24; c += 8) {
+            long e = (long)((k_pick_colours[k] >> c) & 0xFF) - (long)((k_pick_colours[i] >> c) & 0xFF);
+            d += e * e;
+        }
+        if (bd < 0 || d < bd) {
+            bd = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+/* the game draws a logo: on Configure Company, what it edits is read, and changed to a choice made in the grids */
+static int on_draw_logo(uint32_t addr)
+{
+    uint32_t at, cat;
+    (void)addr;
+    if (RD32(R.esp) != g_addrs->logo_ret) return 0;
+    at = R.esp + g_addrs->logo_local;
+    cat = R.esp + g_addrs->colour_local;
+    if (g_pick_logo >= 0) {
+        M[at] = (uint8_t)g_pick_logo;
+        WR32(R.esp + 4u, (uint32_t)g_pick_logo);
+        g_pick_logo = -1;
+    }
+    if (g_pick_colour >= 0) {
+        M[cat] = (uint8_t)nearest_game_colour(g_pick_colour);
+        WR32(R.esp + 8u, M[cat]);
+        g_player_pick = g_pick_colour;
+        g_player_colour = g_pick_colour >= NB_GAME_COLOURS ? 0xFF000000u | k_pick_colours[g_pick_colour] : 0;
+        player_colour_save();
+        g_pick_colour = -1;
+    }
+    g_config_logo = M[at];
+    g_config_colour = M[cat];
+    g_config_logos = RD32(R.esp + 28u);
+    g_config_us = (uint32_t)(host_time_us() / 1000u);
+    return 0;
+}
+
+/* where the grids are on the 320 x 200 screen */
+#define PICK_BRIGHT 0x61FF24u
+#define PICK_X 142
+#define PICK_Y 80
+#define SWATCH 10
+#define LOGO_CELL 15   /* a logo 14 x 14 and a gap: the 4 rows end above the MENU button (172) */
+#define LOGO_SIZE 14
+#define LOGOS_Y (PICK_Y + 2 * (SWATCH + 1) + 3)
+
+static int config_shown(void)
+{
+    return g_config_logos != 0 && (uint32_t)(host_time_us() / 1000u) - g_config_us < 300u;
+}
+
+/* a click on Configure Company: in a grid, the choice */
+static void config_click(void)
+{
+    int fx, fy, x, y;
+    mouse_fraction(&fx, &fy);
+    x = (int)((long long)fx * 320 / 65536) - PICK_X;
+    y = (int)((long long)fy * 200 / 65536);
+    if (x < 0) return;
+    if (y >= PICK_Y && y < PICK_Y + 2 * (SWATCH + 1)) {
+        int k = (y - PICK_Y) / (SWATCH + 1) * 12 + x / (SWATCH + 1);
+        if (x / (SWATCH + 1) < 12 && k < NB_PICK_COLOURS) g_pick_colour = k;
+    } else if (y >= LOGOS_Y && y < LOGOS_Y + 4 * LOGO_CELL) {
+        int k = (y - LOGOS_Y) / LOGO_CELL * 10 + x / LOGO_CELL;
+        if (x / LOGO_CELL < 10 && k < NB_LOGOS) g_pick_logo = k;
+    }
+}
+
+static void frame_box(uint32_t *rgb, int w, int h, int x0, int y0, int x1, int y1, uint32_t c)
+{
+    int x, y;
+    for (x = x0; x < x1; x++)
+        for (y = y0; y < y1; y += (y == y0 ? y1 - y0 - 1 : 1)) {
+            if (x >= 0 && x < w && y >= 0 && y < h) rgb[y * w + x] = c;
+            if (y1 - y0 <= 1) break;
+        }
+    for (y = y0; y < y1; y++) {
+        if (x0 >= 0 && x0 < w && y >= 0 && y < h) rgb[y * w + x0] = c;
+        if (x1 - 1 >= 0 && x1 - 1 < w && y >= 0 && y < h) rgb[y * w + x1 - 1] = c;
+    }
+}
+
+/* the grids: the colours, then the logos in the colour chosen (each half size), the choices outlined */
+static void config_grids(uint32_t *rgb, int w, int h)
+{
+    int k, x, y, colour = g_player_pick >= NB_GAME_COLOURS ? g_player_pick : g_config_colour;
+    uint32_t c;
+    if (colour < 0 || colour >= NB_PICK_COLOURS) colour = 0;
+    c = k_pick_colours[colour];
+    for (k = 0; k < NB_PICK_COLOURS; k++) {
+        int x0 = PICK_X + (k % 12) * (SWATCH + 1), y0 = PICK_Y + (k / 12) * (SWATCH + 1);
+        for (y = y0; y < y0 + SWATCH; y++)
+            for (x = x0; x < x0 + SWATCH; x++) rgb[y * w + x] = k_pick_colours[k];
+        frame_box(rgb, w, h, x0, y0, x0 + SWATCH, y0 + SWATCH, k == colour ? PICK_BRIGHT : 0x082800u);
+    }
+    for (k = 0; k < NB_LOGOS; k++) {
+        int x0 = PICK_X + (k % 10) * LOGO_CELL, y0 = LOGOS_Y + (k / 10) * LOGO_CELL;
+        const uint8_t *l = M + g_config_logos + (uint32_t)k * 1024u;
+        for (y = 0; y < LOGO_SIZE; y++)
+            for (x = 0; x < LOGO_SIZE; x++) {
+                uint8_t v = l[((y * 32 + 16) / LOGO_SIZE) * 32 + (x * 32 + 16) / LOGO_SIZE];
+                rgb[(y0 + y) * w + x0 + x] = v == 254 ? c : 0;
+            }
+        if (k == g_config_logo) frame_box(rgb, w, h, x0 - 1, y0 - 1, x0 + LOGO_SIZE + 1, y0 + LOGO_SIZE + 1, PICK_BRIGHT);
+    }
 }
 
 static uint32_t hat_colour(int ped)
@@ -1411,6 +1577,7 @@ int game_mouse_buttons(int buttons)
 {
     int pressed = (buttons & 1) && !(g_menu_buttons & 1);
     g_menu_buttons = buttons;
+    if (pressed && g_addrs != NULL && config_shown()) config_click();
     if (g_menu) {
         if (pressed) g_menu_click = 1;
         return 1;
@@ -1514,6 +1681,10 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     uint64_t age;
     int fx, fy, hw, alpha;
     render_gpu_changed = 0;
+    if (g_addrs != NULL && w == 320 && h == 200 && config_shown()) {
+        config_grids(rgb, w, h);
+        return 0;
+    }
     if (g_addrs == NULL || w < 640 || h != 480 || !in_mission()) return 0;
     g_cw = w;
     if (getenv("SYND_RENDER_TEST") != NULL) {
@@ -1830,6 +2001,8 @@ void additions_install(int game)
         render_set_addrs(&ra);
     }
     hook_add(g_addrs->mission_tick, on_mission_tick);
+    hook_add(g_addrs->draw_logo, on_draw_logo);
+    player_colour_load();
     hook_add(g_addrs->frame_wait, on_frame_wait);
     hook_add(g_addrs->draw_scanner, on_draw_scanner);
 }

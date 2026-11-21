@@ -131,8 +131,11 @@ By day the window menu's *Sun shadows* darkens the tiles a building shades (the 
 lights and other small coloured lights in the objects glow at dusk and night.  Held B also outlines in cyan the
 edges of the floor the squad walks on.
 
-*Company colour* in the window menu paints your agents' hats in one of 16 more colours (the game's own company
-colour and data are unchanged).  *Squad finds routes* (on by default): a move order the game's straight walk
+Configure Company shows every colour and logo in grids under its panel, one click each: the game's 8 colours and
+16 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world
+map and its menus), and the 40 logos in the colour chosen.  Escape in a mission opens a menu in the game's
+briefing look while the mission waits: Resume, time of day, sun shadows, full screen, frames a second, CRT,
+the volumes, squad routes, and Abort mission (the game's Escape).  *Squad finds routes* (on by default): a move order the game's straight walk
 cannot do (another level, a gap or a wall between) is walked as a route over the map's floors and stairs (A* on
 the tiles, with the game's own tile types); an agent stuck on the way gets the order as the game had it.  Only the
 squad's orders: the other people and the enemies' AI are untouched.

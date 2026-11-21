@@ -122,6 +122,20 @@ at the zoomed place at their own size. Recordings letterbox wide frames. Test: `
   reachable). Window menu "Squad finds routes" (`[game] routes`; `SYND_ROUTES=off`). Not yet checked on stairs
   inside buildings (no such map reachable in the headless tests).
 
+## Done: Escape menu, mission lighting, Configure Company grids
+
+- Escape in a mission: the mission's menu (additions.c `mission_menu`), MFNT-0 font (runs per row) x2, the briefing
+  greens; the mission waits in `on_frame_wait`; options from the platform (`host_options`, `host_option_step`, win32
+  posts WM_APP_OPTION); Abort mission holds the game's Escape a few ticks. Tests end missions with `abort(ms)`.
+- Time of day "mission" (default): the mission's palette id (byte table palette_ids[mission]: 1 day amber, 2 night,
+  3 day green, 4 dusk red, 5 dusk sand) sets how much its lights glow (`render_set_mission_night`).
+- Full screen: the cursor clip follows the picture's shape (`follow_picture`).
+- Hats: only the frame's topmost element (the head) takes the company colour (the minigun uses colour 6 too).
+- Configure Company: hook on draw_logo at the screen's own call (logo_ret); its working logo/colour on the stack
+  (Syndicate esp+0xF4/+0xEC, American Revolt +0xEC/+0xF0); grids at 320x200 (24 colours, 40 logos from the game's
+  MLOGOS in memory, 254 = the colour); the extra colour in `company_colour.txt` (user folder); Accept stores the
+  game's nearest colour (+0x0F) and logo (+0x10). The window menu's company colour item was removed.
+
 ## Still to do
 
 Check routes on stairs in a city mission (with the user); tune the night look and shadow strength from the user's
