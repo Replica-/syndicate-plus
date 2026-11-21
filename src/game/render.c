@@ -288,18 +288,30 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
     }
 }
 
+/* `hat`: the colour of the hat, the frame's topmost element (the head; what the agent holds uses colour 6 too) */
 static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, float fay, uint32_t hat)
 {
     uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), f = frames + (uint32_t)frame * 8u;
     uint32_t e = rd16(f);
-    int guard = 0;
+    int guard = 0, top = 32767;
+    if (hat != 0) {
+        /* the top of the frame */
+        uint32_t k = e;
+        for (guard = 0; guard <= 64; guard++) {
+            int oy = (int16_t)rd16(elements + k * 10u + 4u);
+            if (oy < top) top = oy;
+            k = rd16(elements + k * 10u + 8u);
+            if (k == 0) break;
+        }
+        guard = 0;
+    }
     for (;;) {
         uint32_t ea = elements + e * 10u;
         int sw, sh, id = rd16(ea) / 6, ox = (int16_t)rd16(ea + 2u), oy = (int16_t)rd16(ea + 4u);
         const uint8_t *s = sprite(id, &sw, &sh);
         if (s != NULL)
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
-                hat);
+                oy <= top + 2 ? hat : 0);
         e = rd16(ea + 8u);
         if (e == 0 || ++guard > 64) break;
     }
