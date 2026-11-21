@@ -104,7 +104,7 @@ They load like any save.  Lines 4 to 10 are the player's: a save made in one of 
 first empty line from 4 on, and a save from before (in lines 1 to 3) moves to an empty line when the first auto
 save is made.  This works in both games and every language (`src/game/additions.c`).
 
-### Keys in missions
+### In missions
 
 W, A, S and D scroll the view as the arrow keys do (only in missions: in the menus they are letters).  1 to 4
 select an agent, as in the original; pressed twice within 0.4 s they also bring the view to that agent.
