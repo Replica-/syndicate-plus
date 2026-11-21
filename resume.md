@@ -94,6 +94,13 @@ picture, palette indices 11/14); the pointer is the game's HPOINTER entry in use
 American Revolt + 0x14) drawn at the newest mouse position (top left 16 px up-left). Nothing over the city is
 copied from the game's picture any more. During shooting the renderer still matches the game (99.5-99.7%).
 
+Third play test (corpses disappearing and coming back, keyboard lag, agents sliding before turning): at cycles
+8000 (and 16000) the game makes only 10.4 updates a second (from 30000 up and unlimited: ~20), so the window's
+default is now 60000; the snapshots keep each thing's frame and on-map byte, so the pose and what is shown go
+with the position (the sliding: the pose was read from the newest data while the position was behind); a thing is
+shown unless bit 0 of its +0xa byte is set (the game's own rule, 0x40d528; the corpses: their byte left the list
+of values accepted); the playback clock is 1 tick behind (was 1.5). Corpses not checked on a real death.
+
 ## Next: group 4, the new renderer (fresh MIT code)
 
 Plan: (1) read the game's decompressed data from memory: in English Syndicate the pointers are at `0x44535c` (map,

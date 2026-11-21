@@ -30,16 +30,15 @@ static RenderAddrs g_ra;
 
 typedef struct ObjList {
     uint32_t offset, size, count; /* in the level data */
-    uint8_t on_map[3]; /* values of the byte at +0xa that mean "on the map" (0: none) */
 } ObjList;
 
 /* people, cars, objects, weapons, effects (FreeSynd's leveldata.h: LevelDataAll) */
 static const ObjList k_lists[] = {
-    {0x8008u, 0x5cu, 256, {4, 0, 0}},
-    {0xdc08u, 0x2au, 64, {4, 0x0c, 0}},
-    {0xe688u, 0x1eu, 400, {4, 6, 7}},
-    {0x11568u, 0x24u, 512, {4, 0, 0}},
-    {0x15d68u, 0x1eu, 256, {4, 0, 0}},
+    {0x8008u, 0x5cu, 256},
+    {0xdc08u, 0x2au, 64},
+    {0xe688u, 0x1eu, 400},
+    {0x11568u, 0x24u, 512},
+    {0x15d68u, 0x1eu, 256},
 };
 
 static void snaps_reset(void);
@@ -202,11 +201,13 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, uint32_t hat)
 #define NB_OBJS (256 + 64 + 400 + 512 + 256)
 #define TELEPORT 512   /* a move of more than 2 tiles in one tick is not drawn in between */
 #define NB_HIST 8
-#define PLAY_BEHIND 1.5
+#define PLAY_BEHIND 1.0
 
 typedef struct Snap {
     int32_t vx, vy;              /* the view, in world units */
     int16_t pos[NB_OBJS][3];
+    uint16_t frame[NB_OBJS];     /* the frame shown (+0x10): the pose goes with the position */
+    uint8_t loc[NB_OBJS];        /* on the map or not (+0xa) */
 } Snap;
 
 static Snap g_hist[NB_HIST];
@@ -235,6 +236,8 @@ void render_tick(uint64_t now_us)
             s->pos[n][0] = (int16_t)rd16(a + 4u);
             s->pos[n][1] = (int16_t)rd16(a + 6u);
             s->pos[n][2] = (int16_t)rd16(a + 8u);
+            s->frame[n] = rd16(a + 0x10u);
+            s->loc[n] = M[a + 0xau];
         }
     }
     if (g_nticks > 0 && now_us > g_last_tick_us && now_us - g_last_tick_us < 500000u)
@@ -351,6 +354,7 @@ typedef struct Obj {
     int z;        /* the level it stands on */
     int x, y, zw; /* where it is drawn (world units) */
     uint32_t a;   /* its record */
+    int frame;    /* the frame it shows */
     int ped;      /* its number among the people, -1 for others */
 } Obj;
 
@@ -383,7 +387,7 @@ static void draw_obj(const Target *t, const Obj *o)
         g_ped_drawn[o->ped] = 1;
         if (render_hat_colour != NULL) hat = render_hat_colour(o->ped);
     }
-    draw_frame(t, rd16(o->a + 0x10u), fx + render_obj_dx, fy + render_obj_dy, hat);
+    draw_frame(t, o->frame, fx + render_obj_dx, fy + render_obj_dy, hat);
 }
 
 void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1, uint64_t now_us)
@@ -411,10 +415,12 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         uint32_t i;
         for (i = 0; i < l->count; i++, n++) {
             uint32_t a = LEVEL + l->offset + i * l->size;
-            uint8_t loc = M[a + 0xau];
-            int x, y, z;
+            /* as it was at the snapshot drawn (the later of the two: what appears or goes, and the pose) */
+            uint8_t loc = t256 >= 0 ? sb->loc[n] : M[a + 0xau];
+            int x, y, z, frame = t256 >= 0 ? sb->frame[n] : rd16(a + 0x10u);
             if (nobj == 2048) break;
-            if (loc == 0 || (loc != l->on_map[0] && loc != l->on_map[1] && loc != l->on_map[2])) continue;
+            /* the game's rule (its list of things to draw, 0x40d528): shown unless bit 0 is set */
+            if (loc == 0 || (loc & 1u)) continue;
             if (t256 >= 0) {
                 x = lerp(sa->pos[n][0], sb->pos[n][0], t256);
                 y = lerp(sa->pos[n][1], sb->pos[n][1], t256);
@@ -431,6 +437,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             objs[nobj].y = y;
             objs[nobj].zw = z;
             objs[nobj].a = a;
+            objs[nobj].frame = frame;
             objs[nobj].ped = li == 0 ? (int)i : -1;
             nobj++;
         }

@@ -1402,8 +1402,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     g_music_vol = (int)GetPrivateProfileIntW(L"sound", L"music_volume", 100, g_ini);
     g_sound_vol = (int)GetPrivateProfileIntW(L"sound", L"sound_volume", 100, g_ini);
     rt_set_volumes(g_music_vol, g_sound_vol);
-    /* the speed of GOG's DOSBox (cycles=8000): the game's motion as it was */
-    rt_set_cpu_speed((int)GetPrivateProfileIntW(L"game", L"cycles", 8000, g_ini));
+    /* a limit to the emulated CPU, high enough for the game to make its ~20 updates a second (GOG's DOSBox
+     * speed, 8000, gives it only 10, and the game feels slow) */
+    rt_set_cpu_speed((int)GetPrivateProfileIntW(L"game", L"cycles", 60000, g_ini));
     g_fps_on = GetPrivateProfileIntW(L"video", L"fps", 1, g_ini) != 0;
     rt_set_show_fps(g_fps_on);
     if (music_dir[0] == 0)

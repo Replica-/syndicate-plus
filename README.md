@@ -161,8 +161,9 @@ the people, vehicles, objects and the view placed on a steady clock that runs th
 their average rate, about one and a half updates behind (the game's updates come unevenly, a few at once), so
 they move smoothly and evenly; the pointer and the agents' numbers are drawn with the game's own sprites (the
 pointer where the mouse is now).  At most 60
-frames a second, each made just before the display's refresh that shows it.  The emulated CPU runs
-at the speed of GOG's DOSBox (`[game] cycles=8000` in `Syndicate64.ini`).  The frames a second shown are at the
+frames a second, each made just before the display's refresh that shows it.  The emulated CPU is
+limited to 60000 instructions a millisecond (`[game] cycles` in `Syndicate64.ini`): enough for the game's ~20
+updates a second (GOG's DOSBox speed, 8000, gives it only 10).  The frames a second shown are at the
 top right (window menu: *Show frames a second*).  Both games, every language; `SYND_RENDER=off` turns it off.
 
 ## Tests
