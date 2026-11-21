@@ -178,6 +178,9 @@ typedef struct Target {
 static HostCityQuad *g_quads;
 static int g_nquads, g_quads_cap;
 
+static int g_cut = -1;   /* the tiles of this level and above are drawn almost see-through (-1: none) */
+static int g_translucent; /* the tile being put is one of them */
+#define SEE_THROUGH_ALPHA 60 /* of 255, as FreeSynd's */
 static int g_shade; /* the shadow of the tile being put (0..127) */
 
 static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat, int glow)
@@ -199,7 +202,7 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->y = y;
     q->image = (uint16_t)image;
     q->flip = (uint8_t)((flipped != 0) | (image < IMAGE_SPRITES ? g_shade << 1 : 0));
-    q->glow = (uint8_t)glow;
+    q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0));
     q->hat = hat != 0 ? (hat | 0xFF000000u) : 0;
 }
 
@@ -211,7 +214,6 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
 /* ---- the zoom: the city drawn `g_zoom` times its size about the point g_zcx, g_zcy of the frame ---- */
 static double g_zoom = 1.0;
 static float g_zcx, g_zcy;
-static int g_cut = -1; /* tile levels above this one are not drawn (-1: all are) */
 
 void render_set_cut(int level)
 {
@@ -235,6 +237,19 @@ static float zoom_y(float y)
     return g_zcy + (y - g_zcy) * (float)g_zoom;
 }
 
+/* a pixel of a tile or sprite (blended over what is there when it is drawn see-through) */
+static void put_pixel(const Target *t, int x, int y, uint32_t c)
+{
+    uint32_t *p = &t->rgb[y * t->w + x];
+    if (g_translucent) {
+        uint32_t o = *p, r = 0, k;
+        for (k = 0; k < 24; k += 8)
+            r |= ((((c >> k) & 0xFF) * SEE_THROUGH_ALPHA + ((o >> k) & 0xFF) * (255u - SEE_THROUGH_ALPHA)) / 255u) << k;
+        c = r;
+    }
+    *p = c;
+}
+
 /* nearest pixel: src drawn `z` times its size with its top left corner at ox, oy */
 static void blit_scaled(const Target *t, const uint8_t *src, int sw, int sh, float ox, float oy, float z, int flipped,
                         uint32_t hat)
@@ -253,7 +268,7 @@ static void blit_scaled(const Target *t, const uint8_t *src, int sw, int sh, flo
             if (sx < 0 || sx >= sw) continue;
             c = src[sy * sw + (flipped ? sw - 1 - sx : sx)];
             if (c == 255) continue;
-            t->rgb[y * t->w + x] = hat != 0 && c == HAT_INDEX ? hat : t->pal[c];
+            put_pixel(t, x, y, hat != 0 && c == HAT_INDEX ? hat : t->pal[c]);
         }
     }
 }
@@ -283,7 +298,7 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
             int tx = dx + x;
             uint8_t c = src[y * sw + (flipped ? sw - 1 - x : x)];
             if (c == 255 || tx < t->x0 || tx >= t->x1) continue;
-            t->rgb[ty * t->w + tx] = hat != 0 && c == HAT_INDEX ? hat : t->pal[c];
+            put_pixel(t, tx, ty, hat != 0 && c == HAT_INDEX ? hat : t->pal[c]);
         }
     }
 }
@@ -798,13 +813,13 @@ static void line(uint32_t *rgb, int w, int h, float x0, float y0, float x1, floa
     }
 }
 
-void render_floor_outline(uint32_t *rgb, int w, int h, int level, uint32_t colour, int x0, int y0, int x1, int y1)
+void render_floor_outline(uint32_t *rgb, int w, int h, int level, uint32_t colour, int x0, int y0, int x1, int y1,
+                          int (*walkable)(int x, int y, int z))
 {
-    uint32_t map, cols;
+    uint32_t map;
     int mx, my, mz, tx, ty;
     if (g_ra.map == 0 || level < 0) return;
     map = rd32(P_MAP);
-    cols = map + 12u;
     mx = (int)rd32(map);
     my = (int)rd32(map + 4u);
     mz = (int)rd32(map + 8u);
@@ -812,11 +827,10 @@ void render_floor_outline(uint32_t *rgb, int w, int h, int level, uint32_t colou
     for (ty = 0; ty < my; ty++)
         for (tx = 0; tx < mx; tx++) {
             static const int nb[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
-            /* the corners of the top of the square, clockwise from x, y */
+            /* the corners of the floor of the cell, clockwise from x, y */
             float cx[4], cy[4];
-            int k, z = (level + 1) * 128;
-            uint32_t col = rd32(cols + (uint32_t)(tx + ty * mx) * 4u);
-            if (tile(M[col + (uint32_t)level]) == NULL) continue;
+            int k, z = level * 128;
+            if (!walkable(tx, ty, level)) continue;
             for (k = 0; k < 4; k++) {
                 int wx = (tx + (k == 1 || k == 2)) * 256, wy = (ty + (k >= 2)) * 256;
                 project_f(wx, wy, z, &cx[k], &cy[k]);
@@ -824,14 +838,10 @@ void render_floor_outline(uint32_t *rgb, int w, int h, int level, uint32_t colou
                 cy[k] = zoom_y(cy[k] + (float)render_obj_dy);
             }
             if (cx[0] < x0 - 64 || cx[0] > x1 + 64 || cy[0] < y0 - 64 || cy[0] > y1 + 64) continue;
-            /* an edge where the floor ends */
+            /* an edge where one cannot walk on (on the level, nor just above or below it: stairs) */
             for (k = 0; k < 4; k++) {
                 int nx = tx + nb[k][0], ny = ty + nb[k][1];
-                uint32_t ncol;
-                if (nx >= 0 && ny >= 0 && nx < mx && ny < my) {
-                    ncol = rd32(cols + (uint32_t)(nx + ny * mx) * 4u);
-                    if (tile(M[ncol + (uint32_t)level]) != NULL) continue;
-                }
+                if (walkable(nx, ny, level) || walkable(nx, ny, level - 1) || walkable(nx, ny, level + 1)) continue;
                 line(rgb, w, h, cx[k], cy[k], cx[(k + 1) & 3], cy[(k + 1) & 3], x0, y0, x1, y1, colour);
             }
         }
@@ -1141,7 +1151,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             }
             for (tz = 0; tz < mz; tz++) {
                 int tid = M[col + (uint32_t)tz];
-                const uint8_t *tl = g_cut >= 0 && tz > g_cut ? NULL : tile(tid);
+                const uint8_t *tl = tile(tid);
                 int fx, fy;
                 if (tl != NULL) {
                     project(tx * 256, ty * 256, tz * 128, &fx, &fy);
@@ -1150,9 +1160,11 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         float ffx, ffy;
                         project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
                         g_shade = t.gpu ? sun_shade(cols, mx, my, mz, tx, ty, tz) : 0;
+                        g_translucent = g_cut >= 0 && tz >= g_cut;
                         put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
                             ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
                         g_shade = 0;
+                        g_translucent = 0;
                         if (t.gpu) tile_lights_at(tid, ffx + (float)render_tile_dx, ffy + (float)render_tile_dy);
                         if (g_ndrawn < NB_DRAWN) {
                             g_drawn[g_ndrawn].id = (uint8_t)tid;

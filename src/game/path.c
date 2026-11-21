@@ -68,6 +68,12 @@ static int standable(int x, int y, int z)
     return above == T_NONE || is_slope(above) ? 1 : is_floor(above) ? 0 : above != T_WALL && above != T_RAIL;
 }
 
+int path_walkable(int x, int y, int z)
+{
+    if (!g_have_types || !render_map_size(&g_mx, &g_my, &g_mz)) return 0;
+    return z >= 1 && standable(x, y, z - 1);
+}
+
 /* a slope's way up (dx, dy): towards the neighbour whose floor is a level higher; 0 if it cannot be told */
 static int slope_up(int x, int y, int z, int *dx, int *dy)
 {

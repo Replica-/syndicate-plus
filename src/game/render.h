@@ -25,10 +25,12 @@ void render_set_view_f(double vx, double vy);
 /* the city drawn `zoom` times its size about the point cx, cy of the frame (render_project and render_ped_place
  * give the zoomed places) */
 void render_set_zoom(double zoom, float cx, float cy);
-/* the tiles above level `level` (z / 128) are not drawn, to see inside the buildings; -1: all are */
+/* the tiles of level `level` (z / 128) and above are drawn almost see-through, to see inside the buildings; -1:
+ * none are */
 void render_set_cut(int level);
-/* the edges of the floors of level `level` (where the tiles of that level end), in the last city's view */
-void render_floor_outline(uint32_t *rgb, int w, int h, int level, uint32_t colour, int x0, int y0, int x1, int y1);
+/* the outline of the cells one can walk in at level `level` (`walkable`), in the last city's view */
+void render_floor_outline(uint32_t *rgb, int w, int h, int level, uint32_t colour, int x0, int y0, int x1, int y1,
+                          int (*walkable)(int x, int y, int z));
 
 /* how a tile lights up at dusk and at night (the light editor) */
 enum { RENDER_GLOW_NONE, RENDER_GLOW_BRIGHT, RENDER_GLOW_FULL };   /* what of it shines */

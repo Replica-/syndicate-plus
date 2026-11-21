@@ -121,6 +121,7 @@ static const char k_city_shader[] =
     "    int2 q = (int2)b;\n"
     "    float4 c = lerp(lerp(texel(q, i), texel(q + int2(1, 0), i), f.x),\n"
     "                    lerp(texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f.x), f.y);\n"
+    "    if (i.glow & 128) c *= 60.0 / 255.0;\n" /* drawn see-through (B held) */
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
     "}\n"
     /* lit: the picture, and what glows in it (covering what glowed under it) */
@@ -136,6 +137,7 @@ static const char k_city_shader[] =
     "    o.c = lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);\n"
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x),\n"
     "               lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
+    "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
     "    return o;\n"
     "}\n";
 

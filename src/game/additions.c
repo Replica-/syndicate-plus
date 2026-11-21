@@ -1312,11 +1312,11 @@ static uint32_t hat_colour(int ped)
 #define LABEL_DY (-16 + VIEW_TOP - 56)
 
 static int g_cut_level = -1;
-#define FLOOR_OUTLINE 0x60E8FFu
+#define FLOOR_OUTLINE 0x5AFF5Au
 
-/* B held: the tiles drawn up to the floor the highest agent of the squad stands on (an agent stands on the top of
- * the tile level under its height: z / 128 - 1), so the walls and what stands on that floor are not drawn */
-#define SEE_INSIDE_LEVELS (-1)
+/* B held (as FreeSynd's): the tiles of the level the highest agent of the squad is in (z / 128) and above are drawn
+ * almost see-through, and where one can walk at that level is outlined in green */
+#define SEE_INSIDE_LEVELS 0
 
 /* the city on the playback clock (render.c), with the pointer and the squad's numbers over it */
 static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb)
@@ -1326,7 +1326,7 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
     g_overlay_pal = pal;
     render_hat_colour = hat_colour;
     move_view();
-    /* B held: the tiles above the squad's floor are not drawn */
+    /* B held: the buildings from the squad's level up see-through */
     {
         int level = -1;
         if (g_see_inside) {
@@ -1347,7 +1347,8 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
         for (x = VIEW_LEFT; x < g_cw; x++) rgb[y * g_cw + x] = gpu ? 0xFF000000u : 0;
     render_city(gpu ? NULL : rgb, g_cw, 480, pal, VIEW_LEFT, VIEW_TOP, g_cw, VIEW_BOTTOM, rt_display_us);
     /* B held: where the floor the squad walks on ends */
-    if (g_cut_level >= 0) render_floor_outline(rgb, g_cw, 480, g_cut_level, FLOOR_OUTLINE, VIEW_LEFT, VIEW_TOP, g_cw, VIEW_BOTTOM);
+    if (g_cut_level >= 0)
+        render_floor_outline(rgb, g_cw, 480, g_cut_level, FLOOR_OUTLINE, VIEW_LEFT, VIEW_TOP, g_cw, VIEW_BOTTOM, path_walkable);
     /* the pointer: the game's (the entry of its pointer table it uses), drawn where the mouse is now, as the game
      * draws it (its top left corner 16 pixels up and left of the mouse; the game's mouse runs over its 400 lines
      * from line 40 of the frame); over the side panel and the bars the game's own picture shows it */
