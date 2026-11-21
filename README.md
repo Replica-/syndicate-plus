@@ -157,8 +157,10 @@ window size), with vsync.  GDI is only used when Direct3D cannot start.
 
 The original engine draws the city about 10 to 18 times a second (in DOSBox too).  In missions this version draws
 the city itself (`src/game/render.c`, from the game's own data in memory) at every frame shown, 70 a second, with
-the people, vehicles, objects and the view placed between the game's last two updates (one update behind), so
-they move smoothly; the game's pointer and the agents' numbers are taken from its picture.  The emulated CPU runs
+the people, vehicles, objects and the view placed on a steady clock that runs through the game's updates at
+their average rate, about one and a half updates behind (the game's updates come unevenly, a few at once), so
+they move smoothly and evenly; the game's pointer and the agents' numbers are taken from its picture.  At most 60
+frames a second, each made just before the display's refresh that shows it.  The emulated CPU runs
 at the speed of GOG's DOSBox (`[game] cycles=8000` in `Syndicate64.ini`).  The frames a second shown are at the
 top right (window menu: *Show frames a second*).  Both games, every language; `SYND_RENDER=off` turns it off.
 

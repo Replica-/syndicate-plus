@@ -36,6 +36,10 @@ void host_unlock(void);
 /* log a line (UTF-8, no newline needed) */
 void host_log(const char *line);
 
+/* the display's timing: the time of a recent vertical blank (host_time_us's clock) and the refresh period, both in
+ * microseconds; 0 when it is not known (frames are then made at a steady rate) */
+int host_display_timing(uint64_t *vblank_us, uint64_t *period_us);
+
 /* the original game files built into the program (a pack written by tools/pack_game.py), used when no game
  * folder is given; NULL when the program has none */
 const uint8_t *host_game_pack(size_t *size);

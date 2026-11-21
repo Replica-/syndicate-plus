@@ -249,6 +249,13 @@ static int load_pack(const char *path)
     return 1;
 }
 
+int host_display_timing(uint64_t *vblank_us, uint64_t *period_us)
+{
+    (void)vblank_us;
+    (void)period_us;
+    return 0;
+}
+
 void host_fatal(const char *text)
 {
     fprintf(stderr, "fatal: %s\n", text);

@@ -633,14 +633,36 @@ static void cpu_speed_limit(uint64_t *now)
     }
 }
 
-/* ---- the frames made: as many as the display shows (70 a second at first, as the VGA) ---- */
-static volatile uint32_t g_frame_us = 14286u;
+/* ---- the frames made: at most 60 a second, each a little before the display's refresh that shows it ---- */
+#define FRAME_LEAD_US 5000u /* made this long before the refresh */
+#define MIN_FRAME_US 16667u /* at most 60 frames a second */
+static volatile uint32_t g_frame_us = 16667u;
+uint64_t rt_display_us; /* when the frame being made is shown */
 
 void rt_set_frame_rate(int hz)
 {
     if (hz < 30) hz = 30;
-    if (hz > 360) hz = 360;
+    if (hz > 60) hz = 60;
     g_frame_us = 1000000u / (uint32_t)hz;
+}
+
+/* when the next frame is made, after one made at `now`, and when it is shown */
+static uint64_t next_frame_time(uint64_t now, uint64_t *shown)
+{
+    uint64_t vblank, period, k, t;
+    if (!host_display_timing(&vblank, &period) || period < 2000u || period > 100000u) {
+        *shown = now + g_frame_us;
+        return now + g_frame_us;
+    }
+    /* the refreshes to use: every one, or every 2nd, 3rd ... to stay at 60 a second at most */
+    k = (MIN_FRAME_US + period - 1000u) / period;
+    if (k < 1) k = 1;
+    period *= k;
+    /* the first refresh far enough ahead to make the frame before it */
+    t = vblank;
+    if (t < now + FRAME_LEAD_US) t += ((now + FRAME_LEAD_US - t) / period + 1) * period;
+    *shown = t;
+    return t - FRAME_LEAD_US;
 }
 
 /* ---- frames a second ---- */
@@ -796,9 +818,10 @@ void rt_poll(void)
     }
     audio_poll();
     if (now >= g_next_frame) {
+        static uint64_t shown;
+        rt_display_us = shown > now ? shown : now;
         present();
-        g_next_frame += g_frame_us;
-        if (now > g_next_frame + 100000u) g_next_frame = now + g_frame_us;
+        g_next_frame = next_frame_time(now, &shown);
         delivered = 1;
     }
     /* pacing: frequent polls with nothing to do mean the guest is waiting for time to pass */

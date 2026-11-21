@@ -13,8 +13,9 @@ typedef struct RenderAddrs {
 void render_set_addrs(const RenderAddrs *a);
 
 /* draws the city into the rectangle x0..x1, y0..y1 of `rgb` (w x h, 0x00RRGGBB), in the game's projection (a
- * 640 x 480 frame: the map from x 128, y 40), with the colours of `pal`.  now_us 0: as the game is now; else
- * between the two last ticks (render_tick), one tick behind, so that things move smoothly at any frame rate */
+ * 640 x 480 frame: the map from x 128, y 40), with the colours of `pal`.  now_us 0: as the game is now; else as it
+ * is shown at that time on a steady playback clock about 1.5 ticks behind the game (render_tick), so that things
+ * move smoothly and evenly at any frame rate */
 void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1, uint64_t now_us);
 /* a tick of the mission: where things are now */
 void render_tick(uint64_t now_us);

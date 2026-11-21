@@ -252,6 +252,20 @@ static void paint(HWND h)
     EndPaint(h, &ps);
 }
 
+/* the display's timing from the desktop compositor (its clock is QueryPerformanceCounter's, as host_time_us's) */
+int host_display_timing(uint64_t *vblank_us, uint64_t *period_us)
+{
+    DWM_TIMING_INFO ti;
+    LARGE_INTEGER f;
+    memset(&ti, 0, sizeof ti);
+    ti.cbSize = sizeof ti;
+    if (FAILED(DwmGetCompositionTimingInfo(NULL, &ti)) || ti.qpcRefreshPeriod == 0) return 0;
+    QueryPerformanceFrequency(&f);
+    *vblank_us = (uint64_t)((double)ti.qpcVBlank * 1000000.0 / (double)f.QuadPart);
+    *period_us = (uint64_t)((double)ti.qpcRefreshPeriod * 1000000.0 / (double)f.QuadPart);
+    return 1;
+}
+
 /* ==== sound (waveOut, fed from a ring the game thread fills) ============================================ */
 #define AUD_RATE 44100
 #define AUD_RING 32768u   /* frames */

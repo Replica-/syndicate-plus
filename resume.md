@@ -75,7 +75,13 @@ city as it is now; the hats are coloured in the renderer. Measured: ~46 differen
 walk, gaps 22 ms on average. All six programs (99.7% match in Syndicate, 99.6% in American Revolt; vehicles are
 on the map with +0xa = 4 or 0x0c); `SYND_RENDER=off` turns it off.
 
-The core makes a frame for each refresh of the display (`rt_set_frame_rate`, the window reads the refresh rate).
+Pacing (after the user's play test: smoother, but uneven, wants 60 a second): a playback clock (render.c
+`playback`) goes through a history of 8 tick snapshots at the ticks' average rate, 1.5 ticks behind; frames at
+most 60 a second, each made 5 ms before the display refresh that shows it (`next_frame_time` in core.c,
+`host_display_timing` from DWM in the window), drawn for that time (`rt_display_us`). Measured headless: frames
+17.8 ms apart (sd 1 ms), a walking agent moves 0.57 px every frame evenly. The pointer is copied from around the
+game's own pointer position (sprite table pointer + 0x7c, American Revolt + 0x84). Note: ffmpeg gdigrab by window
+title cannot see the Direct3D flip-model window (it shows a frozen picture); capture `desktop` instead.
 
 To do next: hear back from the user on how it feels in the window; the animation frames still change
 only at the game's ticks (walk cycles); then widescreen and zoom (the renderer can draw any rectangle at any

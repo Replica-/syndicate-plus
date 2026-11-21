@@ -805,13 +805,13 @@ static void smooth_city(const uint32_t *pal, uint32_t *rgb)
     render_city(now_city, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, 0);
     for (y = VIEW_TOP; y < VIEW_BOTTOM; y++)
         for (x = VIEW_LEFT; x < 640; x++) rgb[y * 640 + x] = 0;
-    render_city(rgb, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, host_time_us());
-    /* the pointer (the game's mouse runs over the 400 lines of its picture, from line 40 of the frame) */
-    mouse_get(&mx, &my, NULL);
-    my += VIEW_TOP;
-    /* the game draws it where it last saw the mouse, up to a frame of the game ago: around where it is now */
-    for (y = my - 96; y < my + 96; y++)
-        for (x = mx - 96; x < mx + 96; x++)
+    render_city(rgb, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, rt_display_us);
+    /* the pointer, where the game has it (in its 400 lines from line 40 of the frame); it drew it there up to a
+     * frame of its own ago, so a little around */
+    mx = (int16_t)RD16(g_addrs->data + (g_addrs->ar ? 0x84u : 0x7cu));
+    my = (int16_t)RD16(g_addrs->data + (g_addrs->ar ? 0x86u : 0x7eu)) + VIEW_TOP;
+    for (y = my - 24; y < my + 40; y++)
+        for (x = mx - 24; x < mx + 40; x++)
             if (x >= VIEW_LEFT && x < 640 && y >= VIEW_TOP && y < VIEW_BOTTOM && game[y * 640 + x] != now_city[y * 640 + x])
                 rgb[y * 640 + x] = game[y * 640 + x];
     /* the numbers over the agents of the squad, moved with them */

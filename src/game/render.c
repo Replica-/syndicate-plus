@@ -195,18 +195,25 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, uint32_t hat)
     }
 }
 
-/* ---- where things are: two snapshots, one a tick, to draw between them ---- */
+/* ---- where things are: a snapshot at each tick of the game, drawn on a steady clock ----
+ * The game's ticks come unevenly (a few at once, then a wait), so drawing between the two last ones by the time
+ * they came makes things rush and stop.  Instead a playback clock goes through the snapshots at the ticks' average
+ * rate, about PLAY_BEHIND ticks behind the newest, and is pulled back gently when it drifts. */
 #define NB_OBJS (256 + 64 + 400 + 512 + 256)
-#define TELEPORT 512 /* a move of more than 2 tiles in one tick is not drawn in between */
+#define TELEPORT 512   /* a move of more than 2 tiles in one tick is not drawn in between */
+#define NB_HIST 8
+#define PLAY_BEHIND 1.5
 
 typedef struct Snap {
-    uint64_t us;
     int32_t vx, vy;              /* the view, in world units */
     int16_t pos[NB_OBJS][3];
 } Snap;
 
-static Snap g_snap[2];           /* [0] the tick before, [1] the last */
-static int g_nsnaps;
+static Snap g_hist[NB_HIST];
+static uint32_t g_nticks;        /* snapshots taken (the newest: g_nticks - 1) */
+static uint64_t g_last_tick_us, g_play_us;
+static double g_period_us = 50000.0; /* the ticks' average period */
+static double g_play = -1.0;     /* the playback clock, in ticks */
 static int32_t g_vx, g_vy;       /* the view of the frame being drawn */
 
 static void read_view(int32_t *vx, int32_t *vy)
@@ -217,31 +224,58 @@ static void read_view(int32_t *vx, int32_t *vy)
 
 void render_tick(uint64_t now_us)
 {
+    Snap *s = &g_hist[g_nticks % NB_HIST];
     int li, n = 0;
-    g_snap[0] = g_snap[1];
-    g_snap[1].us = now_us;
-    read_view(&g_snap[1].vx, &g_snap[1].vy);
+    read_view(&s->vx, &s->vy);
     for (li = 0; li < (int)(sizeof k_lists / sizeof k_lists[0]); li++) {
         const ObjList *l = &k_lists[li];
         uint32_t i;
         for (i = 0; i < l->count; i++, n++) {
             uint32_t a = LEVEL + l->offset + i * l->size;
-            g_snap[1].pos[n][0] = (int16_t)rd16(a + 4u);
-            g_snap[1].pos[n][1] = (int16_t)rd16(a + 6u);
-            g_snap[1].pos[n][2] = (int16_t)rd16(a + 8u);
+            s->pos[n][0] = (int16_t)rd16(a + 4u);
+            s->pos[n][1] = (int16_t)rd16(a + 6u);
+            s->pos[n][2] = (int16_t)rd16(a + 8u);
         }
     }
-    if (g_nsnaps < 2) g_nsnaps++;
+    if (g_nticks > 0 && now_us > g_last_tick_us && now_us - g_last_tick_us < 500000u)
+        g_period_us = g_period_us * 0.95 + (double)(now_us - g_last_tick_us) * 0.05;
+    g_last_tick_us = now_us;
+    g_nticks++;
 }
 
 static void snaps_reset(void)
 {
-    g_nsnaps = 0;
+    g_nticks = 0;
+    g_play = -1.0;
 }
 
 void render_reset(void)
 {
     snaps_reset();
+}
+
+/* the playback clock at `now_us`: the snapshots to draw between and how far (0..256); 0 when there are too few */
+static int playback(uint64_t now_us, const Snap **a, const Snap **b, int *t256)
+{
+    double newest, target;
+    uint32_t i0;
+    if (g_nticks < 2) return 0;
+    newest = (double)(g_nticks - 1);
+    target = newest - PLAY_BEHIND;
+    if (target < 0) target = 0;
+    if (g_play < 0 || g_play > newest || g_play < newest - (NB_HIST - 2) || g_play < target - 3.0) {
+        g_play = target;
+    } else {
+        if (now_us > g_play_us) g_play += (double)(now_us - g_play_us) / g_period_us;
+        g_play += (target - g_play) * 0.05; /* drift back slowly: no visible jump */
+        if (g_play > newest) g_play = newest;
+    }
+    g_play_us = now_us;
+    i0 = (uint32_t)g_play;
+    *a = &g_hist[i0 % NB_HIST];
+    *b = i0 + 1 < g_nticks ? &g_hist[(i0 + 1) % NB_HIST] : *a;
+    *t256 = (int)((g_play - (double)i0) * 256.0);
+    return 1;
 }
 
 static int32_t lerp(int32_t a, int32_t b, int t) /* t 0..256 */
@@ -317,14 +351,13 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     map = rd32(P_MAP);
     cols = map + 12u;
     int mx = (int)rd32(map), my = (int)rd32(map + 4u), mz = (int)rd32(map + 8u), nobj = 0, li, s, k = 0, n = 0, t256;
+    const Snap *sa = NULL, *sb = NULL;
     Target t = {rgb, w, h, x0, y0, x1, y1, pal};
     if (mx <= 0 || my <= 0 || mz <= 0 || mx > 256 || my > 256 || mz > 16) return;
-    /* between the two last ticks (now_us 0: as the game is now) */
-    if (now_us != 0 && g_nsnaps == 2 && g_snap[1].us > g_snap[0].us) {
-        uint64_t dt = g_snap[1].us - g_snap[0].us, since = now_us > g_snap[1].us ? now_us - g_snap[1].us : 0;
-        t256 = since >= dt ? 256 : (int)(since * 256u / dt);
-        g_vx = lerp(g_snap[0].vx, g_snap[1].vx, t256);
-        g_vy = lerp(g_snap[0].vy, g_snap[1].vy, t256);
+    /* on the playback clock (now_us 0: as the game is now) */
+    if (now_us != 0 && playback(now_us, &sa, &sb, &t256)) {
+        g_vx = lerp(sa->vx, sb->vx, t256);
+        g_vy = lerp(sa->vy, sb->vy, t256);
     } else {
         t256 = -1;
         read_view(&g_vx, &g_vy);
@@ -340,9 +373,9 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             if (nobj == 2048) break;
             if (loc == 0 || (loc != l->on_map[0] && loc != l->on_map[1] && loc != l->on_map[2])) continue;
             if (t256 >= 0) {
-                x = lerp(g_snap[0].pos[n][0], g_snap[1].pos[n][0], t256);
-                y = lerp(g_snap[0].pos[n][1], g_snap[1].pos[n][1], t256);
-                z = lerp(g_snap[0].pos[n][2], g_snap[1].pos[n][2], t256);
+                x = lerp(sa->pos[n][0], sb->pos[n][0], t256);
+                y = lerp(sa->pos[n][1], sb->pos[n][1], t256);
+                z = lerp(sa->pos[n][2], sb->pos[n][2], t256);
             } else {
                 x = (int16_t)rd16(a + 4u);
                 y = (int16_t)rd16(a + 6u);

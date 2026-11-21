@@ -183,6 +183,13 @@ static atomic_int g_present_pending;
 @end
 static SynView *g_view;
 
+int host_display_timing(uint64_t *vblank_us, uint64_t *period_us)
+{
+    (void)vblank_us;
+    (void)period_us;
+    return 0;
+}
+
 void host_present(const uint32_t *pixels, int w, int h)
 {
     if (w <= 0 || h <= 0 || w > FRAME_MAX_W || h > FRAME_MAX_H) return;
