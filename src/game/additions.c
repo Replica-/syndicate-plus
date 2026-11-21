@@ -48,27 +48,28 @@ typedef struct GameAddrs {
     uint32_t set_view;     /* set_view(x, y): the view's position (clamped to the map) */
     uint32_t peds;         /* the people of the mission, PED_SIZE bytes each */
     uint32_t draw_scanner; /* draw_scanner(leader ped, pixels a tile: 8, or 4 with a scanner) */
+    uint32_t view;         /* (16 bits x, y) the view's position (world / 128) */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
-     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u},
+     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
-     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u},
+     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
-     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
-     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -369,7 +370,8 @@ static uint64_t g_marker_us;          /* when it was given (0: none) */
 /* where a point of the world is in the frame, as the game draws it (its sprite placement) */
 static void world_to_frame(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
 {
-    int32_t dx = x - (int32_t)(int16_t)RD16(0x470000u) * 128, dy = y - (int32_t)(int16_t)RD16(0x470002u) * 128;
+    int32_t dx = x - (int32_t)(int16_t)RD16(g_addrs->view) * 128;
+    int32_t dy = y - (int32_t)(int16_t)RD16(g_addrs->view + 2u) * 128;
     *fx = ((dx - dy) >> 3) + VIEW_LEFT;
     *fy = ((((dx + dy) / 2) - z) >> 3) + 16 + VIEW_TOP;
 }
