@@ -1436,6 +1436,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
                              wr.right - wr.left, wr.bottom - wr.top, NULL, NULL, inst, NULL);
     if (g_hwnd == NULL) return 1;
     g_gpu = gpu_init(g_hwnd);
+    {
+        /* a frame for each refresh of the display */
+        DEVMODEW dm;
+        memset(&dm, 0, sizeof dm);
+        dm.dmSize = sizeof dm;
+        if (EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency >= 30)
+            rt_set_frame_rate((int)dm.dmDisplayFrequency);
+    }
     ShowWindow(g_hwnd, show);
     UpdateWindow(g_hwnd);
     if (full) set_fullscreen(1);

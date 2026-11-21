@@ -86,6 +86,9 @@ void rt_set_cpu_speed(int instructions_per_ms);
 /* the number of different frames the game showed in the last second, at the top right of the picture (off at
  * first) */
 void rt_set_show_fps(int on);
+/* how many frames a second the core makes (the display's refresh rate; 70 at first): in missions the city moves
+ * between the game's updates, so each refresh of the display can show a new picture */
+void rt_set_frame_rate(int hz);
 
 #ifdef __cplusplus
 }

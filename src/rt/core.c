@@ -633,6 +633,16 @@ static void cpu_speed_limit(uint64_t *now)
     }
 }
 
+/* ---- the frames made: as many as the display shows (70 a second at first, as the VGA) ---- */
+static volatile uint32_t g_frame_us = 14286u;
+
+void rt_set_frame_rate(int hz)
+{
+    if (hz < 30) hz = 30;
+    if (hz > 360) hz = 360;
+    g_frame_us = 1000000u / (uint32_t)hz;
+}
+
 /* ---- frames a second ---- */
 static volatile int g_show_fps;
 static int g_fps, g_fps_count;
@@ -787,8 +797,8 @@ void rt_poll(void)
     audio_poll();
     if (now >= g_next_frame) {
         present();
-        g_next_frame += 14286u; /* 70 Hz */
-        if (now > g_next_frame + 100000u) g_next_frame = now + 14286u;
+        g_next_frame += g_frame_us;
+        if (now > g_next_frame + 100000u) g_next_frame = now + g_frame_us;
         delivered = 1;
     }
     /* pacing: frequent polls with nothing to do mean the guest is waiting for time to pass */
