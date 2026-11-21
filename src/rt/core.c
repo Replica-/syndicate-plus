@@ -691,26 +691,26 @@ void pic_eoi(int master)
 
 static void present(void)
 {
-    static uint32_t rgb[640 * 480];
-    static uint8_t prev[640 * 480];
+    static uint32_t rgb[640 * 480], prev[640 * 480];
     static int prev_n;
     uint64_t now = host_time_us();
     int w = 0, h = 0, i;
     if (vga_render(g_frame, &w, &h, g_pal)) {
-        /* the frames that differ from the one before: the game's frames a second */
-        if (w * h != prev_n || memcmp(prev, g_frame, (size_t)(w * h)) != 0) {
+        /* true colour from here on */
+        for (i = 0; i < w * h; i++) rgb[i] = g_pal[g_frame[i]];
+        game_overlay(g_frame, g_pal, rgb, w, h);
+        /* the frames shown that differ from the one before: the frames a second one sees */
+        if (w * h != prev_n || memcmp(prev, rgb, sizeof(uint32_t) * (size_t)(w * h)) != 0) {
             g_fps_count++;
-            memcpy(prev, g_frame, (size_t)(w * h));
+            memcpy(prev, rgb, sizeof(uint32_t) * (size_t)(w * h));
             prev_n = w * h;
+            if (getenv("SYND_PACING_TRACE")) rt_log("T %llu frame %d", (unsigned long long)now, w);
         }
         if (now >= g_fps_next) {
             g_fps = g_fps_count;
             g_fps_count = 0;
             g_fps_next = now + 1000000u;
         }
-        /* true colour from here on */
-        for (i = 0; i < w * h; i++) rgb[i] = g_pal[g_frame[i]];
-        game_overlay(g_frame, g_pal, rgb, w, h);
         if (g_show_fps) draw_fps(rgb, w, h);
         host_present(rgb, w, h);
     }

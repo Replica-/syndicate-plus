@@ -416,8 +416,14 @@ static int32_t g_marker[3];           /* x, y, z of the last move order */
 static uint64_t g_marker_us;          /* when it was given (0: none) */
 
 /* where a point of the world is in the frame, as the game draws it (its sprite placement) */
+static int renderer_on(void);
+
 static void world_to_frame(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
 {
+    if (renderer_on()) {
+        render_project(x, y, z, fx, fy); /* the same projection, with the view being drawn */
+        return;
+    }
     int32_t dx = x - (int32_t)(int16_t)RD16(g_addrs->view) * 128;
     int32_t dy = y - (int32_t)(int16_t)RD16(g_addrs->view + 2u) * 128;
     *fx = ((dx - dy) >> 3) + VIEW_LEFT;
@@ -731,7 +737,7 @@ static void render_test(uint32_t *rgb, const uint32_t *pal)
     if (strcmp(mode, "show") == 0) {
         for (y = 40; y < 440; y++)
             for (x = 128; x < 640; x++) rgb[y * 640 + x] = 0;
-        render_city(rgb, 640, 480, pal, 128, 40, 640, 440);
+        render_city(rgb, 640, 480, pal, 128, 40, 640, 440, 0);
         return;
     }
     if (now < next) return;
@@ -745,7 +751,7 @@ static void render_test(uint32_t *rgb, const uint32_t *pal)
                 render_tile_dx = dx;
                 render_tile_dy = dy;
                 memset(mine, 0, sizeof mine);
-                render_city(mine, 640, 480, pal, 128, 40, 640, 440);
+                render_city(mine, 640, 480, pal, 128, 40, 640, 440, 0);
                 for (y = 40; y < 440; y += 2)
                     for (x = 128; x < 640; x += 2) n += mine[y * 640 + x] == rgb[y * 640 + x];
                 if (n > best) {
@@ -759,10 +765,72 @@ static void render_test(uint32_t *rgb, const uint32_t *pal)
         rt_log("render: tiles at %+d %+d", bx, by);
     }
     memset(mine, 0, sizeof mine);
-    render_city(mine, 640, 480, pal, 128, 40, 640, 440);
+    render_city(mine, 640, 480, pal, 128, 40, 640, 440, 0);
     for (y = 40; y < 440; y++)
         for (x = 128; x < 640; x++) same += mine[y * 640 + x] == rgb[y * 640 + x];
     rt_log("render: %.1f%% of the map as the game draws it", 100.0 * same / (512.0 * 400.0));
+}
+
+/* ---- the city drawn by render.c, moving smoothly ---- */
+static const uint32_t *g_overlay_pal;
+
+static int renderer_on(void)
+{
+    const char *e = getenv("SYND_RENDER");
+    return g_addrs != NULL && g_addrs->game == GAME_SYN && (e == NULL || strcmp(e, "off") != 0);
+}
+
+static uint32_t hat_colour(int ped)
+{
+    uint32_t company, c;
+    if (ped >= 8 * AGENTS_A_COMPANY || M[g_addrs->peds + (uint32_t)ped * PED_SIZE + PED_TYPE] != 2) return 0;
+    company = g_addrs->companies + (uint32_t)(ped / AGENTS_A_COMPANY) * g_addrs->company_size;
+    c = company_rgb(company, g_overlay_pal);
+    return c == g_overlay_pal[HAT_COLOUR] ? 0 : c;
+}
+
+/* the city between the game's last two ticks; what the game draws over its city (the pointer, the numbers of
+ * the agents) is taken from its frame: the pixels where its frame and the city as it is now differ */
+static void smooth_city(const uint32_t *pal, uint32_t *rgb)
+{
+    static uint32_t game[640 * 480], now_city[640 * 480];
+    uint32_t company;
+    int x, y, mx, my, slot;
+    g_overlay_pal = pal;
+    render_hat_colour = hat_colour;
+    memcpy(game, rgb, sizeof game);
+    render_city(now_city, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, 0);
+    for (y = VIEW_TOP; y < VIEW_BOTTOM; y++)
+        for (x = VIEW_LEFT; x < 640; x++) rgb[y * 640 + x] = 0;
+    render_city(rgb, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, host_time_us());
+    /* the pointer (the game's mouse runs over the 400 lines of its picture, from line 40 of the frame) */
+    mouse_get(&mx, &my, NULL);
+    my += VIEW_TOP;
+    /* the game draws it where it last saw the mouse, up to a frame of the game ago: around where it is now */
+    for (y = my - 96; y < my + 96; y++)
+        for (x = mx - 96; x < mx + 96; x++)
+            if (x >= VIEW_LEFT && x < 640 && y >= VIEW_TOP && y < VIEW_BOTTOM && game[y * 640 + x] != now_city[y * 640 + x])
+                rgb[y * 640 + x] = game[y * 640 + x];
+    /* the numbers over the agents of the squad, moved with them */
+    company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+    for (slot = 0; slot < 4; slot++) {
+        uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
+        int ax, ay, bx, by, i, j;
+        int32_t vx = (int32_t)(int16_t)RD16(g_addrs->view) * 128, vy = (int32_t)(int16_t)RD16(g_addrs->view + 2u) * 128;
+        int32_t px = (int16_t)RD16(ped + PED_X), py = (int16_t)RD16(ped + PED_Y), pz = (int16_t)RD16(ped + PED_Z);
+        if (M[ped + PED_LOCATION] != 4) continue;
+        /* where the game drew the agent, and where the smooth city has it */
+        ax = ((px - vx - (py - vy)) >> 3) + render_obj_dx;
+        ay = (((px - vx + py - vy) / 2 - pz) >> 3) + render_obj_dy;
+        if (!render_ped_place((int)M[company + COMPANY_SQUAD] + slot, &bx, &by)) continue;
+        for (j = -64; j < -34; j++)
+            for (i = -12; i <= 12; i++) {
+                int gx = ax + i, gy = ay + j, tx = bx + i, ty = by + j;
+                if (gx < VIEW_LEFT || gx >= 640 || gy < VIEW_TOP || gy >= VIEW_BOTTOM) continue;
+                if (tx < VIEW_LEFT || tx >= 640 || ty < VIEW_TOP || ty >= VIEW_BOTTOM) continue;
+                if (game[gy * 640 + gx] != now_city[gy * 640 + gx]) rgb[ty * 640 + tx] = game[gy * 640 + gx];
+            }
+    }
 }
 
 #define MARKER_COLOUR 0x5aff5au
@@ -772,8 +840,13 @@ void game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, 
     uint64_t age;
     int fx, fy, hw, alpha;
     if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return;
-    if (g_addrs->game == GAME_SYN && getenv("SYND_RENDER_TEST") != NULL) render_test(rgb, palette);
-    company_hats(index, palette, rgb, w);
+    if (g_addrs->game == GAME_SYN && getenv("SYND_RENDER_TEST") != NULL) {
+        render_test(rgb, palette);
+    } else if (renderer_on()) {
+        smooth_city(palette, rgb);
+    } else {
+        company_hats(index, palette, rgb, w);
+    }
     draw_drops(rgb, w);
     solid_selected_boxes(index, palette, rgb, w);
     draw_scanner_extras(rgb, w);
@@ -822,8 +895,10 @@ static int on_mission_tick(uint32_t addr)
         g_marker_us = 0;
         memset(g_drops, 0, sizeof g_drops);
         watch_hits(1);
+        render_reset();
     }
     g_tick_us = host_time_us();
+    if (renderer_on()) render_tick(g_tick_us);
     watch_move_orders();
     watch_hits(0);
     if (slot) {

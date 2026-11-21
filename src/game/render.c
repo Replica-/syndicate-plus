@@ -152,7 +152,10 @@ typedef struct Target {
     const uint32_t *pal;
 } Target;
 
-static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, int dy, int flipped)
+#define HAT_INDEX 6 /* the hats' colour in the agents' sprites */
+
+/* `hat`: a colour for the pixels of colour HAT_INDEX (0: as they are) */
+static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, int dy, int flipped, uint32_t hat)
 {
     int x, y;
     for (y = 0; y < sh; y++) {
@@ -162,12 +165,12 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
             int tx = dx + x;
             uint8_t c = src[y * sw + (flipped ? sw - 1 - x : x)];
             if (c == 255 || tx < t->x0 || tx >= t->x1) continue;
-            t->rgb[ty * t->w + tx] = t->pal[c];
+            t->rgb[ty * t->w + tx] = hat != 0 && c == HAT_INDEX ? hat : t->pal[c];
         }
     }
 }
 
-static void draw_frame(const Target *t, int frame, int ax, int ay)
+static void draw_frame(const Target *t, int frame, int ax, int ay, uint32_t hat)
 {
     uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), f = frames + (uint32_t)frame * 8u;
     uint32_t e = rd16(f);
@@ -177,27 +180,87 @@ static void draw_frame(const Target *t, int frame, int ax, int ay)
         int sw, sh;
         const uint8_t *s = sprite(rd16(ea) / 6, &sw, &sh);
         if (s != NULL)
-            blit(t, s, sw, sh, ax + (int16_t)rd16(ea + 2u), ay + (int16_t)rd16(ea + 4u), rd16(ea + 6u) != 0);
+            blit(t, s, sw, sh, ax + (int16_t)rd16(ea + 2u), ay + (int16_t)rd16(ea + 4u), rd16(ea + 6u) != 0, hat);
         e = rd16(ea + 8u);
         if (e == 0 || ++guard > 64) break;
     }
 }
 
-/* where a point of the world is in the frame (the game's sprite placement) */
+/* ---- where things are: two snapshots, one a tick, to draw between them ---- */
+#define NB_OBJS (256 + 64 + 400 + 512 + 256)
+#define TELEPORT 512 /* a move of more than 2 tiles in one tick is not drawn in between */
+
+typedef struct Snap {
+    uint64_t us;
+    int32_t vx, vy;              /* the view, in world units */
+    int16_t pos[NB_OBJS][3];
+} Snap;
+
+static Snap g_snap[2];           /* [0] the tick before, [1] the last */
+static int g_nsnaps;
+static int32_t g_vx, g_vy;       /* the view of the frame being drawn */
+
+static void read_view(int32_t *vx, int32_t *vy)
+{
+    *vx = (int32_t)(int16_t)rd16(VIEW) * 128;
+    *vy = (int32_t)(int16_t)rd16(VIEW + 2u) * 128;
+}
+
+void render_tick(uint64_t now_us)
+{
+    int li, n = 0;
+    g_snap[0] = g_snap[1];
+    g_snap[1].us = now_us;
+    read_view(&g_snap[1].vx, &g_snap[1].vy);
+    for (li = 0; li < (int)(sizeof k_lists / sizeof k_lists[0]); li++) {
+        const ObjList *l = &k_lists[li];
+        uint32_t i;
+        for (i = 0; i < l->count; i++, n++) {
+            uint32_t a = l->base + i * l->size;
+            g_snap[1].pos[n][0] = (int16_t)rd16(a + 4u);
+            g_snap[1].pos[n][1] = (int16_t)rd16(a + 6u);
+            g_snap[1].pos[n][2] = (int16_t)rd16(a + 8u);
+        }
+    }
+    if (g_nsnaps < 2) g_nsnaps++;
+}
+
+void render_reset(void)
+{
+    g_nsnaps = 0;
+}
+
+static int32_t lerp(int32_t a, int32_t b, int t) /* t 0..256 */
+{
+    if (a - b > TELEPORT || b - a > TELEPORT) return b;
+    return a + (b - a) * t / 256;
+}
+
+/* where a point of the world is in the frame (the game's sprite placement), from the view being drawn */
 static void project(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
 {
-    int32_t dx = x - (int32_t)(int16_t)rd16(VIEW) * 128, dy = y - (int32_t)(int16_t)rd16(VIEW + 2u) * 128;
+    int32_t dx = x - g_vx, dy = y - g_vy;
     *fx = (dx - dy) >> 3;
     *fy = ((dx + dy) / 2 - z) >> 3;
 }
 
+void render_project(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
+{
+    project(x, y, z, fx, fy);
+    *fx += render_obj_dx;
+    *fy += render_obj_dy;
+}
+
 int render_tile_dx = 96, render_tile_dy = 40; /* a tile's top left corner from its projected corner */
 int render_obj_dx = 128, render_obj_dy = 56;  /* a frame's anchor from the projected position */
+uint32_t (*render_hat_colour)(int ped);       /* the colour of an agent's hat (0: as drawn) */
 
 typedef struct Obj {
     int key;      /* tile column (x + y * max x) */
     int z;        /* the level it stands on */
+    int x, y, zw; /* where it is drawn (world units) */
     uint32_t a;   /* its record */
+    int ped;      /* its number among the people, -1 for others */
 } Obj;
 
 static int cmp_obj(const void *a, const void *b)
@@ -206,40 +269,90 @@ static int cmp_obj(const void *a, const void *b)
     return p->key != q->key ? p->key - q->key : p->z - q->z;
 }
 
-void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1)
+/* the people's places in the frame last drawn */
+static int16_t g_ped_fx[256], g_ped_fy[256];
+static uint8_t g_ped_drawn[256];
+
+int render_ped_place(int ped, int *fx, int *fy)
+{
+    if (ped < 0 || ped >= 256 || !g_ped_drawn[ped]) return 0;
+    *fx = g_ped_fx[ped];
+    *fy = g_ped_fy[ped];
+    return 1;
+}
+
+static void draw_obj(const Target *t, const Obj *o)
+{
+    int fx, fy;
+    uint32_t hat = 0;
+    project(o->x, o->y, o->zw, &fx, &fy);
+    if (o->ped >= 0) {
+        g_ped_fx[o->ped] = (int16_t)(fx + render_obj_dx);
+        g_ped_fy[o->ped] = (int16_t)(fy + render_obj_dy);
+        g_ped_drawn[o->ped] = 1;
+        if (render_hat_colour != NULL) hat = render_hat_colour(o->ped);
+    }
+    draw_frame(t, rd16(o->a + 0x10u), fx + render_obj_dx, fy + render_obj_dy, hat);
+}
+
+void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1, uint64_t now_us)
 {
     static Obj objs[2048];
     uint32_t map = rd32(P_MAP), cols = map + 12u;
-    int mx = (int)rd32(map), my = (int)rd32(map + 4u), mz = (int)rd32(map + 8u), nobj = 0, li, s, k = 0;
+    int mx = (int)rd32(map), my = (int)rd32(map + 4u), mz = (int)rd32(map + 8u), nobj = 0, li, s, k = 0, n = 0, t256;
     Target t = {rgb, w, h, x0, y0, x1, y1, pal};
     if (mx <= 0 || my <= 0 || mz <= 0 || mx > 256 || my > 256 || mz > 16) return;
+    /* between the two last ticks (now_us 0: as the game is now) */
+    if (now_us != 0 && g_nsnaps == 2 && g_snap[1].us > g_snap[0].us) {
+        uint64_t dt = g_snap[1].us - g_snap[0].us, since = now_us > g_snap[1].us ? now_us - g_snap[1].us : 0;
+        t256 = since >= dt ? 256 : (int)(since * 256u / dt);
+        g_vx = lerp(g_snap[0].vx, g_snap[1].vx, t256);
+        g_vy = lerp(g_snap[0].vy, g_snap[1].vy, t256);
+    } else {
+        t256 = -1;
+        read_view(&g_vx, &g_vy);
+    }
     /* the things on the map, by tile column then height */
     for (li = 0; li < (int)(sizeof k_lists / sizeof k_lists[0]); li++) {
         const ObjList *l = &k_lists[li];
         uint32_t i;
-        for (i = 0; i < l->count && nobj < 2048; i++) {
+        for (i = 0; i < l->count; i++, n++) {
             uint32_t a = l->base + i * l->size;
             uint8_t loc = M[a + 0xau];
-            int x = (int16_t)rd16(a + 4u), y = (int16_t)rd16(a + 6u), z = (int16_t)rd16(a + 8u);
+            int x, y, z;
+            if (nobj == 2048) break;
             if (loc == 0 || (loc != l->on_map[0] && loc != l->on_map[1] && loc != l->on_map[2])) continue;
+            if (t256 >= 0) {
+                x = lerp(g_snap[0].pos[n][0], g_snap[1].pos[n][0], t256);
+                y = lerp(g_snap[0].pos[n][1], g_snap[1].pos[n][1], t256);
+                z = lerp(g_snap[0].pos[n][2], g_snap[1].pos[n][2], t256);
+            } else {
+                x = (int16_t)rd16(a + 4u);
+                y = (int16_t)rd16(a + 6u);
+                z = (int16_t)rd16(a + 8u);
+            }
             if (x < 0 || y < 0 || x >= mx * 256 || y >= my * 256) continue;
             objs[nobj].key = (x >> 8) + (y >> 8) * mx;
             objs[nobj].z = z >> 7;
+            objs[nobj].x = x;
+            objs[nobj].y = y;
+            objs[nobj].zw = z;
             objs[nobj].a = a;
+            objs[nobj].ped = li == 0 ? (int)i : -1;
             nobj++;
         }
     }
     qsort(objs, (size_t)nobj, sizeof objs[0], cmp_obj);
+    memset(g_ped_drawn, 0, sizeof g_ped_drawn);
     /* back to front: diagonal rows, then each column from the ground up with what stands in it */
     for (s = 0; s < mx + my - 1; s++) {
         int tx;
         for (tx = 0; tx < mx; tx++) {
-            int ty = s - tx, tz, key, first;
+            int ty = s - tx, tz, key;
             uint32_t col;
             if (ty < 0 || ty >= my) continue;
             key = tx + ty * mx;
             col = rd32(cols + (uint32_t)key * 4u);
-            /* the objects of this column: binary search the first */
             {
                 int lo = 0, hi = nobj;
                 while (lo < hi) {
@@ -247,9 +360,8 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                     if (objs[mid].key < key) lo = mid + 1;
                     else hi = mid;
                 }
-                first = lo;
+                k = lo;
             }
-            k = first;
             for (tz = 0; tz < mz; tz++) {
                 const uint8_t *tl = tile(M[col + (uint32_t)tz]);
                 int fx, fy;
@@ -257,20 +369,11 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                     project(tx * 256, ty * 256, tz * 128, &fx, &fy);
                     if (fx + render_tile_dx + TILE_W > x0 && fx + render_tile_dx < x1 && fy + render_tile_dy + TILE_H > y0 &&
                         fy + render_tile_dy < y1)
-                        blit(&t, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy, 0);
+                        blit(&t, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy, 0, 0);
                 }
-                for (; k < nobj && objs[k].key == key && objs[k].z <= tz; k++) {
-                    uint32_t a = objs[k].a;
-                    project((int16_t)rd16(a + 4u), (int16_t)rd16(a + 6u), (int16_t)rd16(a + 8u), &fx, &fy);
-                    draw_frame(&t, rd16(a + 0x10u), fx + render_obj_dx, fy + render_obj_dy);
-                }
+                for (; k < nobj && objs[k].key == key && objs[k].z <= tz; k++) draw_obj(&t, &objs[k]);
             }
-            for (; k < nobj && objs[k].key == key; k++) {
-                uint32_t a = objs[k].a;
-                int fx, fy;
-                project((int16_t)rd16(a + 4u), (int16_t)rd16(a + 6u), (int16_t)rd16(a + 8u), &fx, &fy);
-                draw_frame(&t, rd16(a + 0x10u), fx + render_obj_dx, fy + render_obj_dy);
-            }
+            for (; k < nobj && objs[k].key == key; k++) draw_obj(&t, &objs[k]);
         }
     }
 }

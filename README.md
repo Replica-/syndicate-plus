@@ -153,6 +153,15 @@ into 32-bit colour, this version draws its additions over it with any colour and
 scales it with sharp bilinear filtering (every pixel of the game stays a sharp square, of the same size, at any
 window size), with vsync.  GDI is only used when Direct3D cannot start.
 
+### Smooth motion
+
+The original engine draws the city about 10 to 18 times a second (in DOSBox too).  In missions this version draws
+the city itself (`src/game/render.c`, from the game's own data in memory) at every frame shown, 70 a second, with
+the people, vehicles, objects and the view placed between the game's last two updates (one update behind), so
+they move smoothly; the game's pointer and the agents' numbers are taken from its picture.  The emulated CPU runs
+at the speed of GOG's DOSBox (`[game] cycles=8000` in `Syndicate64.ini`).  The frames a second shown are at the
+top right (window menu: *Show frames a second*).  English Syndicate so far; `SYND_RENDER=off` turns it off.
+
 ## Tests
 
     python3 tests/run_tests.py           # about 20 s to 1.5 minutes; --quick leaves out the full-length intro

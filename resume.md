@@ -64,6 +64,21 @@ reaches FreeSynd's smoothness: FreeSynd draws at the display's rate with its own
 the new renderer is smoothness: draw at the display's rate (60+), placing people, vehicles and the view between
 the game's updates (interpolate their positions from the level data between two ticks of the mission).
 
+## Done since: the smooth city (renderer v1)
+
+`src/game/render.c` draws the mission's city from the game's data in memory: 99.7% the same pixels as the game
+(`SYND_RENDER_TEST=match` measures it, `=show` shows it). In missions it now replaces the game's map in each frame
+(`smooth_city` in `src/game/additions.c`): positions and the view interpolated between the last two mission ticks
+(`render_tick` at each tick of `on_mission_tick`), one tick behind; the game's pointer (a box of +-96 px around
+the mouse; the game's mouse y + 40) and the squad's numbers are copied from its frame where it differs from the
+city as it is now; the hats are coloured in the renderer. Measured: ~46 different frames a second while agents
+walk, gaps 22 ms on average. English Syndicate only (`renderer_on`); `SYND_RENDER=off` turns it off.
+
+To do next: the other programs' addresses (find_equiv for the pointers 0x44535c, 0x445360, 0x445314, 0x445330,
+0x445338, 0x445340, the level data and the view); check it in the window; the animation frames still change
+only at the game's ticks (walk cycles); then widescreen and zoom (the renderer can draw any rectangle at any
+view), lighting, see-inside-buildings.
+
 ## Next: group 4, the new renderer (fresh MIT code)
 
 Plan: (1) read the game's decompressed data from memory: in English Syndicate the pointers are at `0x44535c` (map,
