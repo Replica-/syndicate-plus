@@ -614,7 +614,10 @@ void pic_eoi(int master)
 static void present(void)
 {
     int w = 0, h = 0;
-    if (vga_render(g_frame, &w, &h, g_pal)) host_present(g_frame, w, h, g_pal);
+    if (vga_render(g_frame, &w, &h, g_pal)) {
+        game_overlay(g_frame, w, h, g_pal);
+        host_present(g_frame, w, h, g_pal);
+    }
 }
 
 void rt_poll(void)

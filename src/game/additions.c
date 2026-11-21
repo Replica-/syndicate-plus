@@ -9,6 +9,8 @@
  * Keys in missions: W, A, S and D scroll the view as the arrow keys do; 1 to 4 select an agent (the game's own)
  * and pressed twice within 0.4 s centre the view on it.
  *
+ * A move order shows a green diamond on the floor where the agents go, shrinking and fading out in 0.6 s.
+ *
  * The scanner (the map at the bottom left of a mission) shows more around the leader: 6 pixels a tile instead of
  * 8, and with a scanner (the weapon) 2 instead of 4.
  *
@@ -353,11 +355,113 @@ static void centre_on_agent(int slot)
     guest_call(g_addrs->set_view, args, 2);
 }
 
+/* ---- drawing over the mission ---- */
+#define PED_TARGET 0x2eu      /* (16 bits x, y, z) where it walks to */
+#define VIEW_LEFT 128         /* the map's part of a 640 x 480 frame */
+#define VIEW_TOP 40
+#define VIEW_BOTTOM 440
+#define MARKER_US 600000u
+
+static uint16_t g_last_target[4][2];
+static int32_t g_marker[3];           /* x, y, z of the last move order */
+static uint64_t g_marker_us;          /* when it was given (0: none) */
+
+/* where a point of the world is in the frame, as the game draws it (its sprite placement) */
+static void world_to_frame(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
+{
+    int32_t dx = x - (int32_t)(int16_t)RD16(0x470000u) * 128, dy = y - (int32_t)(int16_t)RD16(0x470002u) * 128;
+    *fx = ((dx - dy) >> 3) + VIEW_LEFT;
+    *fy = ((((dx + dy) / 2) - z) >> 3) + 16 + VIEW_TOP;
+}
+
+static uint8_t nearest_colour(const uint32_t *pal, int r, int g, int b)
+{
+    int i, best = 0;
+    long bd = -1;
+    for (i = 0; i < 256; i++) {
+        long dr = (long)((pal[i] >> 16) & 0xFF) - r, dg = (long)((pal[i] >> 8) & 0xFF) - g, db = (long)(pal[i] & 0xFF) - b;
+        long d = dr * dr * 3 + dg * dg * 4 + db * db * 2;
+        if (bd < 0 || d < bd) {
+            bd = d;
+            best = i;
+        }
+    }
+    return (uint8_t)best;
+}
+
+/* `density` 0..4: the share of the pixels drawn (a checker pattern stands for transparency) */
+static void plot(uint8_t *pix, int w, int x, int y, uint8_t c, int density)
+{
+    static const uint8_t k_bayer[4] = {0, 2, 3, 1};
+    if (x < VIEW_LEFT || x >= w || y < VIEW_TOP || y >= VIEW_BOTTOM) return;
+    if (density < 4 && k_bayer[((y & 1) << 1) | (x & 1)] >= density) return;
+    pix[y * w + x] = c;
+}
+
+/* a diamond lying on the floor, half width hw (half height hw / 2): filled, or only its outer `edge` */
+static void diamond(uint8_t *pix, int w, int cx, int cy, int hw, int edge, uint8_t c, int density)
+{
+    int x, y;
+    for (y = -hw / 2; y <= hw / 2; y++) {
+        for (x = -hw; x <= hw; x++) {
+            int d = (x < 0 ? -x : x) + 2 * (y < 0 ? -y : y);
+            if (d <= hw && (edge == 0 || d > hw - edge)) plot(pix, w, cx + x, cy + y, c, density);
+        }
+    }
+}
+
+void game_overlay(uint8_t *pixels, int w, int h, const uint32_t *palette)
+{
+    uint64_t age;
+    int fx, fy, hw, density;
+    uint8_t c;
+    if (g_addrs == NULL || w != 640 || h != 480 || !in_mission() || g_marker_us == 0) return;
+    age = host_time_us() - g_marker_us;
+    if (age >= MARKER_US) {
+        g_marker_us = 0;
+        return;
+    }
+    world_to_frame(g_marker[0], g_marker[1], g_marker[2], &fx, &fy);
+    hw = 6 + (int)(22 * (MARKER_US - age) / MARKER_US);
+    density = 4 - (int)(4 * age / MARKER_US);
+    c = nearest_colour(palette, 90, 255, 90);
+    diamond(pixels, w, fx, fy, hw, 4, c, density);
+    diamond(pixels, w, fx, fy, 4, 0, c, density);
+}
+
+/* a new move order of an agent of the squad: the marker goes there */
+static void watch_move_orders(void)
+{
+    uint32_t company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+    int slot;
+    for (slot = 0; slot < 4; slot++) {
+        uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
+        uint16_t tx = RD16(ped + PED_TARGET), ty = RD16(ped + PED_TARGET + 2u);
+        if ((tx != g_last_target[slot][0] || ty != g_last_target[slot][1]) && (tx || ty) && (M[ped + PED_FLAGS] & 4u)) {
+            g_marker[0] = (int16_t)tx;
+            g_marker[1] = (int16_t)ty;
+            g_marker[2] = (int16_t)RD16(ped + PED_TARGET + 4u);
+            g_marker_us = host_time_us();
+        }
+        g_last_target[slot][0] = tx;
+        g_last_target[slot][1] = ty;
+    }
+}
+
 static int on_mission_tick(uint32_t addr)
 {
     int slot = g_centre_slot;
     (void)addr;
+    if (!in_mission()) {
+        /* a new mission: the targets of the last one are not orders */
+        memset(g_last_target, 0, sizeof g_last_target);
+        g_marker_us = 0;
+        g_tick_us = host_time_us();
+        watch_move_orders();
+        g_marker_us = 0;
+    }
     g_tick_us = host_time_us();
+    watch_move_orders();
     if (slot) {
         g_centre_slot = 0;
         centre_on_agent(slot);
