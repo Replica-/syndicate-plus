@@ -40,6 +40,9 @@ typedef struct RenderTileSetting {
 int render_tile_setting(int id, RenderTileSetting *out);
 /* changes a tile's setting (at once) and saves them all in the user's folder (tile_lights.ini) */
 int render_set_tile_setting(int id, const RenderTileSetting *in);
+/* the mission's map: its size in tiles (0 when there is none), the tile at x, y, z (-1 outside) */
+int render_map_size(int *mx, int *my, int *mz);
+int render_map_tile(int x, int y, int z);
 /* the tile seen at sx, sy of the frame in the last city drawn: its number and where it is drawn */
 int render_tile_at(int sx, int sy, int *id, int *rx, int *ry, int *rw, int *rh);
 /* a tick of the mission: where things are now */

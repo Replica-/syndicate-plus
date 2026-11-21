@@ -42,6 +42,7 @@
 #include "../rt/rt.h"
 #include "../rt/vfs.h"
 #include "hooks.h"
+#include "path.h"
 #include "render.h"
 
 /* where the functions and data of each program are: English Syndicate's found by following the game (the
@@ -77,6 +78,7 @@ typedef struct GameAddrs {
     uint32_t speed;        /* (32 bits) the interrupts a tick waits for (7; the game's keys change it, 3..12) */
     uint32_t wait_count;   /* (8 bits) the interrupts counted since the last tick */
     uint32_t label_frames; /* (16 bits x 4) the frames of the squad's numbers, as the game draws them */
+    uint32_t unpack;       /* unpack(packed, out): the game's RNC unpacker */
     int ar;                /* American Revolt: its pointers are further apart */
 } GameAddrs;
 
@@ -84,27 +86,27 @@ static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
      0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u,
-     0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0},
+     0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x42caa4u, 0},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu,
-     0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0},
+     0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x42c994u, 0},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u,
-     0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0},
+     0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x42c994u, 0},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
      0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu,
-     0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 1},
+     0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x42e204u, 1},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu,
-     0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 1},
+     0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x42e184u, 1},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u,
-     0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 1},
+     0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x42e184u, 1},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -1291,10 +1293,124 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
 }
 
 /* a new move order of an agent of the squad: the marker goes there */
+/* ---- routes: a move order the game's straight walk cannot do (another level, a wall between) is walked as a
+ * route found over the map's floors (path.c), the agent sent to each of its turning points in turn ---- */
+#define ROUTE_MAX 64
+#define ROUTE_NEAR 96   /* this near a turning point (world units across), the agent goes on to the next */
+#define ROUTE_STUCK 40   /* ticks without coming nearer to a turning point: the player's order as the game had it */
+static struct {
+    PathPoint pt[ROUTE_MAX];
+    int n, i;
+    int32_t best;   /* the nearest the agent came to its turning point (squared), and when */
+    int stuck;
+} g_route[4];
+static int g_types_loaded;
+static volatile int g_routes_on = 1; /* game_set_routes; SYND_ROUTES=off: the game's straight walks only */
+
+void game_set_routes(int on)
+{
+    g_routes_on = on != 0;
+}
+
+/* the tile types: COL01.DAT of the running game, unpacked by the game's own unpacker in a block of DOS memory */
+static void load_tile_types(void)
+{
+    char path[1200];
+    uint8_t packed[4096], types[256];
+    uint32_t seg, largest, at;
+    size_t n;
+    VFile *f;
+    g_types_loaded = 1;
+    snprintf(path, sizeof path, "%s/%s/DATA/COL01.DAT", rt_game_dir, g_addrs->ar ? "DATADISK" : "SYNDICAT");
+    f = vfs_open(path, "rb");
+    if (f == NULL) return;
+    n = vfs_read(f, packed, sizeof packed);
+    vfs_close(f);
+    if (n < 18 || n >= sizeof packed || memcmp(packed, "RNC", 3) != 0) return;
+    seg = dpmi_dos_alloc((uint32_t)(n + 256 + 64) / 16u + 1u, &largest);
+    if (seg == 0) return;
+    at = seg << 4;
+    memcpy(M + at, packed, n);
+    {
+        uint32_t args[2];
+        args[0] = at;
+        args[1] = at + (uint32_t)n + 16u;
+        guest_call(g_addrs->unpack, args, 2);
+        memcpy(types, M + args[1], sizeof types);
+    }
+    path_set_types(types);
+}
+
+/* a new order of the player's for the agent in `slot`, to tx, ty, tz: walked as a route if it needs one */
+static void route_order(int slot, uint32_t ped, int32_t tx, int32_t ty, int32_t tz)
+{
+    g_route[slot].n = g_route[slot].i = 0;
+    if (!g_types_loaded) load_tile_types();
+    g_route[slot].n = path_route((int16_t)RD16(ped + PED_X), (int16_t)RD16(ped + PED_Y), (int16_t)RD16(ped + PED_Z), tx, ty, tz,
+                                 g_route[slot].pt, ROUTE_MAX);
+    g_route[slot].best = 0x7FFFFFFF;
+    g_route[slot].stuck = 0;
+    if (g_route[slot].n > 1) {
+        /* the first turning point (the agent keeps walking: only where to changes) */
+        WR16(ped + PED_TARGET, (uint16_t)g_route[slot].pt[0].x);
+        WR16(ped + PED_TARGET + 2u, (uint16_t)g_route[slot].pt[0].y);
+        WR16(ped + PED_TARGET + 4u, (uint16_t)g_route[slot].pt[0].z);
+    } else {
+        g_route[slot].n = 0;
+    }
+}
+
+/* at each tick: an agent near its turning point goes on to the next */
+static void follow_routes(uint32_t company)
+{
+    int slot;
+    for (slot = 0; slot < 4; slot++) {
+        uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
+        const PathPoint *p;
+        int32_t dx, dy;
+        if (g_route[slot].n == 0) continue;
+        p = &g_route[slot].pt[g_route[slot].i];
+        if (M[ped + PED_LOCATION] != 4 || (int16_t)RD16(ped + PED_TARGET) != (int16_t)p->x ||
+            (int16_t)RD16(ped + PED_TARGET + 2u) != (int16_t)p->y) {
+            g_route[slot].n = 0; /* another order, or gone */
+            continue;
+        }
+        dx = (int16_t)RD16(ped + PED_X) - p->x;
+        dy = (int16_t)RD16(ped + PED_Y) - p->y;
+        /* stuck on the way: the order as the player gave it (the game's own walk) */
+        if (dx * dx + dy * dy < g_route[slot].best) {
+            g_route[slot].best = dx * dx + dy * dy;
+            g_route[slot].stuck = 0;
+        } else if (++g_route[slot].stuck > ROUTE_STUCK) {
+            p = &g_route[slot].pt[g_route[slot].n - 1];
+            WR16(ped + PED_TARGET, (uint16_t)p->x);
+            WR16(ped + PED_TARGET + 2u, (uint16_t)p->y);
+            WR16(ped + PED_TARGET + 4u, (uint16_t)p->z);
+            g_last_target[slot][0] = (uint16_t)p->x;
+            g_last_target[slot][1] = (uint16_t)p->y;
+            g_route[slot].n = 0;
+            continue;
+        }
+        if (dx * dx + dy * dy > ROUTE_NEAR * ROUTE_NEAR || ++g_route[slot].i >= g_route[slot].n) {
+            if (g_route[slot].i >= g_route[slot].n) g_route[slot].n = 0;
+            continue;
+        }
+        p = &g_route[slot].pt[g_route[slot].i];
+        g_route[slot].best = 0x7FFFFFFF;
+        g_route[slot].stuck = 0;
+        WR16(ped + PED_TARGET, (uint16_t)p->x);
+        WR16(ped + PED_TARGET + 2u, (uint16_t)p->y);
+        WR16(ped + PED_TARGET + 4u, (uint16_t)p->z);
+        g_last_target[slot][0] = (uint16_t)p->x;
+        g_last_target[slot][1] = (uint16_t)p->y;
+    }
+}
+
 static void watch_move_orders(void)
 {
     uint32_t company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
     int slot;
+    follow_routes(company);
     for (slot = 0; slot < 4; slot++) {
         uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
         uint16_t tx = RD16(ped + PED_TARGET), ty = RD16(ped + PED_TARGET + 2u);
@@ -1303,6 +1419,10 @@ static void watch_move_orders(void)
             g_marker[1] = (int16_t)ty;
             g_marker[2] = (int16_t)RD16(ped + PED_TARGET + 4u);
             g_marker_us = host_time_us();
+            if (g_routes_on && g_marker_us != 0)
+                route_order(slot, ped, g_marker[0], g_marker[1], g_marker[2]);
+            tx = RD16(ped + PED_TARGET);
+            ty = RD16(ped + PED_TARGET + 2u);
         }
         g_last_target[slot][0] = tx;
         g_last_target[slot][1] = ty;
@@ -1363,6 +1483,8 @@ static int on_mission_tick(uint32_t addr)
         memset(g_drops, 0, sizeof g_drops);
         watch_hits(1);
         render_reset();
+        memset(g_route, 0, sizeof g_route);
+        if (getenv("SYND_ROUTES") != NULL && strcmp(getenv("SYND_ROUTES"), "off") == 0) g_routes_on = 0;
         g_view_on = 0;
         render_set_view(0, 0, 0);
     }

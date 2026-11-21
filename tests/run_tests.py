@@ -319,6 +319,24 @@ def company_colour(ctx):
 
 
 @test()
+def squad_route(ctx):
+    """an agent sent across the trench of the first mission, away from its bridge, is walked over the bridge (a
+    route) and gets there"""
+    import struct
+    dump = os.path.join(ctx.dir, 'mem.bin')
+    w, cx, cy = 854, 330, 90
+    fx, fy = cx * 65536 // w, (cy - 40) * 65536 // 400
+    ctx.run('route', 60, start=SYN, extra=['--wide', str(w), '--mem-dump', '59500:' + dump],
+            inputs=TO_MISSION + ['26300:wheel@-3', '27000:move@%d;%d' % (fx, fy), '27600:click@%d;%d' % (fx, fy)])
+    check(os.path.exists(dump), 'no memory dump')
+    mem = open(dump, 'rb').read()
+    ped = 0x478110 + 3 * 0x5c - 0x400000   # the fourth agent of the squad (selected by the clicks of TO_MISSION)
+    pos, target = struct.unpack_from('<hh', mem, ped + 4), struct.unpack_from('<hh', mem, ped + 0x2e)
+    check(target != (0, 0) and abs(pos[0] - target[0]) < 64 and abs(pos[1] - target[1]) < 64,
+          'the agent is at %s, not at %s' % (pos, target))
+
+
+@test()
 def save_load(ctx):
     """save a game named ABC in line 4 (1-3 hold the auto saves), then load it in a new run: the funds stored in the
     save show up"""

@@ -58,6 +58,7 @@
 #define SC_APP_FPS 0x10D0u
 #define SC_APP_TIME 0x1300u /* + 0x10 * time (0 day, 1 dusk, 2 night) */
 #define SC_APP_SHADOWS 0x10E0u
+#define SC_APP_ROUTES 0x10F0u
 #define SC_APP_COLOUR 0x1400u /* + 0x10 * colour (0: the game's) */
 #define SC_APP_MUSIC_VOL 0x1100u /* + 0x10 * step (0..4): off, 25%, 50%, 75%, 100% */
 #define SC_APP_SOUND_VOL 0x1200u
@@ -919,7 +920,15 @@ static void set_time(int t)
     if (g_ini[0]) WritePrivateProfileStringW(L"video", L"time", k_time_names[t], g_ini);
 }
 
-static int g_shadows = 1;
+static int g_shadows = 1, g_routes = 1;
+
+static void toggle_routes(void)
+{
+    g_routes = !g_routes;
+    game_set_routes(g_routes);
+    CheckMenuItem(GetSystemMenu(g_hwnd, FALSE), SC_APP_ROUTES, g_routes ? MF_CHECKED : MF_UNCHECKED);
+    if (g_ini[0]) WritePrivateProfileStringW(L"game", L"routes", g_routes ? L"1" : L"0", g_ini);
+}
 
 /* the player's company colour: the game's, or one of these (its agents' hats in missions) */
 static const struct {
@@ -1122,6 +1131,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             for (k = 0; k < NB_COLOURS; k++)
                 AppendMenuW(colours, MF_STRING | (k == g_colour ? MF_CHECKED : 0), SC_APP_COLOUR + 0x10u * (UINT)k, k_colours[k].name);
             AppendMenuW(sm, MF_POPUP, (UINT_PTR)colours, L"Company &colour (agents' hats)");
+            AppendMenuW(sm, MF_STRING | (g_routes ? MF_CHECKED : 0), SC_APP_ROUTES, L"Squad finds &routes (stairs, bridges)");
         }
         AppendMenuW(sm, MF_STRING, SC_APP_RECORD, L"&Record video\tF12");
         AppendMenuW(sm, MF_STRING, SC_APP_SCREENSHOT, L"Scree&nshot\tF11");
@@ -1194,6 +1204,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             return 0;
         case SC_APP_SHADOWS:
             toggle_shadows();
+            return 0;
+        case SC_APP_ROUTES:
+            toggle_routes();
             return 0;
 
         case SC_APP_TIME: case SC_APP_TIME + 0x10u: case SC_APP_TIME + 0x20u:
@@ -1587,6 +1600,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
         gpu_set_time(g_time);
         g_shadows = GetPrivateProfileIntW(L"video", L"shadows", 1, g_ini) != 0;
         gpu_set_shadows(g_shadows);
+        g_routes = GetPrivateProfileIntW(L"game", L"routes", 1, g_ini) != 0;
+        game_set_routes(g_routes);
         g_colour = (int)GetPrivateProfileIntW(L"game", L"company_colour", 0, g_ini);
         if (g_colour < 0 || g_colour >= NB_COLOURS) g_colour = 0;
         game_set_player_colour(k_colours[g_colour].rgb ? 0xFF000000u | k_colours[g_colour].rgb : 0);

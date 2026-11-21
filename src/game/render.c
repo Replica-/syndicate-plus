@@ -811,6 +811,26 @@ void render_floor_outline(uint32_t *rgb, int w, int h, int level, uint32_t colou
         }
 }
 
+int render_map_size(int *mx, int *my, int *mz)
+{
+    uint32_t map;
+    if (g_ra.map == 0) return 0;
+    map = rd32(P_MAP);
+    *mx = (int)rd32(map);
+    *my = (int)rd32(map + 4u);
+    *mz = (int)rd32(map + 8u);
+    return *mx > 0 && *my > 0 && *mz > 0 && *mx <= 256 && *my <= 256 && *mz <= 16;
+}
+
+int render_map_tile(int x, int y, int z)
+{
+    uint32_t map = rd32(P_MAP), col;
+    int mx = (int)rd32(map), my = (int)rd32(map + 4u), mz = (int)rd32(map + 8u);
+    if (x < 0 || y < 0 || z < 0 || x >= mx || y >= my || z >= mz) return -1;
+    col = rd32(map + 12u + (uint32_t)(x + y * mx) * 4u);
+    return M[col + (uint32_t)z];
+}
+
 int render_tile_at(int sx, int sy, int *id, int *rx, int *ry, int *rw, int *rh)
 {
     float lx = g_zcx + ((float)sx - g_zcx) / (float)g_zoom, ly = g_zcy + ((float)sy - g_zcy) / (float)g_zoom;

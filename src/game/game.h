@@ -29,6 +29,9 @@ const char *game_check_dir(const char *dir);
 /* the player's company is shown in this colour (0xFFRRGGBB: its agents' hats in missions); 0: the game's own
  * (any thread) */
 void game_set_player_colour(uint32_t rgb);
+/* the squad's move orders walked as routes over the map's floors when the game's straight walk cannot do them
+ * (on by default) */
+void game_set_routes(int on);
 
 #ifdef __cplusplus
 }

@@ -41,6 +41,7 @@ add_library(syncore STATIC
   src/game/hooks.c
   src/game/additions.c
   src/game/render.c
+  src/game/path.c
   ${GEN_SOURCES})
 target_include_directories(syncore PUBLIC src)
 option(RT_TRACE_CALLS "record guest function entries (debugging)" OFF)
