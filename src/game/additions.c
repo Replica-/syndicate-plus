@@ -1094,10 +1094,11 @@ static void watch_move_orders(void)
  * tick, but does not wait at all when none came yet: on a fast CPU a tick with no wait follows most ticks that
  * waited, so the ticks come in pairs (~14 ms apart, then ~85 ms).  Syndicate's timer runs at ~72 a second (10 ticks
  * a second as designed, ~20 with the pairs), American Revolt's at 120 (17 a second as designed).  Here each tick
- * starts on a steady clock instead, `speed` 120ths of a second apart (17 a second: an agent without mods walks 15
- * units a tick, 256 a second, as in FreeSynd), and the game's own wait is then passed at once.  The ticks do the
- * same; only when they come changes.  SYND_PACE=off: the game's own pace. */
-#define PACE_HZ 120u
+ * starts on a steady clock instead, `speed` PACE_HZ-ths of a second apart, and the game's own wait is then passed
+ * at once.  The ticks do the same; only when they come changes.  At 120 (17 a second) an agent without mods walks
+ * 15 units a tick, 256 a second, as in FreeSynd; the user found that a little fast: 109 (15.6 a second, 10%
+ * slower).  SYND_PACE=off: the game's own pace. */
+#define PACE_HZ 109u
 static uint64_t g_pace_next; /* when the next tick starts */
 static uint64_t g_pace_slot; /* when the last one started (0: not paced) */
 static uint64_t g_pace_period;
