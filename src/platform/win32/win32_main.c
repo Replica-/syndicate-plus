@@ -56,7 +56,7 @@
 #define SC_APP_RECORD 0x10B0u
 #define SC_APP_SCREENSHOT 0x10C0u
 #define SC_APP_FPS 0x10D0u
-#define SC_APP_TIME 0x1300u /* + 0x10 * time (0 as the mission is, 1 off, 2 dusk, 3 night) */
+#define SC_APP_TIME 0x1300u /* + 0x10 * time (0 the mission's own look, 1 day, 2 dusk, 3 night, 4 dawn) */
 #define SC_APP_SHADOWS 0x10E0u
 #define SC_APP_ROUTES 0x10F0u
 #define SC_APP_MUSIC_VOL 0x1100u /* + 0x10 * step (0..4): off, 25%, 50%, 75%, 100% */
@@ -107,9 +107,9 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels)
 }
 
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale, const HostCityLight *lights, int nlights, float night)
+                     float scale, const HostCityLight *lights, int nlights)
 {
-    gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale, lights, nlights, night);
+    gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale, lights, nlights);
     g_frame_city = 1;
 }
 
@@ -923,14 +923,14 @@ static int g_fps_on;
 
 /* the time of day the city is lit for (with Direct3D) */
 static int g_time;
-static const wchar_t *const k_time_names[4] = {L"mission", L"off", L"dusk", L"night"};
+static const wchar_t *const k_time_names[5] = {L"mission", L"day", L"dusk", L"night", L"dawn"};
 
 static void set_time(int t)
 {
     int k;
     g_time = t;
     gpu_set_time(t);
-    for (k = 0; k < 4; k++)
+    for (k = 0; k < 5; k++)
         CheckMenuItem(GetSystemMenu(g_hwnd, FALSE), SC_APP_TIME + 0x10u * (UINT)k, k == t ? MF_CHECKED : MF_UNCHECKED);
     if (g_ini[0]) WritePrivateProfileStringW(L"video", L"time", k_time_names[t], g_ini);
 }
@@ -1088,12 +1088,12 @@ int host_options(HostOption *o, int max)
 {
     static const char *const names[NB_OPTS] = {"TIME OF DAY", "SUN SHADOWS", "FULL SCREEN", "FRAMES A SECOND",
                                                "CRT SCANLINES", "MUSIC VOLUME", "SOUND VOLUME", "SQUAD ROUTES"};
-    static const char *const times[4] = {"MISSION", "OFF", "DUSK", "NIGHT"};
+    static const char *const times[5] = {"MISSION", "DAY", "DUSK", "NIGHT", "DAWN"};
     int k, n = max < NB_OPTS ? max : NB_OPTS;
     for (k = 0; k < n; k++) {
         snprintf(o[k].name, sizeof o[k].name, "%s", names[k]);
         switch (k) {
-        case OPT_TIME: snprintf(o[k].value, sizeof o[k].value, "%s", times[g_time & 3]); break;
+        case OPT_TIME: snprintf(o[k].value, sizeof o[k].value, "%s", times[g_time % 5]); break;
         case OPT_SHADOWS: snprintf(o[k].value, sizeof o[k].value, "%s", g_shadows ? "ON" : "OFF"); break;
         case OPT_FULL: snprintf(o[k].value, sizeof o[k].value, "%s", g_full ? "ON" : "OFF"); break;
         case OPT_FPS: snprintf(o[k].value, sizeof o[k].value, "%s", g_fps_on ? "ON" : "OFF"); break;
@@ -1113,14 +1113,8 @@ void host_option_step(int index, int dir)
 
 static void option_step(int index, int dir)
 {
-    static const int time_order[4] = {0, 2, 3, 1}; /* mission, dusk, night, off */
-    int k;
     switch (index) {
-    case OPT_TIME:
-        for (k = 0; k < 4 && time_order[k] != g_time; k++) {
-        }
-        set_time(time_order[(k + 4 + dir) % 4]);
-        break;
+    case OPT_TIME: set_time((g_time + 5 + dir) % 5); break;
     case OPT_SHADOWS: toggle_shadows(); break;
     case OPT_FULL: set_fullscreen(!g_full); break;
     case OPT_FPS: toggle_fps(); break;
@@ -1157,10 +1151,10 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         }
         {
             HMENU times = CreatePopupMenu();
-            AppendMenuW(times, MF_STRING | (g_time == 0 ? MF_CHECKED : 0), SC_APP_TIME, L"As the &mission is");
-            AppendMenuW(times, MF_STRING | (g_time == 2 ? MF_CHECKED : 0), SC_APP_TIME + 0x20u, L"D&usk");
-            AppendMenuW(times, MF_STRING | (g_time == 3 ? MF_CHECKED : 0), SC_APP_TIME + 0x30u, L"&Night");
-            AppendMenuW(times, MF_STRING | (g_time == 1 ? MF_CHECKED : 0), SC_APP_TIME + 0x10u, L"&Off (the game's own look)");
+            static const wchar_t *const items[5] = {L"The &mission's own", L"&Day", L"D&usk", L"&Night", L"D&awn"};
+            int k;
+            for (k = 0; k < 5; k++)
+                AppendMenuW(times, MF_STRING | (g_time == k ? MF_CHECKED : 0), SC_APP_TIME + 0x10u * (UINT)k, items[k]);
             AppendMenuW(sm, MF_POPUP, (UINT_PTR)times, L"&Time of day (missions)");
             AppendMenuW(sm, MF_STRING | (g_shadows ? MF_CHECKED : 0), SC_APP_SHADOWS, L"Sun s&hadows (missions)");
         }
@@ -1240,6 +1234,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             return 0;
 
         case SC_APP_TIME: case SC_APP_TIME + 0x10u: case SC_APP_TIME + 0x20u: case SC_APP_TIME + 0x30u:
+        case SC_APP_TIME + 0x40u:
             set_time((int)(((w & 0xFFF0u) - SC_APP_TIME) / 0x10u));
             return 0;
         case SC_APP_MUSIC_VOL: case SC_APP_MUSIC_VOL + 0x10u: case SC_APP_MUSIC_VOL + 0x20u:
@@ -1628,7 +1623,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
         wchar_t t[16];
         int k;
         GetPrivateProfileStringW(L"video", L"time", L"mission", t, 16, g_ini);
-        for (k = 0; k < 4; k++)
+        for (k = 0; k < 5; k++)
             if (!_wcsicmp(t, k_time_names[k])) g_time = k;
         gpu_set_time(g_time);
         g_shadows = GetPrivateProfileIntW(L"video", L"shadows", 1, g_ini) != 0;

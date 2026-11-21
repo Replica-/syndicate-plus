@@ -130,10 +130,10 @@ static int g_opt_time, g_opt_shadows = 1, g_opt_routes = 1;
 
 int host_options(HostOption *o, int max)
 {
-    static const char *const times[4] = {"MISSION", "OFF", "DUSK", "NIGHT"};
+    static const char *const times[5] = {"MISSION", "DAY", "DUSK", "NIGHT", "DAWN"};
     if (max < 3) return 0;
     snprintf(o[0].name, sizeof o[0].name, "TIME OF DAY");
-    snprintf(o[0].value, sizeof o[0].value, "%s", times[g_opt_time & 3]);
+    snprintf(o[0].value, sizeof o[0].value, "%s", times[g_opt_time % 5]);
     snprintf(o[1].name, sizeof o[1].name, "SUN SHADOWS");
     snprintf(o[1].value, sizeof o[1].value, "%s", g_opt_shadows ? "ON" : "OFF");
     snprintf(o[2].name, sizeof o[2].name, "SQUAD ROUTES");
@@ -144,11 +144,7 @@ int host_options(HostOption *o, int max)
 void host_option_step(int index, int dir)
 {
     if (index == 0) {
-        static const int order[4] = {0, 2, 3, 1}; /* mission, dusk, night, off: as the window's */
-        int k;
-        for (k = 0; k < 4 && order[k] != g_opt_time; k++) {
-        }
-        g_opt_time = order[(k + 4 + dir) % 4];
+        g_opt_time = (g_opt_time + 5 + dir) % 5;
 #ifdef _WIN32
         gpu_set_time(g_opt_time);
 #endif
@@ -204,15 +200,14 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels)
 }
 
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale, const HostCityLight *lights, int nlights, float night)
+                     float scale, const HostCityLight *lights, int nlights)
 {
 #ifdef _WIN32
     if (g_gpu_on) {
-        gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale, lights, nlights, night);
+        gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale, lights, nlights);
         g_frame_city = 1;
     }
 #else
-    (void)night;
     (void)lights;
     (void)nlights;
     (void)scale;
@@ -499,7 +494,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--screenshot") && strchr(v, ':')) g_shot_ms = (uint32_t)atoi(v), g_shot_file = strchr(v, ':') + 1, i++;
         else if (!strcmp(a, "--shadows")) gpu_set_shadows(strcmp(v, "off") != 0), i++;
         else if (!strcmp(a, "--time"))
-            gpu_set_time(!strcmp(v, "night") ? 3 : !strcmp(v, "dusk") ? 2 : !strcmp(v, "off") || !strcmp(v, "day") ? 1 : 0), i++;
+            gpu_set_time(!strcmp(v, "day") ? 1 : !strcmp(v, "dusk") ? 2 : !strcmp(v, "night") ? 3 : !strcmp(v, "dawn") ? 4 : 0), i++;
 #endif
         else if (!strcmp(a, "--wide")) g_canvas_w = atoi(v) < 640 ? 640 : atoi(v) > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : atoi(v) & ~1, i++;
         else if (!strcmp(a, "--fps")) rt_set_show_fps(1);

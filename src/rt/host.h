@@ -53,7 +53,8 @@ typedef struct HostCityQuad {
     float x, y;       /* the image's top left corner in the frame */
     uint16_t image;
     uint8_t flip;     /* drawn mirrored */
-    uint8_t glow;     /* in the dark: 0 nothing shines, 1 its brightest pixels, 2 all of it */
+    uint8_t glow;     /* in the dark: 0 nothing shines, 1 its brightest pixels, 2 all of it, 3 a road's white lights;
+                       * bit 7: drawn almost see-through */
     uint32_t hat;     /* a colour for the pixels of colour 6 (0x00RRGGBB) in the image's top rows (the top byte: how
                        * many; 0: none) */
     uint32_t shade;   /* a tile: how deep in the sun's shadow (0..255) the corners of its top are, from its top
@@ -62,18 +63,19 @@ typedef struct HostCityQuad {
 /* a light in the city (a lamp): a soft ellipse of light, centre x, y, radii rx, ry (frame pixels) */
 typedef struct HostCityLight {
     float x, y, rx, ry;
-    uint32_t colour;  /* 0x00RRGGBB */
+    uint32_t colour;  /* 0x00RRGGBB; HOST_LIGHT_GLOW: a glow, added to the colours (a muzzle flash, seen by day too) */
 } HostCityLight;
+#define HOST_LIGHT_GLOW 0x01000000u
 /* 1 when the platform draws the city now (it may decline, e.g. while it records a video) */
 int host_city_gpu(void);
 /* forget every image (new data); then define image `image` (w x h palette indices, row stride w) */
 void host_city_reset(void);
 void host_city_image(int image, int w, int h, const uint8_t *pixels);
 /* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, with the
- * frame's palette, each image `scale` times its size (the zoom); the lights shine when the platform shows the city
- * at dusk or at night, or as the mission is: `night` (0..1) is how dark the mission's own palette is */
+ * frame's palette, each image `scale` times its size (the zoom); the lights show when the platform lights the city
+ * for a time of day darker than the mission's own look */
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale, const HostCityLight *lights, int nlights, float night);
+                     float scale, const HostCityLight *lights, int nlights);
 
 /* ---- the options a mission's menu (Escape) shows: the platform's settings ----
  * host_options fills `o` with the options (at most `max`) and returns how many: a name, the value now; any thread.

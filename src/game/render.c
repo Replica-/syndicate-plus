@@ -65,6 +65,9 @@ static uint16_t rd16(uint32_t a)
     return v;
 }
 
+static uint8_t g_types[256]; /* the tiles' types (COL01.DAT), render_set_tile_types */
+static int g_have_types;
+
 /* the images the GPU has (host_city_image): the tiles 0-255, the sprites from 256 */
 #define IMAGE_SPRITES 256
 static uint8_t g_defined[IMAGE_SPRITES + 4096];
@@ -552,7 +555,12 @@ static const struct {
     {187, RENDER_GLOW_NONE, RENDER_LIGHT_NONE, 0}, {201, RENDER_GLOW_NONE, RENDER_LIGHT_ON, 130}, {207, RENDER_GLOW_FULL, RENDER_LIGHT_ON, 80},
     {226, RENDER_GLOW_NONE, RENDER_LIGHT_ON, 0},
 };
-#define LAMP_MAX_PIXELS 30  /* more bright pixels than this: a painted surface, not a lamp */
+/* a lamp (as FreeSynd's): a few very bright pixels, fewer on the ground, none on roads and slopes (their marks) */
+#define LAMP_LUMINANCE 199    /* 0.78 of 255 */
+#define LAMP_MIN_PIXELS 2
+#define LAMP_MAX_PIXELS (TILE_W * TILE_H / 8)
+#define LAMP_MAX_GROUND 48
+#define LAMP_RADIUS_ON 80     /* a tile whose light is on: from its centre */
 #define TILE_LIGHTS_FILE "tile_lights.ini"
 
 /* the settings of each tile (render_tile_setting): the defaults above, then tile_lights.ini in the user's folder */
@@ -584,6 +592,7 @@ static void tile_settings_load(void)
         t->glow = k_tile_lights[k].glow;
         t->light = k_tile_lights[k].light;
         t->radius = k_tile_lights[k].radius;
+        t->set = 1;
     }
     snprintf(path, sizeof path, "%s/%s", rt_user_dir, TILE_LIGHTS_FILE);
     f = fopen(path, "r");
@@ -595,6 +604,7 @@ static void tile_settings_load(void)
         int id, r, g, b;
         if (line[0] == '#' || sscanf(line, "tile=%d", &id) != 1 || id < 0 || id >= NB_TILES) continue;
         memset(&t, 0, sizeof t);
+        t.set = 1;
         if ((v = strstr(line, "glow=")) != NULL) t.glow = name_index(v + 5, k_glow_names, 3);
         if ((v = strstr(line, "light=")) != NULL) t.light = name_index(v + 6, k_light_names, 3);
         if ((v = strstr(line, "radius=")) != NULL) t.radius = atoi(v + 7);
@@ -648,7 +658,7 @@ int render_set_tile_setting(int id, const RenderTileSetting *in)
 
 typedef struct TileLight {
     uint8_t known, glow, light;
-    float ox, oy, radius;   /* the light's centre in the tile, its radius */
+    float ox, oy, radius, ry; /* the light's centre in the tile, its radii */
     uint32_t colour;
 } TileLight;
 static TileLight g_tile_light[NB_TILES];
@@ -660,7 +670,7 @@ static int g_nlights;
 static float g_car_dir[64][2];
 #define NB_FRAME_LIGHTS 4096
 static struct {
-    uint16_t frame, known, lit;
+    uint16_t frame, known, lit, bright; /* lit: a few coloured lamps; bright: very bright pixels (a lit window) */
     float ox, oy;
     uint32_t colour;
 } g_frame_light[NB_FRAME_LIGHTS];
@@ -678,10 +688,22 @@ static void tile_light_forget(int id)
     g_tile_light[id].known = 0;
 }
 
-static int bright(uint32_t c)
+static int luminance(uint32_t c)
 {
-    int r = (int)((c >> 16) & 0xFF), g = (int)((c >> 8) & 0xFF), b = (int)(c & 0xFF), mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
-    return mx >= 230 && r * 3 + g * 6 + b >= 1800;
+    return (int)(0.299 * ((c >> 16) & 0xFF) + 0.587 * ((c >> 8) & 0xFF) + 0.114 * (c & 0xFF));
+}
+
+static int max_lamp_pixels(int type)
+{
+    if (!g_have_types) return LAMP_MAX_PIXELS;
+    if ((type >= 0x01 && type <= 0x04) || (type >= 0x06 && type <= 0x09) || type == 0x0B || type == 0x0E || type == 0x0F)
+        return 0;
+    return type == 0x05 ? LAMP_MAX_GROUND : LAMP_MAX_PIXELS;
+}
+
+static int road_type(int type)
+{
+    return (type >= 0x06 && type <= 0x09) || type == 0x0B || type == 0x0E || type == 0x0F;
 }
 
 static const TileLight *tile_light(int id)
@@ -689,13 +711,14 @@ static const TileLight *tile_light(int id)
     TileLight *l = &g_tile_light[id];
     if (!l->known) {
         const uint8_t *px = tile(id);
-        int x, y, n = 0, opaque = 0;
-        double sx = 0, sy = 0, ox = 0, oy = 0, cr = 0, cg = 0, cb = 0, mx;
+        int x, y, n = 0, opaque = 0, top = 0;
+        double sx = 0, sy = 0, ox = 0, oy = 0, cr = 0, cg = 0, cb = 0, mx, tr = 0, tg = 0, tb = 0, tn = 0;
         RenderTileSetting set;
         memset(l, 0, sizeof *l);
         l->known = 1;
         render_tile_setting(id, &set);
-        l->glow = (uint8_t)set.glow;
+        /* a road without a setting of its own: its white lights shine */
+        l->glow = (uint8_t)(!set.set && g_have_types && road_type(g_types[id]) ? 3 : set.glow);
         l->light = (uint8_t)set.light;
         l->radius = (float)set.radius;
         if (px == NULL || g_light_palette == NULL) {
@@ -709,7 +732,8 @@ static const TileLight *tile_light(int id)
                 opaque++;
                 ox += x;
                 oy += y;
-                if (bright(g_light_palette[c])) {
+                if (luminance(g_light_palette[c]) > top) top = luminance(g_light_palette[c]);
+                if (luminance(g_light_palette[c]) >= LAMP_LUMINANCE) {
                     uint32_t v = g_light_palette[c];
                     n++;
                     sx += x;
@@ -719,41 +743,55 @@ static const TileLight *tile_light(int id)
                     cb += v & 0xFF;
                 }
             }
-        if (l->light == RENDER_LIGHT_AUTO) l->light = n > 0 && n <= LAMP_MAX_PIXELS ? RENDER_LIGHT_ON : RENDER_LIGHT_NONE;
-        if (l->light != RENDER_LIGHT_ON) return l;
-        if (n > 0) {
-            l->ox = (float)(sx / n);
-            l->oy = (float)(sy / n);
-            mx = cr > cg ? (cr > cb ? cr : cb) : (cg > cb ? cg : cb);
-            l->colour = (uint32_t)(cr / mx * 255.0) << 16 | (uint32_t)(cg / mx * 255.0) << 8 | (uint32_t)(cb / mx * 255.0);
-        } else {
+        if (l->light == RENDER_LIGHT_ON) {
+            /* turned on: from the centre of the tile, the colour of its brightest pixels, an ellipse on the floor */
+            for (y = 0; y < TILE_H; y++)
+                for (x = 0; x < TILE_W; x++) {
+                    uint8_t c = px[y * TILE_W + x];
+                    uint32_t v;
+                    if (c == 255 || luminance(g_light_palette[c]) < top * 9 / 10) continue;
+                    v = g_light_palette[c];
+                    tr += (v >> 16) & 0xFF;
+                    tg += (v >> 8) & 0xFF;
+                    tb += v & 0xFF;
+                    tn++;
+                }
             l->ox = opaque ? (float)(ox / opaque) : TILE_W / 2.0f;
             l->oy = opaque ? (float)(oy / opaque) : TILE_H / 2.0f;
-            l->colour = 0xFFE6B4u; /* a warm lamp */
+            cr = tr;
+            cg = tg;
+            cb = tb;
+            if (l->radius == 0) l->radius = LAMP_RADIUS_ON;
+            l->ry = l->radius / 2;
+        } else if (l->light == RENDER_LIGHT_AUTO && n >= LAMP_MIN_PIXELS &&
+                   n <= max_lamp_pixels(g_have_types ? g_types[id] : 0)) {
+            /* a lamp: its bright pixels' centre and colour, a circle of light as big as it is bright */
+            l->light = RENDER_LIGHT_ON;
+            l->ox = (float)(sx / n);
+            l->oy = (float)(sy / n);
+            if (l->radius == 0) {
+                l->radius = (float)(24.0 + 6.0 * sqrt((double)n));
+                if (l->radius < 28) l->radius = 28;
+                if (l->radius > 90) l->radius = 90;
+            }
+            l->ry = l->radius;
+        } else {
+            l->light = RENDER_LIGHT_NONE;
+            return l;
         }
-        if (l->radius == 0) l->radius = (float)(48 + (n < 20 ? n : 20) * 2);
+        mx = cr > cg ? (cr > cb ? cr : cb) : (cg > cb ? cg : cb);
+        l->colour = mx > 0 ? (uint32_t)(cr / mx * 255.0) << 16 | (uint32_t)(cg / mx * 255.0) << 8 | (uint32_t)(cb / mx * 255.0)
+                           : 0xFFFFFFu;
         if (set.colour != 0) l->colour = set.colour & 0xFFFFFFu;
     }
     return l;
 }
 
+static int g_obj_glow; /* how the object being drawn glows */
+
 static int tile_glow(int image)
 {
-    return image < IMAGE_SPRITES ? tile_light(image)->glow : RENDER_GLOW_NONE;
-}
-
-/* how dark the mission is (0 day .. 1 night: its own palette's, render_set_mission_night) */
-static float g_mission_night;
-
-void render_set_mission_night(float night)
-{
-    g_mission_night = night;
-}
-
-static float mission_night(const uint32_t *pal)
-{
-    (void)pal;
-    return g_mission_night;
+    return image < IMAGE_SPRITES ? tile_light(image)->glow : g_obj_glow;
 }
 
 /* a light at fx, fy of the unzoomed picture */
@@ -769,20 +807,22 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
     h->colour = colour;
 }
 
-/* things that light up what is around them: a shot's flash (the effects' list), a car's headlights (ahead of it,
- * the way it last moved) */
+/* things that light up what is around them (as FreeSynd's): a shot's flash (the effects' list: lights and glows,
+ * by day too), a car's headlights (ahead of it, the way it last moved, and its red rear lights) */
 #define LIST_CARS 1
 #define LIST_EFFECTS 4
 #define LIST_STATICS 2
 #define FLASH_COLOUR 0xFFB050u
-#define HEADLIGHT_COLOUR 0xFFF2D8u
+#define HEADLIGHT_COLOUR 0xFFF5D7u
+#define REAR_LIGHT_COLOUR 0xFF281Eu
 
 static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_t vx, int32_t vy)
 {
     float fx, fy;
     if (li == LIST_EFFECTS) {
         project_f(x, y, z, &fx, &fy);
-        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy - 8.0f, 44, 30, FLASH_COLOUR);
+        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy - 8.0f, 80, 80, FLASH_COLOUR);
+        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy - 8.0f, 12, 12, FLASH_COLOUR | HOST_LIGHT_GLOW);
     } else if (li == LIST_CARS && i < 64) {
         float d = sqrtf((float)vx * vx + (float)vy * vy);
         int k;
@@ -791,12 +831,15 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
             g_car_dir[i][1] = (float)vy / d;
         }
         if (g_car_dir[i][0] == 0 && g_car_dir[i][1] == 0) return;
-        for (k = 1; k <= 2; k++) {
-            float ahead = 220.0f * (float)k;
+        /* the cone of the headlights (circles growing ahead), their lamps, the rear lights */
+        for (k = 0; k <= 3; k++) {
+            float ahead = 160.0f + 180.0f * (float)k;
             project_f(x + (int32_t)(g_car_dir[i][0] * ahead), y + (int32_t)(g_car_dir[i][1] * ahead), z, &fx, &fy);
-            add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, 30.0f + 8.0f * k, 20.0f + 5.0f * k,
-                      HEADLIGHT_COLOUR);
+            add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, k == 0 ? 14.0f : 14.0f + 12.0f * k,
+                      k == 0 ? 14.0f : 10.0f + 8.0f * k, HEADLIGHT_COLOUR);
         }
+        project_f(x - (int32_t)(g_car_dir[i][0] * 160.0f), y - (int32_t)(g_car_dir[i][1] * 160.0f), z, &fx, &fy);
+        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, 16, 16, REAR_LIGHT_COLOUR);
     }
 }
 
@@ -904,13 +947,13 @@ static int signal_pixel(uint32_t c)
     return mx >= 200 && mn * 100 <= mx * 45;
 }
 
-static void frame_lights(int frame, float ax, float ay)
+static int frame_slot(int frame)
 {
     int slot = frame % NB_FRAME_LIGHTS;
-    if (g_light_palette == NULL || frame <= 0) return;
+    if (g_light_palette == NULL || frame <= 0) return -1;
     if (!g_frame_light[slot].known || g_frame_light[slot].frame != frame) {
         uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), e = rd16(frames + (uint32_t)frame * 8u);
-        int guard = 0, n = 0;
+        int guard = 0, n = 0, nb = 0;
         double sx = 0, sy = 0, cr = 0, cg = 0, cb = 0, mx;
         for (;;) {
             uint32_t ea = elements + e * 10u;
@@ -919,6 +962,7 @@ static void frame_lights(int frame, float ax, float ay)
             for (y = 0; px != NULL && y < sh; y++)
                 for (x = 0; x < sw; x++) {
                     uint8_t c = px[y * sw + (flip ? sw - 1 - x : x)];
+                    if (c != 255 && luminance(g_light_palette[c]) >= LAMP_LUMINANCE) nb++;
                     if (c == 255 || !signal_pixel(g_light_palette[c])) continue;
                     n++;
                     sx += ox + x;
@@ -933,6 +977,7 @@ static void frame_lights(int frame, float ax, float ay)
         g_frame_light[slot].frame = (uint16_t)frame;
         g_frame_light[slot].known = 1;
         g_frame_light[slot].lit = n > 0 && n <= 20;
+        g_frame_light[slot].bright = (uint16_t)nb;
         if (n > 0) {
             g_frame_light[slot].ox = (float)(sx / n);
             g_frame_light[slot].oy = (float)(sy / n);
@@ -941,10 +986,39 @@ static void frame_lights(int frame, float ax, float ay)
                 (uint32_t)(cr / mx * 255.0) << 16 | (uint32_t)(cg / mx * 255.0) << 8 | (uint32_t)(cb / mx * 255.0);
         }
     }
-    if (!g_frame_light[slot].lit) return;
-    /* a bright core, a soft glow around it */
-    add_light(ax + g_frame_light[slot].ox, ay + g_frame_light[slot].oy, 7, 7, g_frame_light[slot].colour);
-    add_light(ax + g_frame_light[slot].ox, ay + g_frame_light[slot].oy, 26, 18, g_frame_light[slot].colour);
+    return slot;
+}
+
+/* the statics' kinds (their byte +0x19) */
+#define STATIC_KIND 0x19u
+#define SEMAPHORE_RADIUS 56
+#define OBJECT_LIGHT_DY (-24) /* a window's or sign's light: above where it stands */
+#define WINDOW_LIGHT 0xFFD796u
+#define NEON_LIGHT 0xFF82DCu
+
+/* a static's light (traffic lights, neon signs, lit windows); returns how it glows in the dark (HostCityQuad.glow) */
+static int static_lights(uint32_t a, int frame, float ax, float ay)
+{
+    int kind = M[a + STATIC_KIND], slot;
+    if (kind >= 0x05 && kind <= 0x08) { /* traffic lights: the colour of the lamp lit */
+        slot = frame_slot(frame);
+        if (slot >= 0 && g_frame_light[slot].lit)
+            add_light(ax + g_frame_light[slot].ox, ay + g_frame_light[slot].oy, SEMAPHORE_RADIUS, SEMAPHORE_RADIUS,
+                      g_frame_light[slot].colour);
+        return RENDER_GLOW_BRIGHT;
+    }
+    if (kind == 0x0A) {
+        add_light(ax, ay + OBJECT_LIGHT_DY, 56, 56, NEON_LIGHT);
+        return RENDER_GLOW_NONE;
+    }
+    if (kind >= 0x20 && kind <= 0x26) { /* a window that lights up: lit when its frame has very bright pixels */
+        slot = frame_slot(frame);
+        if (slot < 0 || g_frame_light[slot].bright == 0) return RENDER_GLOW_NONE;
+        add_light(ax, ay + OBJECT_LIGHT_DY, 40, 40, WINDOW_LIGHT);
+        return RENDER_GLOW_BRIGHT;
+    }
+    if (kind == 0x12 || kind == 0x13 || kind == 0x15) return RENDER_GLOW_BRIGHT; /* windows' glass */
+    return RENDER_GLOW_NONE;
 }
 
 /* ---- the sun's shadows: the sun high at the top left of the screen (from world -x, 45 degrees up), as FreeSynd's:
@@ -952,8 +1026,6 @@ static void frame_lights(int frame, float ax, float ay)
  * shadow, the less the further away that tile is (up to SHADOW_LENGTH tiles); the shade of the 4 cells around
  * each corner of a tile's top is blended across it (on the GPU), so the shadows fade pixel by pixel ---- */
 #define SHADOW_LENGTH 8
-static uint8_t g_types[256]; /* the tiles' types (COL01.DAT), render_set_tile_types */
-static int g_have_types;
 
 void render_set_tile_types(const uint8_t types[256])
 {
@@ -1021,7 +1093,7 @@ static void tile_lights_at(int id, float fx, float fy)
     h->x = zoom_x(fx + l->ox);
     h->y = zoom_y(fy + l->oy);
     h->rx = l->radius * (float)g_zoom;
-    h->ry = h->rx * 0.6f; /* lying on the ground, seen from above at an angle */
+    h->ry = l->ry * (float)g_zoom;
     h->colour = l->colour;
 }
 
@@ -1045,6 +1117,7 @@ typedef struct Obj {
     uint32_t a;   /* its record */
     int frame;    /* the frame it shows */
     int ped;      /* its number among the people, -1 for others */
+    uint8_t glow; /* how it glows in the dark (HostCityQuad.glow) */
 } Obj;
 
 static int cmp_obj(const void *a, const void *b)
@@ -1100,8 +1173,10 @@ static void draw_obj(const Target *t, const Obj *o)
         g_ped_drawn[o->ped] = 1;
         if (render_hat_colour != NULL) hat = render_hat_colour(o->ped);
     }
+    g_obj_glow = o->glow;
     draw_frame(t, o->frame, fx + render_obj_dx, fy + render_obj_dy, ffx + (float)render_obj_dx, ffy + (float)render_obj_dy,
                hat);
+    g_obj_glow = 0;
 }
 
 void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1, uint64_t now_us)
@@ -1165,10 +1240,11 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                 z = (int16_t)rd16(a + 8u);
             }
             if (x < 0 || y < 0 || x >= mx * 256 || y >= my * 256) continue;
+            objs[nobj].glow = 0;
             if (t.gpu && li == LIST_STATICS) {
                 float sfx, sfy;
                 project_f(x, y, z, &sfx, &sfy);
-                frame_lights(frame, sfx + (float)render_obj_dx, sfy + (float)render_obj_dy);
+                objs[nobj].glow = (uint8_t)static_lights(a, frame, sfx + (float)render_obj_dx, sfy + (float)render_obj_dy);
             }
             if (t.gpu && (li == LIST_CARS || li == LIST_EFFECTS))
                 object_lights(li, (int)i, x, y, z, t256 >= 0 ? sb->pos[n][0] - sa->pos[n][0] : 0,
@@ -1243,6 +1319,6 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         for (i = 0; i < n; i++) hash = (hash ^ b[i]) * 16777619u;
         render_gpu_changed = hash != prev_hash;
         prev_hash = hash;
-        host_city_frame(g_quads, g_nquads, pal, x0, y0, x1, y1, (float)g_zoom, g_lights, g_nlights, mission_night(pal));
+        host_city_frame(g_quads, g_nquads, pal, x0, y0, x1, y1, (float)g_zoom, g_lights, g_nlights);
     }
 }

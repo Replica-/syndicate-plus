@@ -40,6 +40,7 @@ enum { RENDER_LIGHT_AUTO, RENDER_LIGHT_NONE, RENDER_LIGHT_ON };    /* whether it
 typedef struct RenderTileSetting {
     int glow, light, radius;   /* radius 0: from the tile */
     uint32_t colour;           /* 0xFFRRGGBB, or 0: from the tile */
+    int set;                   /* the tile has settings of its own (a road without: its white lights shine) */
 } RenderTileSetting;
 int render_tile_setting(int id, RenderTileSetting *out);
 /* changes a tile's setting (at once) and saves them all in the user's folder (tile_lights.ini) */
