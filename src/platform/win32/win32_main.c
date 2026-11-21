@@ -89,11 +89,10 @@ static int g_crt_on;
 static int g_frame_city;            /* the frame being made has the city on the GPU */
 #define WM_APP_SHOT (WM_APP + 7)
 
-/* the city on the GPU: not while the frame must hold all of the picture (a video, the CRT filter) or without
- * Direct3D */
+/* the city on the GPU: not while the frame must hold all of the picture (the CRT filter) or without Direct3D */
 int host_city_gpu(void)
 {
-    return g_gpu && !g_crt_on && !record_active();
+    return g_gpu && !g_crt_on;
 }
 
 void host_city_reset(void)
@@ -122,7 +121,8 @@ void host_present(const uint32_t *pixels, int w, int h)
     memcpy(g_frame, pixels, sizeof(uint32_t) * (size_t)(w * h));
     g_fw = w;
     g_fh = h;
-    record_frame(g_frame, w, h, host_time_us());
+    /* with Direct3D the video is of the picture shown (gpu_paint) */
+    if (!g_gpu || g_crt_on) record_frame(g_frame, w, h, host_time_us());
     ReleaseSRWLockExclusive(&g_frame_lock);
     if (g_hwnd != NULL) InvalidateRect(g_hwnd, NULL, FALSE);
 }
@@ -249,6 +249,8 @@ static void gpu_paint(HWND h)
     hh = g_fh;
     if (w > 0) memcpy(copy, g_frame, sizeof(uint32_t) * (size_t)(w * hh));
     ReleaseSRWLockShared(&g_frame_lock);
+    /* a video, a screenshot: the picture as it is shown */
+    if (record_active()) gpu_capture();
     gpu_present(w > 0 ? copy : NULL, w, hh, r, 1);
     save_capture();
 }
@@ -1032,9 +1034,12 @@ static void toggle_record(void)
 static uint32_t g_shot[FRAME_MAX_W * FRAME_MAX_H];
 static int g_shot_w, g_shot_h;
 
+static volatile LONG g_shot_wanted;
+
 static void screenshot(void)
 {
     if (g_gpu) {
+        InterlockedExchange(&g_shot_wanted, 1);
         gpu_capture();
         InvalidateRect(g_hwnd, NULL, FALSE);
         return;
@@ -1064,7 +1069,11 @@ static void save_capture(void)
     uint32_t *pixels;
     int w, h;
     if (!gpu_capture_take(&pixels, &w, &h)) return;
-    save_png(pixels, w, h);
+    if (record_active()) record_frame(pixels, w, h, host_time_us());
+    if (g_shot_wanted) {
+        InterlockedExchange(&g_shot_wanted, 0);
+        save_png(pixels, w, h);
+    }
     free(pixels);
 }
 

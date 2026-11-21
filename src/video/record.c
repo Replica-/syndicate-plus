@@ -414,9 +414,9 @@ void record_frame(const uint32_t *pixels, int w, int h, uint64_t now_us)
     unlock(&g_lock);
     f = (Frame *)malloc(sizeof *f);
     if (f == NULL) return;
-    /* nearest pixel to 640x480 (a 4:3 picture whatever the game's resolution); a wider picture (480 lines, more than
-     * 640 across: a mission in a wide window) keeps its shape, with black above and below */
-    if (h == 480 && w > 640) {
+    /* nearest pixel to 640x480 (a 4:3 picture whatever the game's resolution); a wider picture (a mission in a wide
+     * window, the window's own picture) keeps its shape, with black above and below */
+    if (h != 200 && (long long)w * 3 > (long long)h * 4 + 4) { /* wider than 4:3 (320 x 200 fills a 4:3 screen) */
         rows = VID_W * h / w;
         top = (VID_H - rows) / 2;
     }
