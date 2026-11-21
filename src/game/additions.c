@@ -9,6 +9,8 @@
  * Keys in missions: W, A, S and D scroll the view as the arrow keys do; 1 to 4 select an agent (the game's own)
  * and pressed twice within 0.4 s centre the view on it.
  *
+ * A hit sprays blood out of the person hit, away from the shooter.
+ *
  * Agents wear hats in the colour of their company (the original draws every hat in the first company's red).
  *
  * The selected agents' boxes (top left of a mission) have a solid background instead of the checkerboard of orange
@@ -23,6 +25,7 @@
  * The MINIGUN SQUAD cheat, as the company or player name (Configure Company), like the game's own cheats: every
  * weapon and mod researched, and the 18 agents of the company with every mod at version 3 and a minigun in each
  * of their 8 weapon slots.  The research is completed as the game's COOPER TEAM cheat does it. */
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -543,6 +546,117 @@ static void solid_selected_boxes(uint8_t *pix, int w, const uint32_t *pal)
 #undef MK
 }
 
+/* ---- blood ---- */
+#define PED_HEALTH 0x14u      /* (16 bits) */
+#define PED_LAST_ENEMY 0x16u  /* (16 bits) who hit it last, from the level data's people - 2 (0: nobody) */
+#define NB_DROPS 256
+#define DROPS_A_HIT 18
+#define DROP_SPEED 1.2        /* world units a ms (a tile is 256) */
+#define DROP_GRAVITY 0.006
+#define DROP_LIFE_MS 350
+#define HIT_HEIGHT 96         /* the middle of a body above its feet */
+
+typedef struct Drop {
+    double x, y, z, vx, vy, vz;
+    int32_t floor;
+    int life, max_life; /* ms; 0: unused */
+} Drop;
+
+static Drop g_drops[NB_DROPS];
+static int16_t g_health[NB_PEDS];
+static uint8_t g_dead[NB_PEDS];
+static uint64_t g_drops_us;
+static uint32_t g_rand = 12345u;
+
+static int rnd(int n)
+{
+    g_rand = g_rand * 1103515245u + 12345u;
+    return (int)((g_rand >> 16) % (uint32_t)n);
+}
+
+static void spray(uint32_t ped)
+{
+    double x = (int16_t)RD16(ped + PED_X), y = (int16_t)RD16(ped + PED_Y), dx, dy, len;
+    int32_t z = (int16_t)RD16(ped + PED_Z);
+    uint32_t enemy = RD16(ped + PED_LAST_ENEMY);
+    int i, k = 0;
+    /* the way the shot went (any way when the shooter is not known) */
+    if (enemy != 0 && enemy + PED_SIZE < NB_PEDS * PED_SIZE + 2u) {
+        uint32_t s = g_addrs->peds - 2u + enemy;
+        dx = x - (int16_t)RD16(s + PED_X);
+        dy = y - (int16_t)RD16(s + PED_Y);
+    } else {
+        dx = rnd(201) - 100;
+        dy = rnd(201) - 100;
+    }
+    len = dx * dx + dy * dy;
+    if (len < 1.0) return;
+    len = sqrt(len);
+    dx /= len;
+    dy /= len;
+    for (i = 0; i < DROPS_A_HIT; i++) {
+        double spread = (rnd(201) - 100) / 250.0, speed = DROP_SPEED * (0.4 + rnd(61) / 100.0);
+        Drop *d;
+        while (k < NB_DROPS && g_drops[k].life > 0) k++;
+        if (k == NB_DROPS) return;
+        d = &g_drops[k];
+        d->x = x;
+        d->y = y;
+        d->z = z + HIT_HEIGHT;
+        d->vx = (dx - dy * spread) * speed;
+        d->vy = (dy + dx * spread) * speed;
+        d->vz = rnd(100) / 100.0 * 0.6;
+        d->floor = z;
+        d->life = d->max_life = DROP_LIFE_MS - rnd(120);
+    }
+}
+
+/* every tick: a person whose health went down, or who died, was hit */
+static void watch_hits(int first)
+{
+    int i;
+    for (i = 0; i < NB_PEDS; i++) {
+        uint32_t p = g_addrs->peds + (uint32_t)i * PED_SIZE;
+        int16_t h = (int16_t)RD16(p + PED_HEALTH);
+        uint8_t dead = M[p + PED_STATE] == 0x11;
+        if (!first && M[p + PED_TYPE] != 0 && M[p + PED_LOCATION] == 4 && (h < g_health[i] || (dead && !g_dead[i])))
+            spray(p);
+        g_health[i] = h;
+        g_dead[i] = dead;
+    }
+}
+
+static void draw_drops(uint8_t *pix, int w, const uint32_t *pal)
+{
+    uint64_t now = host_time_us();
+    int elapsed = g_drops_us ? (int)((now - g_drops_us) / 1000u) : 0, i;
+    uint8_t c = nearest_colour(pal, 150, 10, 10);
+    if (elapsed > 100) elapsed = 100;
+    g_drops_us = now;
+    for (i = 0; i < NB_DROPS; i++) {
+        Drop *d = &g_drops[i];
+        int fx, fy;
+        if (d->life <= 0) continue;
+        d->life -= elapsed;
+        if (d->life <= 0) continue;
+        if (d->z > d->floor) {
+            d->x += d->vx * elapsed;
+            d->y += d->vy * elapsed;
+            d->z += d->vz * elapsed;
+            d->vz -= DROP_GRAVITY * elapsed;
+            if (d->z < d->floor) d->z = d->floor; /* landed: it stays until it is gone */
+        }
+        world_to_frame((int32_t)d->x, (int32_t)d->y, (int32_t)d->z, &fx, &fy);
+        {
+            int density = 1 + 3 * d->life / d->max_life;
+            plot(pix, w, fx, fy, c, density);
+            plot(pix, w, fx + 1, fy, c, density);
+            plot(pix, w, fx, fy + 1, c, density);
+            plot(pix, w, fx + 1, fy + 1, c, density);
+        }
+    }
+}
+
 /* ---- hats in the colours of the companies ---- */
 #define HAT_COLOUR 6          /* the hats' colour in the agents' sprites (the first company's) */
 #define AGENTS_A_COMPANY 8    /* company c has the people 8c to 8c + 7 */
@@ -573,6 +687,7 @@ void game_overlay(uint8_t *pixels, int w, int h, const uint32_t *palette)
     uint8_t c;
     if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return;
     company_hats(pixels, w);
+    draw_drops(pixels, w, palette);
     solid_selected_boxes(pixels, w, palette);
     draw_scanner_extras(pixels, w, palette);
     if (g_marker_us == 0) return;
@@ -619,9 +734,12 @@ static int on_mission_tick(uint32_t addr)
         g_tick_us = host_time_us();
         watch_move_orders();
         g_marker_us = 0;
+        memset(g_drops, 0, sizeof g_drops);
+        watch_hits(1);
     }
     g_tick_us = host_time_us();
     watch_move_orders();
+    watch_hits(0);
     if (slot) {
         g_centre_slot = 0;
         centre_on_agent(slot);
