@@ -82,10 +82,46 @@ static int g_gpu; /* the picture is drawn with Direct3D 11 (win32_gpu.c); else w
 static SRWLOCK g_frame_lock = SRWLOCK_INIT;
 static uint32_t g_frame[FRAME_MAX_W * FRAME_MAX_H];
 static int g_fw, g_fh;
+static int g_crt_on;
+static volatile LONG g_shot_wanted; /* a screenshot: the next frame drawn whole by the CPU */
+static int g_frame_city;            /* the frame being made has the city on the GPU */
+#define WM_APP_SHOT (WM_APP + 7)
+static void screenshot_of(const uint32_t *pixels, int w, int h);
+
+/* the city on the GPU: not while the frame must hold all of the picture (a video, a screenshot, the CRT filter) or
+ * without Direct3D */
+int host_city_gpu(void)
+{
+    return g_gpu && !g_crt_on && !record_active() && !g_shot_wanted;
+}
+
+void host_city_reset(void)
+{
+    gpu_city_reset();
+}
+
+void host_city_image(int image, int w, int h, const uint8_t *pixels)
+{
+    gpu_city_image(image, w, h, pixels);
+}
+
+void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1)
+{
+    gpu_city_frame(quads, n, palette, x0, y0, x1, y1);
+    g_frame_city = 1;
+}
 
 void host_present(const uint32_t *pixels, int w, int h)
 {
     if (w <= 0 || h <= 0 || w > FRAME_MAX_W || h > FRAME_MAX_H) return;
+    if (!g_frame_city) {
+        if (g_gpu) gpu_city_off();
+        if (g_shot_wanted) {
+            InterlockedExchange(&g_shot_wanted, 0);
+            screenshot_of(pixels, w, h);
+        }
+    }
+    g_frame_city = 0;
     AcquireSRWLockExclusive(&g_frame_lock);
     memcpy(g_frame, pixels, sizeof(uint32_t) * (size_t)(w * h));
     g_fw = w;
@@ -118,7 +154,6 @@ static RECT picture_rect(HWND h)
 }
 
 /* ---- the CRT scanline filter (src/video/crt.c), off unless chosen in the system menu ---- */
-static int g_crt_on;
 static CrtFilter *g_crt;
 static uint32_t *g_crt_buf;
 static size_t g_crt_cap;
@@ -930,17 +965,40 @@ static void toggle_record(void)
     update_title();
 }
 
+/* the screenshot is taken of the next frame made by the CPU whole (the city on the GPU is not in the frame):
+ * copied on the game thread, saved on the window's */
+static uint32_t g_shot[FRAME_MAX_W * FRAME_MAX_H];
+static int g_shot_w, g_shot_h;
+
+static void screenshot_of(const uint32_t *pixels, int w, int h)
+{
+    memcpy(g_shot, pixels, sizeof(uint32_t) * (size_t)(w * h));
+    g_shot_w = w;
+    g_shot_h = h;
+    if (g_hwnd != NULL) PostMessageW(g_hwnd, WM_APP_SHOT, 0, 0);
+}
+
 static void screenshot(void)
 {
-    static uint32_t copy[FRAME_MAX_W * FRAME_MAX_H];
+    if (!g_gpu) {
+        /* the frame is the whole picture */
+        AcquireSRWLockShared(&g_frame_lock);
+        if (g_fw > 0) memcpy(g_shot, g_frame, sizeof(uint32_t) * (size_t)(g_fw * g_fh));
+        g_shot_w = g_fw;
+        g_shot_h = g_fh;
+        ReleaseSRWLockShared(&g_frame_lock);
+        PostMessageW(g_hwnd, WM_APP_SHOT, 0, 0);
+        return;
+    }
+    InterlockedExchange(&g_shot_wanted, 1);
+}
+
+static void save_screenshot(void)
+{
     char dir[MAX_PATH * 3], path[MAX_PATH * 3 + 64];
     SYSTEMTIME t;
-    int w, h;
-    AcquireSRWLockShared(&g_frame_lock);
-    w = g_fw;
-    h = g_fh;
-    if (w > 0) memcpy(copy, g_frame, sizeof(uint32_t) * (size_t)(w * h));
-    ReleaseSRWLockShared(&g_frame_lock);
+    int w = g_shot_w, h = g_shot_h;
+    const uint32_t *copy = g_shot;
     if (w <= 0) return;
     media_dir(L"Screenshots", dir, (int)sizeof dir);
     GetLocalTime(&t);
@@ -1158,6 +1216,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         return 0;
     case WM_APP_GAME_DONE:
         DestroyWindow(h);
+        return 0;
+    case WM_APP_SHOT:
+        save_screenshot();
         return 0;
     case WM_APP_FATAL:
         g_modal++;

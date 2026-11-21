@@ -40,6 +40,27 @@ void host_log(const char *line);
  * microseconds; 0 when it is not known (frames are then made at a steady rate) */
 int host_display_timing(uint64_t *vblank_us, uint64_t *period_us);
 
+/* ---- the city on the GPU (optional) ----
+ * In missions the core can hand the platform the city as a list of images to draw, at the display's resolution,
+ * under the frame: the frame's pixels then carry a transparency in their top byte (0 opaque, 255: the city shows
+ * through).  Images are palette indices (255 transparent), defined once; positions are in the frame's pixels
+ * (640 x 480), with fractions. */
+typedef struct HostCityQuad {
+    float x, y;       /* the image's top left corner in the frame */
+    uint16_t image;
+    uint8_t flip;     /* drawn mirrored */
+    uint8_t unused;
+    uint32_t hat;     /* a colour for the pixels of colour 6 (0x00RRGGBB with 0xFF000000 set), or 0 */
+} HostCityQuad;
+/* 1 when the platform draws the city now (it may decline, e.g. while it records a video) */
+int host_city_gpu(void);
+/* forget every image (new data); then define image `image` (w x h palette indices, row stride w) */
+void host_city_reset(void);
+void host_city_image(int image, int w, int h, const uint8_t *pixels);
+/* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, with the
+ * frame's palette */
+void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1);
+
 /* the original game files built into the program (a pack written by tools/pack_game.py), used when no game
  * folder is given; NULL when the program has none */
 const uint8_t *host_game_pack(size_t *size);

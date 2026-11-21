@@ -649,7 +649,8 @@ void rt_set_frame_rate(int hz)
 /* when the next frame is made, after one made at `now`, and when it is shown */
 static uint64_t next_frame_time(uint64_t now, uint64_t *shown)
 {
-    uint64_t vblank, period, k, t;
+    static uint64_t last; /* the refresh the last frame was shown at */
+    uint64_t vblank, period, k, t, refresh;
     if (!host_display_timing(&vblank, &period) || period < 2000u || period > 100000u) {
         *shown = now + g_frame_us;
         return now + g_frame_us;
@@ -657,10 +658,14 @@ static uint64_t next_frame_time(uint64_t now, uint64_t *shown)
     /* the refreshes to use: every one, or every 2nd, 3rd ... to stay at 60 a second at most */
     k = (MIN_FRAME_US + period - 1000u) / period;
     if (k < 1) k = 1;
+    refresh = period;
     period *= k;
     /* the first refresh far enough ahead to make the frame before it */
     t = vblank;
     if (t < now + FRAME_LEAD_US) t += ((now + FRAME_LEAD_US - t) / period + 1) * period;
+    /* and k refreshes after the last frame at least (the refresh DWM tells is the next one, not every k-th) */
+    while (last != 0 && t + refresh / 2 < last + period) t += refresh;
+    last = t;
     *shown = t;
     return t - FRAME_LEAD_US;
 }
@@ -726,13 +731,14 @@ static void present(void)
     static uint32_t rgb[640 * 480], prev[640 * 480];
     static int prev_n;
     uint64_t now = host_time_us();
-    int w = 0, h = 0, i;
+    int w = 0, h = 0, i, moved;
     if (vga_render(g_frame, &w, &h, g_pal)) {
         /* true colour from here on */
         for (i = 0; i < w * h; i++) rgb[i] = g_pal[g_frame[i]];
-        game_overlay(g_frame, g_pal, rgb, w, h);
-        /* the frames shown that differ from the one before: the frames a second one sees */
-        if (w * h != prev_n || memcmp(prev, rgb, sizeof(uint32_t) * (size_t)(w * h)) != 0) {
+        moved = game_overlay(g_frame, g_pal, rgb, w, h);
+        /* the frames shown that differ from the one before: the frames a second one sees (the city drawn by the
+         * GPU under the frame is not in its pixels: the overlay tells when it moved) */
+        if (moved || w * h != prev_n || memcmp(prev, rgb, sizeof(uint32_t) * (size_t)(w * h)) != 0) {
             g_fps_count++;
             memcpy(prev, rgb, sizeof(uint32_t) * (size_t)(w * h));
             prev_n = w * h;

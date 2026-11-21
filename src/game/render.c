@@ -63,6 +63,10 @@ static uint16_t rd16(uint32_t a)
     return v;
 }
 
+/* the images the GPU has (host_city_image): the tiles 0-255, the sprites from 256 */
+#define IMAGE_SPRITES 256
+static uint8_t g_defined[IMAGE_SPRITES + 4096];
+
 /* ---- tiles: decoded once per tile set (palette indices, 255 transparent) ---- */
 static uint8_t g_tiles[NB_TILES][TILE_H][TILE_W];
 static uint8_t g_tile_seen[NB_TILES]; /* 1 decoded, 2 decoded and empty */
@@ -89,6 +93,8 @@ static const uint8_t *tile(int id)
     if (data != g_tiles_at) {
         memset(g_tile_seen, 0, sizeof g_tile_seen);
         g_tiles_at = data;
+        memset(g_defined, 0, sizeof g_defined);
+        host_city_reset();
     }
     if (!g_tile_seen[id]) {
         int any = 0;
@@ -132,6 +138,8 @@ static const uint8_t *sprite(int id, int *w, int *h)
             g_sprites[i] = NULL;
         }
         g_sprites_at = rd32(P_SPRITE_TAB);
+        memset(g_defined, 0, sizeof g_defined);
+        host_city_reset();
     }
     *w = M[tab + 4];
     *h = M[tab + 5];
@@ -158,11 +166,51 @@ typedef struct Target {
     uint32_t *rgb;
     int w, h, x0, y0, x1, y1; /* the frame and the rectangle drawn into */
     const uint32_t *pal;
+    int gpu;                  /* images go to the GPU's list (host_city_frame) instead */
 } Target;
+
+/* ---- the GPU's list: images 0-255 the tiles, 256 + n the sprites ---- */
+static HostCityQuad *g_quads;
+static int g_nquads, g_quads_cap;
+
+static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat)
+{
+    HostCityQuad *q;
+    if (!g_defined[image]) {
+        host_city_image(image, w, h, px);
+        g_defined[image] = 1;
+    }
+    if (g_nquads == g_quads_cap) {
+        int cap = g_quads_cap ? g_quads_cap * 2 : 4096;
+        HostCityQuad *n = (HostCityQuad *)realloc(g_quads, sizeof *n * (size_t)cap);
+        if (n == NULL) return;
+        g_quads = n;
+        g_quads_cap = cap;
+    }
+    q = &g_quads[g_nquads++];
+    q->x = x;
+    q->y = y;
+    q->image = (uint16_t)image;
+    q->flip = (uint8_t)(flipped != 0);
+    q->unused = 0;
+    q->hat = hat != 0 ? (hat | 0xFF000000u) : 0;
+}
 
 #define HAT_INDEX 6 /* the hats' colour in the agents' sprites */
 
 /* `hat`: a colour for the pixels of colour HAT_INDEX (0: as they are) */
+static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, int dy, int flipped, uint32_t hat);
+
+/* a tile or a sprite (image number): on the GPU at its exact place, else as blit */
+static void put(const Target *t, int image, const uint8_t *src, int sw, int sh, int dx, int dy, float fx, float fy,
+                int flipped, uint32_t hat)
+{
+    if (t->gpu)
+        emit(image, src, sw, sh, fx, fy, flipped, hat);
+    else
+        blit(t, src, sw, sh, dx, dy, flipped, hat);
+}
+
 static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, int dy, int flipped, uint32_t hat)
 {
     int x, y;
@@ -178,17 +226,18 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
     }
 }
 
-static void draw_frame(const Target *t, int frame, int ax, int ay, uint32_t hat)
+static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, float fay, uint32_t hat)
 {
     uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), f = frames + (uint32_t)frame * 8u;
     uint32_t e = rd16(f);
     int guard = 0;
     for (;;) {
         uint32_t ea = elements + e * 10u;
-        int sw, sh;
-        const uint8_t *s = sprite(rd16(ea) / 6, &sw, &sh);
+        int sw, sh, id = rd16(ea) / 6, ox = (int16_t)rd16(ea + 2u), oy = (int16_t)rd16(ea + 4u);
+        const uint8_t *s = sprite(id, &sw, &sh);
         if (s != NULL)
-            blit(t, s, sw, sh, ax + (int16_t)rd16(ea + 2u), ay + (int16_t)rd16(ea + 4u), rd16(ea + 6u) != 0, hat);
+            put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
+                hat);
         e = rd16(ea + 8u);
         if (e == 0 || ++guard > 64) break;
     }
@@ -216,14 +265,27 @@ static uint64_t g_last_tick_us, g_play_us;
 static double g_period_us = 50000.0; /* the ticks' average period */
 static double g_play = -1.0;     /* the playback clock, in ticks */
 static int32_t g_vx, g_vy;       /* the view of the frame being drawn */
+static float g_vfx, g_vfy;       /* its fractions (subtracted: the view is g_v - g_vf) */
 static int g_own_view;           /* render_set_view: the view is this program's, not the game's */
 static int32_t g_own_vx, g_own_vy;
+
+static float g_own_fx, g_own_fy;
 
 void render_set_view(int own, int32_t vx, int32_t vy)
 {
     g_own_view = own;
     g_own_vx = vx;
     g_own_vy = vy;
+    g_own_fx = g_own_fy = 0.0f;
+}
+
+void render_set_view_f(double vx, double vy)
+{
+    g_own_view = 1;
+    g_own_vx = (int32_t)vx;
+    g_own_vy = (int32_t)vy;
+    g_own_fx = (float)(g_own_vx - vx); /* <= 0 */
+    g_own_fy = (float)(g_own_vy - vy);
 }
 
 static void read_view(int32_t *vx, int32_t *vy)
@@ -299,7 +361,7 @@ static int32_t lerp(int32_t a, int32_t b, int t) /* t 0..256 */
 void render_image(uint32_t *rgb, int w, int h, const uint32_t *pal, uint32_t pixels, int iw, int ih, int x, int y, int x0,
                   int y0, int x1, int y1)
 {
-    Target t = {rgb, w, h, x0, y0, x1, y1, pal};
+    Target t = {rgb, w, h, x0, y0, x1, y1, pal, 0};
     static uint8_t img[64 * 64];
     int row, blk, stride = (iw + 7) / 8;
     if (iw <= 0 || ih <= 0 || iw > 64 || ih > 64) return;
@@ -333,7 +395,7 @@ int render_sprite_ink(int id, int *x, int *y)
 
 void render_sprite(uint32_t *rgb, int w, int h, const uint32_t *pal, int id, int x, int y, int x0, int y0, int x1, int y1)
 {
-    Target t = {rgb, w, h, x0, y0, x1, y1, pal};
+    Target t = {rgb, w, h, x0, y0, x1, y1, pal, 0};
     int sw, sh;
     const uint8_t *s = sprite(id, &sw, &sh);
     if (s != NULL) blit(&t, s, sw, sh, x, y, 0, 0);
@@ -347,6 +409,14 @@ static void project(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
     *fy = ((dx + dy) / 2 - z) >> 3;
 }
 
+/* the same with the fractions (the GPU draws between pixels) */
+static void project_f(int32_t x, int32_t y, int32_t z, float *fx, float *fy)
+{
+    float dx = (float)(x - g_vx) + g_vfx, dy = (float)(y - g_vy) + g_vfy;
+    *fx = (dx - dy) / 8.0f;
+    *fy = ((dx + dy) / 2.0f - (float)z) / 8.0f;
+}
+
 void render_project(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
 {
     project(x, y, z, fx, fy);
@@ -354,6 +424,7 @@ void render_project(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
     *fy += render_obj_dy;
 }
 
+int render_gpu_changed;
 int render_tile_dx = 96, render_tile_dy = 40; /* a tile's top left corner from its projected corner */
 int render_obj_dx = 128, render_obj_dy = 56;  /* a frame's anchor from the projected position */
 uint32_t (*render_hat_colour)(int ped);       /* the colour of an agent's hat (0: as drawn) */
@@ -388,15 +459,18 @@ int render_ped_place(int ped, int *fx, int *fy)
 static void draw_obj(const Target *t, const Obj *o)
 {
     int fx, fy;
+    float ffx, ffy;
     uint32_t hat = 0;
     project(o->x, o->y, o->zw, &fx, &fy);
+    project_f(o->x, o->y, o->zw, &ffx, &ffy);
     if (o->ped >= 0) {
         g_ped_fx[o->ped] = (int16_t)(fx + render_obj_dx);
         g_ped_fy[o->ped] = (int16_t)(fy + render_obj_dy);
         g_ped_drawn[o->ped] = 1;
         if (render_hat_colour != NULL) hat = render_hat_colour(o->ped);
     }
-    draw_frame(t, o->frame, fx + render_obj_dx, fy + render_obj_dy, hat);
+    draw_frame(t, o->frame, fx + render_obj_dx, fy + render_obj_dy, ffx + (float)render_obj_dx, ffy + (float)render_obj_dy,
+               hat);
 }
 
 void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1, uint64_t now_us)
@@ -408,13 +482,17 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     cols = map + 12u;
     int mx = (int)rd32(map), my = (int)rd32(map + 4u), mz = (int)rd32(map + 8u), nobj = 0, li, s, k = 0, n = 0, t256;
     const Snap *sa = NULL, *sb = NULL;
-    Target t = {rgb, w, h, x0, y0, x1, y1, pal};
+    Target t = {rgb, w, h, x0, y0, x1, y1, pal, rgb == NULL};
     if (mx <= 0 || my <= 0 || mz <= 0 || mx > 256 || my > 256 || mz > 16) return;
+    g_nquads = 0;
     /* on the playback clock (now_us 0: as the game is now) */
     if (now_us != 0 && playback(now_us, &sa, &sb, &t256)) {
         g_vx = g_own_view ? g_own_vx : lerp(sa->vx, sb->vx, t256);
         g_vy = g_own_view ? g_own_vy : lerp(sa->vy, sb->vy, t256);
+        g_vfx = g_own_view ? g_own_fx : 0.0f;
+        g_vfy = g_own_view ? g_own_fy : 0.0f;
     } else {
+        g_vfx = g_vfy = 0.0f;
         t256 = -1;
         read_view(&g_vx, &g_vy);
     }
@@ -472,17 +550,33 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                 k = lo;
             }
             for (tz = 0; tz < mz; tz++) {
-                const uint8_t *tl = tile(M[col + (uint32_t)tz]);
+                int tid = M[col + (uint32_t)tz];
+                const uint8_t *tl = tile(tid);
                 int fx, fy;
                 if (tl != NULL) {
                     project(tx * 256, ty * 256, tz * 128, &fx, &fy);
-                    if (fx + render_tile_dx + TILE_W > x0 && fx + render_tile_dx < x1 && fy + render_tile_dy + TILE_H > y0 &&
-                        fy + render_tile_dy < y1)
-                        blit(&t, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy, 0, 0);
+                    if (fx + render_tile_dx + TILE_W > x0 - 2 && fx + render_tile_dx < x1 + 2 &&
+                        fy + render_tile_dy + TILE_H > y0 - 2 && fy + render_tile_dy < y1 + 2) {
+                        float ffx, ffy;
+                        project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
+                        put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
+                            ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
+                    }
                 }
                 for (; k < nobj && objs[k].key == key && objs[k].z <= tz; k++) draw_obj(&t, &objs[k]);
             }
             for (; k < nobj && objs[k].key == key; k++) draw_obj(&t, &objs[k]);
         }
+    }
+    if (t.gpu) {
+        /* a city that moved is a new frame (the frame's pixels may not have changed) */
+        static uint32_t prev_hash;
+        uint32_t hash = 2166136261u;
+        const uint8_t *b = (const uint8_t *)g_quads;
+        size_t i, n = sizeof *g_quads * (size_t)g_nquads;
+        for (i = 0; i < n; i++) hash = (hash ^ b[i]) * 16777619u;
+        render_gpu_changed = hash != prev_hash;
+        prev_hash = hash;
+        host_city_frame(g_quads, g_nquads, pal, x0, y0, x1, y1);
     }
 }

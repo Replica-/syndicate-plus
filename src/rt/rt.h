@@ -62,7 +62,7 @@ const RtModuleDef *rt_current_module(void);
 uint32_t game_key_filter(uint32_t scancode, int down);
 /* the game layer may draw over a finished frame before it is shown: `rgb` (0x00RRGGBB, w x h) is the frame in
  * true colour, made from the game's palette indices `index` and `palette` (which it may read) */
-void game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h);
+int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h);
 /* the game layer may move the mouse position the game reads (any thread; x, y in the game's mouse range) */
 void game_mouse_filter(int *x, int *y);
 /* when the frame being made will be shown (host_time_us's clock) */

@@ -190,6 +190,35 @@ int host_display_timing(uint64_t *vblank_us, uint64_t *period_us)
     return 0;
 }
 
+/* the city is always in the frame here */
+int host_city_gpu(void)
+{
+    return 0;
+}
+
+void host_city_reset(void)
+{
+}
+
+void host_city_image(int image, int w, int h, const uint8_t *pixels)
+{
+    (void)image;
+    (void)w;
+    (void)h;
+    (void)pixels;
+}
+
+void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1)
+{
+    (void)quads;
+    (void)n;
+    (void)palette;
+    (void)x0;
+    (void)y0;
+    (void)x1;
+    (void)y1;
+}
+
 void host_present(const uint32_t *pixels, int w, int h)
 {
     if (w <= 0 || h <= 0 || w > FRAME_MAX_W || h > FRAME_MAX_H) return;

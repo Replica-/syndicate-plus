@@ -463,7 +463,7 @@ static void move_view(void)
             g_gliding = 0;
         }
     }
-    render_set_view(1, (int32_t)g_view_x, (int32_t)g_view_y);
+    render_set_view_f(g_view_x, g_view_y);
 }
 
 /* at a tick: the game's camera follows the view (the nearest it can be); a camera the game moved itself (the start
@@ -565,10 +565,12 @@ static void world_to_frame(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
     *fy = ((((dx + dy) / 2) - z) >> 3) + 16 + VIEW_TOP;
 }
 
-/* blends colour c (0x00RRGGBB) into a pixel of the map's part of the frame, `alpha` 0..255 */
+/* blends colour c (0x00RRGGBB) into a pixel of the map's part of the frame, `alpha` 0..255; the pixel may be
+ * see-through (its top byte: the city drawn by the GPU under the frame shows through), and stays as see-through
+ * as the colour lets it */
 static void plot(uint32_t *rgb, int w, int x, int y, uint32_t c, int alpha)
 {
-    uint32_t *p, o, a = (uint32_t)alpha;
+    uint32_t *p, o, a = (uint32_t)alpha, ob, op, na, k;
     if (x < VIEW_LEFT || x >= w || y < VIEW_TOP || y >= VIEW_BOTTOM || alpha <= 0) return;
     p = &rgb[y * w + x];
     if (alpha >= 255) {
@@ -576,9 +578,15 @@ static void plot(uint32_t *rgb, int w, int x, int y, uint32_t c, int alpha)
         return;
     }
     o = *p;
-    *p = ((((c >> 16) & 0xFF) * a + ((o >> 16) & 0xFF) * (255u - a)) / 255u) << 16 |
-         ((((c >> 8) & 0xFF) * a + ((o >> 8) & 0xFF) * (255u - a)) / 255u) << 8 |
-         (((c & 0xFF) * a + (o & 0xFF) * (255u - a)) / 255u);
+    op = 255u - (o >> 24); /* the opacity of what is there */
+    ob = op * (255u - a) / 255u;
+    na = a + ob;           /* the opacity after */
+    if (na == 0) return;
+    for (k = 0; k < 24; k += 8) {
+        uint32_t v = (((c >> k) & 0xFF) * a + ((o >> k) & 0xFF) * ob) / na;
+        *p = (*p & ~(0xFFu << k)) | (v << k);
+    }
+    *p = (*p & 0x00FFFFFFu) | ((255u - na) << 24);
 }
 
 /* a diamond lying on the floor, half width hw (half height hw / 2): filled, or only its outer `edge` */
@@ -937,13 +945,15 @@ static uint32_t hat_colour(int ped)
 static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb)
 {
     uint32_t company;
-    int x, y, mx, my, slot;
+    int x, y, mx, my, slot, gpu;
     g_overlay_pal = pal;
     render_hat_colour = hat_colour;
     move_view();
+    /* on the GPU the map's part of the frame is see-through, the city drawn under it at the display's resolution */
+    gpu = host_city_gpu();
     for (y = VIEW_TOP; y < VIEW_BOTTOM; y++)
-        for (x = VIEW_LEFT; x < 640; x++) rgb[y * 640 + x] = 0;
-    render_city(rgb, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, rt_display_us);
+        for (x = VIEW_LEFT; x < 640; x++) rgb[y * 640 + x] = gpu ? 0xFF000000u : 0;
+    render_city(gpu ? NULL : rgb, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, rt_display_us);
     /* the pointer: the game's (the entry of its pointer table it uses), drawn where the mouse is now, as the game
      * draws it (its top left corner 16 pixels up and left of the mouse; the game's mouse runs over its 400 lines
      * from line 40 of the frame); over the side panel and the bars the game's own picture shows it */
@@ -988,11 +998,12 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
 
 #define MARKER_COLOUR 0x5aff5au
 
-void game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h)
+int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h)
 {
     uint64_t age;
     int fx, fy, hw, alpha;
-    if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return;
+    render_gpu_changed = 0;
+    if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return 0;
     if (getenv("SYND_RENDER_TEST") != NULL) {
         render_test(rgb, palette);
     } else if (renderer_on()) {
@@ -1003,17 +1014,18 @@ void game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, 
     draw_drops(rgb, w);
     solid_selected_boxes(index, palette, rgb, w);
     draw_scanner_extras(rgb, w);
-    if (g_marker_us == 0) return;
+    if (g_marker_us == 0) return render_gpu_changed;
     age = host_time_us() - g_marker_us;
     if (age >= MARKER_US) {
         g_marker_us = 0;
-        return;
+        return render_gpu_changed;
     }
     world_to_frame(g_marker[0], g_marker[1], g_marker[2], &fx, &fy);
     hw = 6 + (int)(22 * (MARKER_US - age) / MARKER_US);
     alpha = (int)(255 * (MARKER_US - age) / MARKER_US); /* it fades out */
     diamond(rgb, w, fx, fy, hw, 4, MARKER_COLOUR, alpha);
     diamond(rgb, w, fx, fy, 4, 0, MARKER_COLOUR, alpha);
+    return render_gpu_changed;
 }
 
 /* a new move order of an agent of the squad: the marker goes there */
