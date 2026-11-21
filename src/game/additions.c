@@ -9,6 +9,8 @@
  * Keys in missions: W, A, S and D scroll the view as the arrow keys do; 1 to 4 select an agent (the game's own)
  * and pressed twice within 0.4 s centre the view on it.
  *
+ * Agents wear hats in the colour of their company (the original draws every hat in the first company's red).
+ *
  * The selected agents' boxes (top left of a mission) have a solid background instead of the checkerboard of orange
  * and olive; the agent's number and the frame stay.
  *
@@ -54,27 +56,28 @@ typedef struct GameAddrs {
     uint32_t draw_scanner; /* draw_scanner(leader ped, pixels a tile: 8, or 4 with a scanner) */
     uint32_t view;         /* (16 bits x, y) the view's position (world / 128) */
     uint32_t statics;      /* the objects of the mission (doors, ...): NB_STATICS of STATIC_SIZE bytes */
+    uint32_t colours;      /* (bytes, by company colour) the colours of the companies in a mission's palette */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
-     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u},
+     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
-     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u},
+     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
-     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
-     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -540,12 +543,36 @@ static void solid_selected_boxes(uint8_t *pix, int w, const uint32_t *pal)
 #undef MK
 }
 
+/* ---- hats in the colours of the companies ---- */
+#define HAT_COLOUR 6          /* the hats' colour in the agents' sprites (the first company's) */
+#define AGENTS_A_COMPANY 8    /* company c has the people 8c to 8c + 7 */
+#define COMPANY_COLOUR 0xfu
+
+static void company_hats(uint8_t *pix, int w)
+{
+    int i;
+    for (i = 0; i < 8 * AGENTS_A_COMPANY; i++) {
+        uint32_t p = g_addrs->peds + (uint32_t)i * PED_SIZE;
+        uint32_t company = g_addrs->companies + (uint32_t)(i / AGENTS_A_COMPANY) * g_addrs->company_size;
+        uint8_t colour = M[g_addrs->colours + M[company + COMPANY_COLOUR]];
+        int fx, fy, x, y;
+        if (M[p + PED_TYPE] != 2 || M[p + PED_LOCATION] != 4 || colour == HAT_COLOUR) continue;
+        world_to_frame((int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), (int16_t)RD16(p + PED_Z), &fx, &fy);
+        /* the head, below the number of an agent of the squad */
+        for (y = fy - 31; y <= fy - 14; y++)
+            for (x = fx - 8; x <= fx + 8; x++)
+                if (x >= VIEW_LEFT && x < w && y >= VIEW_TOP && y < VIEW_BOTTOM && pix[y * w + x] == HAT_COLOUR)
+                    pix[y * w + x] = colour;
+    }
+}
+
 void game_overlay(uint8_t *pixels, int w, int h, const uint32_t *palette)
 {
     uint64_t age;
     int fx, fy, hw, density;
     uint8_t c;
     if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return;
+    company_hats(pixels, w);
     solid_selected_boxes(pixels, w, palette);
     draw_scanner_extras(pixels, w, palette);
     if (g_marker_us == 0) return;

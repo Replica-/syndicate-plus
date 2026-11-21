@@ -110,6 +110,8 @@ W, A, S and D scroll the view as the arrow keys do (only in missions: in the men
 select an agent, as in the original; pressed twice within 0.4 s they also bring the view to that agent.
 A move order shows a green diamond on the floor where the agents go, shrinking and fading out in 0.6 s.
 The boxes of the selected agents have a solid background instead of the checkerboard of orange and olive.
+Agents wear hats in the colour of their company, yours and the rival syndicates' (the original draws every hat in
+the red of the first colour).
 
 ### The scanner
 
