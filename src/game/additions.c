@@ -9,6 +9,9 @@
  * Keys in missions: W, A, S and D scroll the view as the arrow keys do; 1 to 4 select an agent (the game's own)
  * and pressed twice within 0.4 s centre the view on it.
  *
+ * The selected agents' boxes (top left of a mission) have a solid background instead of the checkerboard of orange
+ * and olive; the agent's number and the frame stay.
+ *
  * A move order shows a green diamond on the floor where the agents go, shrinking and fading out in 0.6 s.
  *
  * The scanner (the map at the bottom left of a mission) shows more around the leader: 6 pixels a tile instead of
@@ -471,12 +474,79 @@ static void draw_scanner_extras(uint8_t *pix, int w, const uint32_t *pal)
     }
 }
 
+/* ---- the selected agents' boxes: solid ---- */
+#define PANEL_X0 0            /* the agent selector panel in a 640 x 480 frame */
+#define PANEL_Y0 40
+#define PANEL_X1 128
+#define PANEL_Y1 232
+
+static int reddish(uint32_t c)
+{
+    int r = (int)((c >> 16) & 0xFF), g = (int)((c >> 8) & 0xFF), b = (int)(c & 0xFF);
+    return r > 150 && r > 2 * g && r > 2 * b;
+}
+
+/* as FreeSynd does it: a pixel of a checkerboard has no neighbour of its colour and 3 or 4 of one other colour;
+ * lines drawn over it (the digits) are 2 pixels thick, so they stay */
+static void solid_selected_boxes(uint8_t *pix, int w, const uint32_t *pal)
+{
+    static uint8_t mask[(PANEL_Y1 - PANEL_Y0) * (PANEL_X1 - PANEL_X0)];
+    static uint16_t pairs[256][256];
+    int x, y, a = -1, b = -1, best = 0;
+    uint8_t fill;
+#define PX(x, y) pix[(y) * w + (x)]
+#define MK(x, y) mask[((y) - PANEL_Y0) * (PANEL_X1 - PANEL_X0) + (x) - PANEL_X0]
+    memset(mask, 0, sizeof mask);
+    memset(pairs, 0, sizeof pairs);
+    /* the checkerboard of the selection: the most common pair of colours that has a red */
+    for (y = PANEL_Y0 + 1; y < PANEL_Y1 - 1; y++)
+        for (x = PANEL_X0 + 1; x < PANEL_X1 - 1; x++) {
+            uint8_t c = PX(x, y), n = PX(x - 1, y);
+            if (n != c && PX(x + 1, y) == n && PX(x, y - 1) == n && PX(x, y + 1) == n && pairs[c][n] < 60000) pairs[c][n]++;
+        }
+    for (x = 0; x < 256; x++)
+        for (y = 0; y < 256; y++)
+            if (pairs[x][y] + pairs[y][x] > best && (reddish(pal[x]) || reddish(pal[y]))) {
+                best = pairs[x][y] + pairs[y][x];
+                a = x;
+                b = y;
+            }
+    if (best < 100) return;
+    for (y = PANEL_Y0 + 1; y < PANEL_Y1 - 1; y++)
+        for (x = PANEL_X0 + 1; x < PANEL_X1 - 1; x++) {
+            uint8_t c = PX(x, y), n[4] = {PX(x - 1, y), PX(x + 1, y), PX(x, y - 1), PX(x, y + 1)};
+            int k, other = c == a ? b : a, count = 0;
+            if (c != a && c != b) continue;
+            for (k = 0; k < 4; k++) {
+                if (n[k] == c) break;
+                count += n[k] == other;
+            }
+            if (k == 4 && count >= 3) MK(x, y) = 1;
+        }
+    for (y = PANEL_Y0 + 1; y < PANEL_Y1 - 1; y++)
+        for (x = PANEL_X0 + 1; x < PANEL_X1 - 1; x++) {
+            uint8_t c = PX(x, y);
+            int same, masked;
+            if (MK(x, y) || (c != a && c != b)) continue;
+            same = (PX(x - 1, y) == c) + (PX(x + 1, y) == c) + (PX(x, y - 1) == c) + (PX(x, y + 1) == c);
+            masked = MK(x - 1, y) + MK(x + 1, y) + MK(x, y - 1) + MK(x, y + 1);
+            if (same <= 1 && masked >= 3) MK(x, y) = 2;
+        }
+    fill = nearest_colour(pal, 215, 70, 15);
+    for (y = PANEL_Y0; y < PANEL_Y1; y++)
+        for (x = PANEL_X0; x < PANEL_X1; x++)
+            if (MK(x, y)) PX(x, y) = fill;
+#undef PX
+#undef MK
+}
+
 void game_overlay(uint8_t *pixels, int w, int h, const uint32_t *palette)
 {
     uint64_t age;
     int fx, fy, hw, density;
     uint8_t c;
     if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return;
+    solid_selected_boxes(pixels, w, palette);
     draw_scanner_extras(pixels, w, palette);
     if (g_marker_us == 0) return;
     age = host_time_us() - g_marker_us;

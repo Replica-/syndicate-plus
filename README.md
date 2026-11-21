@@ -109,6 +109,7 @@ save is made.  This works in both games and every language (`src/game/additions.
 W, A, S and D scroll the view as the arrow keys do (only in missions: in the menus they are letters).  1 to 4
 select an agent, as in the original; pressed twice within 0.4 s they also bring the view to that agent.
 A move order shows a green diamond on the floor where the agents go, shrinking and fading out in 0.6 s.
+The boxes of the selected agents have a solid background instead of the checkerboard of orange and olive.
 
 ### The scanner
 
