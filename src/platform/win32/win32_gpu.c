@@ -35,6 +35,8 @@ static ID3D11Texture2D *g_tex, *g_atlas, *g_paltex;
 static ID3D11ShaderResourceView *g_srv, *g_atlas_srv, *g_pal_srv;
 static int g_tex_w, g_tex_h, g_city_vb_cap;
 static int g_win_w, g_win_h;
+/* offscreen (gpu_init(NULL): the headless tests): the picture is drawn into a texture and read back */
+static ID3D11Texture2D *g_off, *g_off_read;
 
 static const char k_shader[] =
     "cbuffer C : register(b0) { float2 tex_size; float2 scale; float sharp; float3 pad; };\n"
@@ -214,6 +216,27 @@ void gpu_city_off(void)
 }
 
 /* ---- set up ---- */
+/* the offscreen picture, g_win_w x g_win_h, and its copy the CPU reads */
+static int make_offscreen(void)
+{
+    D3D11_TEXTURE2D_DESC td;
+    memset(&td, 0, sizeof td);
+    td.Width = (UINT)g_win_w;
+    td.Height = (UINT)g_win_h;
+    td.MipLevels = td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET;
+    if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_off)) ||
+        FAILED(ID3D11Device_CreateRenderTargetView(g_dev, (ID3D11Resource *)g_off, NULL, &g_rtv)))
+        return 0;
+    td.Usage = D3D11_USAGE_STAGING;
+    td.BindFlags = 0;
+    td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    return SUCCEEDED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_off_read));
+}
+
 static int make_target(void)
 {
     ID3D11Texture2D *back = NULL;
@@ -316,9 +339,19 @@ int gpu_init(HWND hwnd)
     RECT rc;
     HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels,
                                    3, D3D11_SDK_VERSION, &g_dev, NULL, &g_ctx);
+    if (FAILED(hr) && hwnd == NULL) /* offscreen: Windows' software device will do */
+        hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_WARP, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, 3,
+                               D3D11_SDK_VERSION, &g_dev, NULL, &g_ctx);
     if (FAILED(hr)) {
         host_log("gpu: no Direct3D 11 hardware device");
         return 0;
+    }
+    if (hwnd == NULL) {
+        if (g_win_w <= 0 || g_win_h <= 0 || !make_offscreen()) {
+            gpu_shutdown();
+            return 0;
+        }
+        goto shaders;
     }
     if (FAILED(ID3D11Device_QueryInterface(g_dev, &IID_IDXGIDevice, (void **)&dxdev)) ||
         FAILED(IDXGIDevice_GetAdapter(dxdev, &adapter)) ||
@@ -350,6 +383,7 @@ int gpu_init(HWND hwnd)
         gpu_shutdown();
         return 0;
     }
+shaders:
     vsb = compile(k_shader, sizeof k_shader - 1, "vs", "vs_4_0");
     psb = compile(k_shader, sizeof k_shader - 1, "ps", "ps_4_0");
     if (vsb == NULL || psb == NULL ||
@@ -409,6 +443,8 @@ void gpu_shutdown(void)
     RELEASE(g_ps);
     RELEASE(g_vs);
     RELEASE(g_rtv);
+    RELEASE(g_off);
+    RELEASE(g_off_read);
     RELEASE(g_swap);
     RELEASE(g_ctx);
     RELEASE(g_dev);
@@ -418,6 +454,11 @@ void gpu_shutdown(void)
 
 void gpu_resize(int w, int h)
 {
+    if (g_dev == NULL) { /* before gpu_init(NULL): the offscreen size */
+        g_win_w = w;
+        g_win_h = h;
+        return;
+    }
     if (g_swap == NULL || w <= 0 || h <= 0 || (w == g_win_w && h == g_win_h)) return;
     ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 0, NULL, NULL);
     RELEASE(g_rtv);
@@ -624,5 +665,20 @@ void gpu_present(const uint32_t *pixels, int w, int h, RECT dst, int sharp)
         ID3D11DeviceContext_OMSetBlendState(g_ctx, g_blend, NULL, 0xFFFFFFFFu);
         ID3D11DeviceContext_Draw(g_ctx, 3, 0);
     }
-    IDXGISwapChain1_Present(g_swap, 1, 0);
+    if (g_swap != NULL)
+        IDXGISwapChain1_Present(g_swap, 1, 0);
+    else
+        ID3D11DeviceContext_CopyResource(g_ctx, (ID3D11Resource *)g_off_read, (ID3D11Resource *)g_off);
+}
+
+int gpu_read(uint32_t *pixels)
+{
+    D3D11_MAPPED_SUBRESOURCE map;
+    int y;
+    if (g_off_read == NULL || FAILED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_off_read, 0, D3D11_MAP_READ, 0, &map)))
+        return 0;
+    for (y = 0; y < g_win_h; y++)
+        memcpy(pixels + (size_t)y * g_win_w, (const uint8_t *)map.pData + (size_t)y * map.RowPitch, (size_t)g_win_w * 4u);
+    ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_off_read, 0);
+    return 1;
 }

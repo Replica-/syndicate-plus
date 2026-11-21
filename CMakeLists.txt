@@ -117,8 +117,9 @@ if(WIN32)
 
   add_executable(synd_headless
     src/platform/headless/headless_main.c
+    src/platform/win32/win32_gpu.c
     src/platform/win32/win32_sys.c)
-  target_link_libraries(synd_headless PRIVATE syncore synvideo winmm)
+  target_link_libraries(synd_headless PRIVATE syncore synvideo winmm d3d11 dxgi d3dcompiler dxguid)
   target_compile_definitions(synd_headless PRIVATE _CRT_SECURE_NO_WARNINGS)
 elseif(APPLE)
   enable_language(OBJC)

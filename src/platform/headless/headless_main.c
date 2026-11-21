@@ -34,6 +34,9 @@
 #define strtok_s strtok_r /* the same function under its POSIX name */
 #endif
 
+#ifdef _WIN32
+#include "../win32/win32_gpu.h"
+#endif
 #include "../../game/game.h"
 #include "../../rt/host.h"
 #include "../../video/record.h"
@@ -130,27 +133,44 @@ int host_canvas_width(void)
     return g_canvas_w;
 }
 
-/* the city is always in the frame here */
+/* --gpu WxH (Windows): the picture made as the window's Direct3D makes it, offscreen, WxH; the frames dumped are
+ * that picture (the city drawn by the GPU under the frame) */
+static int g_gpu_w, g_gpu_h, g_gpu_on, g_frame_city;
+static uint32_t *g_gpu_pixels;
+
 int host_city_gpu(void)
 {
-    return 0;
+    return g_gpu_on && !record_active();
 }
 
 void host_city_reset(void)
 {
+#ifdef _WIN32
+    if (g_gpu_on) gpu_city_reset();
+#endif
 }
 
 void host_city_image(int image, int w, int h, const uint8_t *pixels)
 {
+#ifdef _WIN32
+    if (g_gpu_on) gpu_city_image(image, w, h, pixels);
+#else
     (void)image;
     (void)w;
     (void)h;
     (void)pixels;
+#endif
 }
 
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
                      float scale)
 {
+#ifdef _WIN32
+    if (g_gpu_on) {
+        gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale);
+        g_frame_city = 1;
+    }
+#else
     (void)scale;
     (void)quads;
     (void)n;
@@ -159,6 +179,44 @@ void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, 
     (void)y0;
     (void)x1;
     (void)y1;
+#endif
+}
+
+/* the frame through the GPU: the picture as the window shows it (black around it), in g_gpu_pixels */
+static const uint32_t *gpu_picture(const uint32_t *pixels, int w, int h, int *ow, int *oh)
+{
+#ifdef _WIN32
+    RECT r;
+    int pw, ph;
+    if (!g_gpu_on) return pixels;
+    if (!g_frame_city) gpu_city_off();
+    g_frame_city = 0;
+    /* the largest rectangle of the frame's shape (w x h, 4:3 for 320 x 200) */
+    if (h == 200) w = 320, h = 240;
+    if ((long long)g_gpu_w * h >= (long long)g_gpu_h * w) {
+        ph = g_gpu_h;
+        pw = (int)((long long)g_gpu_h * w / h);
+    } else {
+        pw = g_gpu_w;
+        ph = (int)((long long)g_gpu_w * h / w);
+    }
+    r.left = (g_gpu_w - pw) / 2;
+    r.top = (g_gpu_h - ph) / 2;
+    r.right = r.left + pw;
+    r.bottom = r.top + ph;
+    if (h == 240) w = 320, h = 200;
+    gpu_present(pixels, w, h, r, 1);
+    if (!gpu_read(g_gpu_pixels)) return pixels;
+    *ow = g_gpu_w;
+    *oh = g_gpu_h;
+    return g_gpu_pixels;
+#else
+    (void)ow;
+    (void)oh;
+    (void)w;
+    (void)h;
+    return pixels;
+#endif
 }
 
 void host_present(const uint32_t *pixels, int w, int h)
@@ -168,6 +226,7 @@ void host_present(const uint32_t *pixels, int w, int h)
     if (g_dump_dir != NULL && now >= g_next_dump) {
         char path[1024];
         snprintf(path, sizeof path, "%s/frame_%05u.bmp", g_dump_dir, (unsigned)((now - g_start_us) / 1000u));
+        pixels = gpu_picture(pixels, w, h, &w, &h);
         write_bmp(path, pixels, w, h);
         g_next_dump = now + (uint64_t)g_dump_every * 1000u;
         g_dump_n++;
@@ -380,6 +439,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--music-dir")) opt.music_dir = v, i++;
         else if (!strcmp(a, "--cheats")) opt.cheats = v, i++;
         else if (!strcmp(a, "--cycles")) rt_set_cpu_speed(atoi(v)), i++;
+        else if (!strcmp(a, "--gpu") && sscanf(v, "%dx%d", &g_gpu_w, &g_gpu_h) == 2) i++;
         else if (!strcmp(a, "--wide")) g_canvas_w = atoi(v) < 640 ? 640 : atoi(v) > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : atoi(v) & ~1, i++;
         else if (!strcmp(a, "--fps")) rt_set_show_fps(1);
         else if (!strcmp(a, "--mem-dump") && g_ndumps < 16 && strchr(v, ':')) {
@@ -400,6 +460,17 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+#ifdef _WIN32
+    if (g_gpu_w > 0 && g_gpu_h > 0) {
+        g_gpu_pixels = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)g_gpu_w * (size_t)g_gpu_h);
+        gpu_resize(g_gpu_w, g_gpu_h);
+        g_gpu_on = g_gpu_pixels != NULL && gpu_init(NULL);
+        if (!g_gpu_on) {
+            fprintf(stderr, "no Direct3D 11 for --gpu\n");
+            return 2;
+        }
+    }
+#endif
     opt.fixed_clock = g_virtual_step != 0; /* a virtual-time run repeats exactly */
     g_start_us = host_time_us();
     g_end_us = seconds > 0 ? g_start_us + (uint64_t)(seconds * 1e6) : 0;
