@@ -1854,7 +1854,10 @@ static void load_tile_types(void)
 {
     uint8_t types[256];
     g_types_loaded = 1;
-    if (load_packed("COL01.DAT", types, sizeof types)) path_set_types(types);
+    if (load_packed("COL01.DAT", types, sizeof types)) {
+        path_set_types(types);
+        render_set_tile_types(types);
+    }
 }
 
 /* a new order of the player's for the agent in `slot`, to tx, ty, tz: walked as a route if it needs one */

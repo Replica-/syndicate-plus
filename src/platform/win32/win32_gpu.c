@@ -90,13 +90,14 @@ static const char k_city_shader[] =
     "Texture2D<uint> atlas : register(t0);\n"
     "Texture2D<float4> pal : register(t1);\n"
     "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2;"
-    " uint glow : TEXCOORD3; };\n"
+    " uint glow : TEXCOORD3; uint shade : TEXCOORD4; };\n"
     "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1;"
-    " nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3; };\n"
+    " nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3;"
+    " nointerpolation uint shade : TEXCOORD4; };\n"
     "V vs(VI i) {\n"
     "    V o;\n"
     "    o.pos = float4(i.pos.x / frame_size.x * 2 - 1, 1 - i.pos.y / frame_size.y * 2, 0, 1);\n"
-    "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat; o.glow = i.glow;\n"
+    "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat; o.glow = i.glow; o.shade = i.shade;\n"
     "    return o;\n"
     "}\n"
     "float4 texel(int2 p, V i) {\n"
@@ -106,7 +107,16 @@ static const char k_city_shader[] =
     "    if (c == 255) return 0;\n"
     "    if (c == 6 && p.y - (int)i.rect.y < (int)(i.hat >> 24))\n"
     "        return float4(((i.hat >> 16) & 255) / 255.0, ((i.hat >> 8) & 255) / 255.0, (i.hat & 255) / 255.0, 1);\n"
-    "    return float4(pal.Load(int3(c, 0, 0)).rgb * (1 - shadow * ((i.glow >> 8) & 127) / 127.0), 1);\n"
+    "    return float4(pal.Load(int3(c, 0, 0)).rgb, 1);\n"
+    "}\n"
+    /* the sun's shadow at a point of a tile: its top is a diamond, corners (32, 0), (64, 16), (32, 32), (0, 16) */
+    "float sun(V i) {\n"
+    "    float2 r, w;\n"
+    "    if (i.shade == 0) return 1;\n"
+    "    r = i.tex - i.rect.xy - float2(32, 0);\n"
+    "    w = saturate(float2(r.x / 32 + r.y / 16, r.y / 16 - r.x / 32) * 0.5);\n"
+    "    return 1 - shadow / 255.0 * lerp(lerp(i.shade & 255, (i.shade >> 8) & 255, w.x),\n"
+    "                                     lerp((i.shade >> 24) & 255, (i.shade >> 16) & 255, w.x), w.y);\n"
     "}\n"
     /* what of a texel glows: all of it (glow 2), or its colour if bright (1) */
     "float4 glowing(float4 c, uint glow) {\n"
@@ -121,6 +131,7 @@ static const char k_city_shader[] =
     "    int2 q = (int2)b;\n"
     "    float4 c = lerp(lerp(texel(q, i), texel(q + int2(1, 0), i), f.x),\n"
     "                    lerp(texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f.x), f.y);\n"
+    "    c.rgb *= sun(i);\n"
     "    if (i.glow & 128) c *= 60.0 / 255.0;\n" /* drawn see-through (B held) */
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
     "}\n"
@@ -135,6 +146,7 @@ static const char k_city_shader[] =
     "    float4 c00 = texel(q, i), c10 = texel(q + int2(1, 0), i), c01 = texel(q + int2(0, 1), i);\n"
     "    float4 c11 = texel(q + int2(1, 1), i);\n"
     "    o.c = lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);\n"
+    "    o.c.rgb *= sun(i);\n"
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x),\n"
     "               lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
@@ -176,7 +188,7 @@ typedef struct CityConsts {
 typedef struct CityVertex {
     float x, y, u, v;
     float rect[4];
-    uint32_t hat, glow;
+    uint32_t hat, glow, shade;
 } CityVertex;
 
 typedef struct LightVertex {
@@ -378,6 +390,7 @@ static int make_city(void)
         {"TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 2, DXGI_FORMAT_R32_UINT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 3, DXGI_FORMAT_R32_UINT, 0, 36, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 4, DXGI_FORMAT_R32_UINT, 0, 40, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
     static const D3D11_INPUT_ELEMENT_DESC light_layout[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -399,7 +412,7 @@ static int make_city(void)
                                                        NULL, &g_city_vs)) &&
              SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(psb), ID3D10Blob_GetBufferSize(psb),
                                                       NULL, &g_city_ps)) &&
-             SUCCEEDED(ID3D11Device_CreateInputLayout(g_dev, layout, 5, ID3D10Blob_GetBufferPointer(vsb),
+             SUCCEEDED(ID3D11Device_CreateInputLayout(g_dev, layout, 6, ID3D10Blob_GetBufferPointer(vsb),
                                                       ID3D10Blob_GetBufferSize(vsb), &g_city_layout)) &&
              litb != NULL && lvb != NULL && lpb != NULL && cpb != NULL &&
              SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(litb), ID3D10Blob_GetBufferSize(litb),
@@ -757,7 +770,8 @@ static void draw_city(RECT dst, int fw, int fh)
             c[k].rect[2] = (float)(im->ax + im->w);
             c[k].rect[3] = (float)(im->ay + im->h);
             c[k].hat = q->hat;
-            c[k].glow = q->glow | (uint32_t)(q->flip >> 1) << 8; /* the shadow above the glow */
+            c[k].glow = q->glow;
+            c[k].shade = q->shade;
         }
         verts[nv++] = c[0];
         verts[nv++] = c[1];
@@ -825,7 +839,7 @@ static void draw_city(RECT dst, int fw, int fh)
     cc.frame_size[0] = (float)fw;
     cc.frame_size[1] = (float)fh;
     cc.scale = sx * zoom > 1.0f ? sx * zoom : 1.0f; /* window pixels a texel */
-    cc.shadow = g_shadows ? 0.42f : 0.0f; /* how dark the sun's shadows are */
+    cc.shadow = g_shadows ? 0.45f : 0.0f; /* how dark the sun's shadows are (FreeSynd's: 55% of the light) */
     if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_city_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
         memcpy(map.pData, &cc, sizeof cc);
         ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_city_cb, 0);

@@ -52,10 +52,12 @@ int host_display_timing(uint64_t *vblank_us, uint64_t *period_us);
 typedef struct HostCityQuad {
     float x, y;       /* the image's top left corner in the frame */
     uint16_t image;
-    uint8_t flip;     /* bit 0: drawn mirrored; bits 1-7: in the sun's shadow, 0..127 (a tile) */
+    uint8_t flip;     /* drawn mirrored */
     uint8_t glow;     /* in the dark: 0 nothing shines, 1 its brightest pixels, 2 all of it */
     uint32_t hat;     /* a colour for the pixels of colour 6 (0x00RRGGBB) in the image's top rows (the top byte: how
                        * many; 0: none) */
+    uint32_t shade;   /* a tile: how deep in the sun's shadow (0..255) the corners of its top are, from its top
+                       * corner clockwise (a byte each, the first the lowest); blended between them */
 } HostCityQuad;
 /* a light in the city (a lamp): a soft ellipse of light, centre x, y, radii rx, ry (frame pixels) */
 typedef struct HostCityLight {

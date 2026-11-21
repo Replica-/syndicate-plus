@@ -181,7 +181,7 @@ static int g_nquads, g_quads_cap;
 static int g_cut = -1;   /* the tiles of this level and above are drawn almost see-through (-1: none) */
 static int g_translucent; /* the tile being put is one of them */
 #define SEE_THROUGH_ALPHA 60 /* of 255, as FreeSynd's */
-static int g_shade; /* the shadow of the tile being put (0..127) */
+static uint32_t g_shade; /* the shadow at the corners of the tile being put (HostCityQuad.shade) */
 
 static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat, int glow)
 {
@@ -201,7 +201,8 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->x = x;
     q->y = y;
     q->image = (uint16_t)image;
-    q->flip = (uint8_t)((flipped != 0) | (image < IMAGE_SPRITES ? g_shade << 1 : 0));
+    q->flip = (uint8_t)(flipped != 0);
+    q->shade = image < IMAGE_SPRITES ? g_shade : 0;
     q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0));
     q->hat = hat; /* its top byte: the rows of the image with the hat */
 }
@@ -946,20 +947,68 @@ static void frame_lights(int frame, float ax, float ay)
     add_light(ax + g_frame_light[slot].ox, ay + g_frame_light[slot].oy, 26, 18, g_frame_light[slot].colour);
 }
 
-/* the sun, high at the top left of the screen (from world -x, at 45 degrees): a tile with a solid tile above it
- * towards the sun is in its shadow (0..127, more when the shade is nearer) */
-static int sun_shade(uint32_t cols, int mx, int my, int mz, int tx, int ty, int tz)
+/* ---- the sun's shadows: the sun high at the top left of the screen (from world -x, 45 degrees up), as FreeSynd's:
+ * a surface seen from above (a floor, a road, a slope, a roof) with a solid tile above it towards the sun is in its
+ * shadow, the less the further away that tile is (up to SHADOW_LENGTH tiles); the shade of the 4 cells around
+ * each corner of a tile's top is blended across it (on the GPU), so the shadows fade pixel by pixel ---- */
+#define SHADOW_LENGTH 8
+static uint8_t g_types[256]; /* the tiles' types (COL01.DAT), render_set_tile_types */
+static int g_have_types;
+
+void render_set_tile_types(const uint8_t types[256])
+{
+    memcpy(g_types, types, sizeof g_types);
+    g_have_types = 1;
+}
+
+static int type_at(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
+{
+    if (x < 0 || y < 0 || z < 0 || x >= mx || y >= my || z >= mz) return 0;
+    return g_types[M[rd32(cols + (uint32_t)(x + y * mx) * 4u) + (uint32_t)z]];
+}
+
+/* casts a shadow: not empty, not a mesh (fences, handrails), not the space over a train stop */
+static int solid_type(int t)
+{
+    return t != 0x00 && t != 0x0C && t != 0x10;
+}
+
+/* is seen from above: the floors, roads, slopes and roofs */
+static int surface_type(int t)
+{
+    return (t >= 0x01 && t <= 0x09) || t == 0x0B || t == 0x0D || t == 0x0E || t == 0x0F;
+}
+
+/* how deep in shadow the surface of the cell x, y, z is: 0..255 */
+static int cell_shade(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
 {
     int d;
-    (void)my;
-    for (d = 1; d <= 4; d++) {
-        int x = tx - d, z = tz + d;
-        uint32_t col;
-        if (x < 0 || z >= mz) break;
-        col = rd32(cols + (uint32_t)(x + ty * mx) * 4u);
-        if (tile(M[col + (uint32_t)z]) != NULL) return 127 - (d - 1) * 24;
-    }
+    if (!surface_type(type_at(cols, mx, my, mz, x, y, z)) || solid_type(type_at(cols, mx, my, mz, x, y, z + 1))) return 0;
+    for (d = 1; d <= SHADOW_LENGTH && z + d < mz; d++)
+        if (solid_type(type_at(cols, mx, my, mz, x - d, y, z + d))) return 255 * (SHADOW_LENGTH + 1 - d) / SHADOW_LENGTH;
     return 0;
+}
+
+/* the shade at the 4 corners of the tile's top (HostCityQuad.shade): each the mean of the cells around it, those
+ * with a surface at this level */
+static uint32_t sun_shade(uint32_t cols, int mx, int my, int mz, int tx, int ty, int tz)
+{
+    static const int corner[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    uint32_t out = 0;
+    int k;
+    if (!g_have_types || !surface_type(type_at(cols, mx, my, mz, tx, ty, tz))) return 0;
+    for (k = 0; k < 4; k++) {
+        int dx, dy, sum = 0, n = 0;
+        for (dy = -1; dy <= 0; dy++)
+            for (dx = -1; dx <= 0; dx++) {
+                int x = tx + corner[k][0] + dx, y = ty + corner[k][1] + dy;
+                if (!surface_type(type_at(cols, mx, my, mz, x, y, tz))) continue;
+                sum += cell_shade(cols, mx, my, mz, x, y, tz);
+                n++;
+            }
+        out |= (uint32_t)(n ? sum / n : 0) << (8 * k);
+    }
+    return out;
 }
 
 /* a tile drawn with its top left at fx, fy (unzoomed): its light */
