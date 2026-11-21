@@ -37,6 +37,8 @@ void render_image(uint32_t *rgb, int w, int h, const uint32_t *pal, uint32_t pix
                   int y0, int x1, int y1);
 /* the top left of the coloured pixels of sprite `id` (not black, not transparent); 0 when it has none */
 int render_sprite_ink(int id, int *x, int *y);
+/* sprite `id` as palette indices (255 transparent), w x h; NULL if there is none */
+const uint8_t *render_sprite_pixels(int id, int *w, int *h);
 /* where person `ped` (its number in the level data) was drawn in the last frame; 0 when it was not */
 int render_ped_place(int ped, int *fx, int *fy);
 

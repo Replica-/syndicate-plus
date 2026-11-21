@@ -938,8 +938,38 @@ static uint32_t hat_colour(int ped)
 #define LABEL_SPRITE 1070  /* the numbers 1 to 4 of the squad: sprites 1070 + 2 x slot in yellow, + 1 in red */
 #define LABEL_DX (-2)      /* the top left of their coloured pixels from the agent's feet (as the game draws them) */
 #define LABEL_DY (-40)
-#define LABEL_RED 14       /* their colours in the game's palette: red, yellow (the selected agents) */
-#define LABEL_YELLOW 11
+
+#define LABEL_SEARCH 12          /* pixels around where the game should have drawn a number */
+#define LABEL_HOLD_US 400000u    /* a number not found keeps its last state this long */
+static uint8_t g_label[4];       /* the numbers shown: 0 none, 1 yellow, 2 red */
+static uint64_t g_label_us[4];   /* when each was last found */
+
+/* sprite `id` in the game's picture, its coloured pixels' top left within LABEL_SEARCH of ax, ay (all of its coloured
+ * pixels but a few, the rest may be under something) */
+static int find_label(const uint8_t *index, int id, int ax, int ay)
+{
+    int sw, sh, ix, iy, dx, dy, ink = 0, i;
+    const uint8_t *s = render_sprite_pixels(id, &sw, &sh);
+    if (s == NULL || !render_sprite_ink(id, &ix, &iy)) return 0;
+    for (i = 0; i < sw * sh; i++) ink += s[i] != 255 && s[i] != 0;
+    if (ink < 4) return 0;
+    for (dy = -LABEL_SEARCH; dy <= LABEL_SEARCH; dy++)
+        for (dx = -LABEL_SEARCH; dx <= LABEL_SEARCH; dx++) {
+            int x0 = ax + dx - ix, y0 = ay + dy - iy, x, y, hit = 0, miss = 0;
+            if (x0 < VIEW_LEFT || y0 < VIEW_TOP || x0 + sw > 640 || y0 + sh > VIEW_BOTTOM) continue;
+            for (y = 0; y < sh && miss * 8 <= ink; y++)
+                for (x = 0; x < sw; x++) {
+                    uint8_t c = s[y * sw + x];
+                    if (c == 255 || c == 0) continue;
+                    if (index[(y0 + y) * 640 + x0 + x] == c)
+                        hit++;
+                    else
+                        miss++;
+                }
+            if (hit * 8 >= ink * 7) return 1;
+        }
+    return 0;
+}
 
 /* the city on the playback clock (render.c), with the pointer and the squad's numbers over it */
 static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb)
@@ -967,32 +997,34 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
     }
     /* the numbers over the agents of the squad: drawn again over each agent where the smooth city has it, with the
      * game's own sprites; whether the game shows a number, and in yellow (the selected agents) or red, is read from
-     * its picture where it drew it */
+     * its picture: the number's sprite (each agent's digit is its own) looked for around where the game drew it
+     * (its picture may be a little behind its records); not found a moment, the last answer holds */
     company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
     for (slot = 0; slot < 4; slot++) {
         uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
-        int ax, ay, bx, by, i, j, red = 0, yellow = 0;
+        int ax, ay, bx, by, ix, iy, id;
         int32_t vx = (int32_t)(int16_t)RD16(g_addrs->view) * 128, vy = (int32_t)(int16_t)RD16(g_addrs->view + 2u) * 128;
         int32_t px = (int16_t)RD16(ped + PED_X), py = (int16_t)RD16(ped + PED_Y), pz = (int16_t)RD16(ped + PED_Z);
-        if (M[ped + PED_LOCATION] != 4) continue;
-        if (!render_ped_place((int)M[company + COMPANY_SQUAD] + slot, &bx, &by)) continue;
-        /* where the game drew the number (its frame may be a little behind its records: a margin) */
+        uint64_t now = host_time_us();
+        if (M[ped + PED_LOCATION] != 4) {
+            g_label[slot] = 0;
+            continue;
+        }
+        /* where the game drew the number: the top left of its coloured pixels */
         ax = ((px - vx - (py - vy)) >> 3) + render_obj_dx + LABEL_DX;
         ay = (((px - vx + py - vy) / 2 - pz) >> 3) + render_obj_dy + LABEL_DY;
-        for (j = -3; j < 13; j++)
-            for (i = -4; i < 12; i++) {
-                int gx = ax + i, gy = ay + j;
-                if (gx < VIEW_LEFT || gx >= 640 || gy < VIEW_TOP || gy >= VIEW_BOTTOM) continue;
-                red += index[gy * 640 + gx] == LABEL_RED;
-                yellow += index[gy * 640 + gx] == LABEL_YELLOW;
-            }
-        if (red < 4 && yellow < 4) continue; /* not shown */
-        {
-            int id = LABEL_SPRITE + slot * 2 + (yellow >= red ? 0 : 1), ix, iy;
-            if (!render_sprite_ink(id, &ix, &iy)) continue;
-            render_sprite(rgb, 640, 480, pal, id, bx + LABEL_DX - ix, by + LABEL_DY - iy, VIEW_LEFT, VIEW_TOP, 640,
-                          VIEW_BOTTOM);
-        }
+        if (find_label(index, LABEL_SPRITE + slot * 2, ax, ay))
+            g_label[slot] = 1, g_label_us[slot] = now;
+        else if (find_label(index, LABEL_SPRITE + slot * 2 + 1, ax, ay))
+            g_label[slot] = 2, g_label_us[slot] = now;
+        else if (now - g_label_us[slot] > LABEL_HOLD_US)
+            g_label[slot] = 0;
+        if (g_label[slot] == 0) continue;
+        if (!render_ped_place((int)M[company + COMPANY_SQUAD] + slot, &bx, &by)) continue;
+        id = LABEL_SPRITE + slot * 2 + (g_label[slot] == 1 ? 0 : 1);
+        if (!render_sprite_ink(id, &ix, &iy)) continue;
+        render_sprite(rgb, 640, 480, pal, id, bx + LABEL_DX - ix, by + LABEL_DY - iy, VIEW_LEFT, VIEW_TOP, 640,
+                      VIEW_BOTTOM);
     }
 }
 

@@ -9,6 +9,7 @@
  * from the ground up, and what stands on a tile after it. */
 #include "render.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -244,13 +245,21 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
 }
 
 /* ---- where things are: a snapshot at each tick of the game, drawn on a steady clock ----
- * The game's ticks come unevenly (a few at once, then a wait), so drawing between the two last ones by the time
- * they came makes things rush and stop.  Instead a playback clock goes through the snapshots at the ticks' average
- * rate, about PLAY_BEHIND ticks behind the newest, and is pulled back gently when it drifts. */
+ * The game's ticks come unevenly: two at once (one retrace apart) then nothing for ~85 ms, and their rate wanders
+ * (19 to 23 a second, a few ticks ahead or behind over seconds).  Drawing between the two last ones as they come
+ * makes things rush and stop.  Instead a playback clock goes through the snapshots at the ticks' rate over the last
+ * four seconds, about PLAY_BEHIND ticks behind the newest (enough not to run out in the gaps), and is brought back
+ * to it by running a little faster or slower (PLAY_GAIN for each tick off, its average over a second; at most
+ * PLAY_ADJUST), which the eye does not see. */
 #define NB_OBJS (256 + 64 + 400 + 512 + 256)
 #define TELEPORT 512   /* a move of more than 2 tiles in one tick is not drawn in between */
-#define NB_HIST 8
-#define PLAY_BEHIND 1.0
+#define NB_HIST 16
+#define PLAY_BEHIND 3.5
+#define PLAY_ADJUST 0.1
+#define PLAY_GAIN 0.03
+#define PLAY_FILTER_US 1000000.0
+#define PLAY_RESET 6.0 /* further off: start again there */
+#define RATE_TICKS 80  /* the rate is measured over this many ticks */
 
 typedef struct Snap {
     int32_t vx, vy;              /* the view, in world units */
@@ -262,8 +271,11 @@ typedef struct Snap {
 static Snap g_hist[NB_HIST];
 static uint32_t g_nticks;        /* snapshots taken (the newest: g_nticks - 1) */
 static uint64_t g_last_tick_us, g_play_us;
-static double g_period_us = 50000.0; /* the ticks' average period */
+static uint64_t g_tick_us[RATE_TICKS + 1]; /* when the last ticks came (since a pause) */
+static int g_rate_n;
+static double g_period_us = 50000.0; /* the ticks' period lately */
 static double g_play = -1.0;     /* the playback clock, in ticks */
+static double g_play_off;        /* how far it is from where it should be (ticks, averaged) */
 static int32_t g_vx, g_vy;       /* the view of the frame being drawn */
 static float g_vfx, g_vfy;       /* its fractions (subtracted: the view is g_v - g_vf) */
 static int g_own_view;           /* render_set_view: the view is this program's, not the game's */
@@ -311,8 +323,14 @@ void render_tick(uint64_t now_us)
             s->loc[n] = M[a + 0xau];
         }
     }
-    if (g_nticks > 0 && now_us > g_last_tick_us && now_us - g_last_tick_us < 500000u)
-        g_period_us = g_period_us * 0.95 + (double)(now_us - g_last_tick_us) * 0.05;
+    /* the period over the last ticks (a pause, e.g. a menu, starts again) */
+    if (g_nticks == 0 || now_us < g_last_tick_us || now_us - g_last_tick_us > 500000u) g_rate_n = 0;
+    if (g_rate_n == RATE_TICKS + 1) {
+        memmove(g_tick_us, g_tick_us + 1, sizeof g_tick_us[0] * RATE_TICKS);
+        g_rate_n--;
+    }
+    g_tick_us[g_rate_n++] = now_us;
+    if (g_rate_n >= 8) g_period_us = (double)(now_us - g_tick_us[0]) / (double)(g_rate_n - 1);
     g_last_tick_us = now_us;
     g_nticks++;
 }
@@ -331,17 +349,24 @@ void render_reset(void)
 /* the playback clock at `now_us`: the snapshots to draw between and how far (0..256); 0 when there are too few */
 static int playback(uint64_t now_us, const Snap **a, const Snap **b, int *t256)
 {
-    double newest, target;
+    double newest, target, since;
     uint32_t i0;
     if (g_nticks < 2) return 0;
     newest = (double)(g_nticks - 1);
-    target = newest - PLAY_BEHIND;
+    /* where the clock should be: behind the newest tick, as if the ticks came evenly */
+    since = now_us > g_last_tick_us ? (double)(now_us - g_last_tick_us) / g_period_us : 0.0;
+    target = newest - PLAY_BEHIND + (since < 1.0 ? since : 1.0);
     if (target < 0) target = 0;
-    if (g_play < 0 || g_play > newest || g_play < newest - (NB_HIST - 2) || g_play < target - 3.0) {
+    if (g_play < 0 || g_play > newest || g_play < newest - (NB_HIST - 2) || fabs(g_play - target) > PLAY_RESET) {
         g_play = target;
-    } else {
-        if (now_us > g_play_us) g_play += (double)(now_us - g_play_us) / g_period_us;
-        g_play += (target - g_play) * 0.05; /* drift back slowly: no visible jump */
+        g_play_off = 0.0;
+    } else if (now_us > g_play_us) {
+        double dt = (double)(now_us - g_play_us), adjust;
+        g_play_off += (target - g_play - g_play_off) * (dt < PLAY_FILTER_US ? dt / PLAY_FILTER_US : 1.0);
+        adjust = g_play_off * PLAY_GAIN;
+        if (adjust > PLAY_ADJUST) adjust = PLAY_ADJUST;
+        if (adjust < -PLAY_ADJUST) adjust = -PLAY_ADJUST;
+        g_play += dt / g_period_us * (1.0 + adjust);
         if (g_play > newest) g_play = newest;
     }
     g_play_us = now_us;
@@ -374,6 +399,11 @@ void render_image(uint32_t *rgb, int w, int h, const uint32_t *pal, uint32_t pix
             for (i = 0; i < 8 && blk * 8 + i < iw; i++) img[row * iw + blk * 8 + i] = block[i];
         }
     blit(&t, img, iw, ih, x, y, 0, 0);
+}
+
+const uint8_t *render_sprite_pixels(int id, int *w, int *h)
+{
+    return sprite(id, w, h);
 }
 
 int render_sprite_ink(int id, int *x, int *y)
