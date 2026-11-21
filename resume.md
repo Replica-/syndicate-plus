@@ -113,5 +113,5 @@ Traffic lights glowing (find their tiles with the light editor), a walkable outl
 day; the 16 extra company
 colours with a colour/logo picker; instant click feedback (optional); improved path finding (the user asked for it
 to be on the list; it changes how agents move, so say what it would change and ask before doing it). Loose ends: blood spray on a real hit and the
-corpse fix on a real death are unchecked; the macOS front end has no menu items for the new features and was not
-built here; README.md needs a note on the GPU city and the playback clock.
+corpse fix on a real death are unchecked; the macOS front end has no menu items for the new features (wide view,
+time of day: stubs) and was not built here; video recordings use the CPU picture (not lit).
