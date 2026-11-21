@@ -1363,11 +1363,21 @@ static int g_cut_level = -1;
  * almost see-through, and where one can walk at that level is outlined in green */
 #define SEE_INSIDE_LEVELS 0
 
+static void draw_pointer(uint32_t *rgb, const uint32_t *pal)
+{
+    int mx, my;
+    uint32_t entry = RD32(g_addrs->data + POINTER_CURRENT(g_addrs->ar));
+    canvas_mouse(&mx, &my);
+    if (entry != 0)
+        render_image(rgb, g_cw, 480, pal, RD32(entry), M[entry + 4u], M[entry + 5u], mx - 16, my - 16, VIEW_LEFT, VIEW_TOP,
+                     g_cw, VIEW_BOTTOM);
+}
+
 /* the city on the playback clock (render.c), with the pointer and the squad's numbers over it */
 static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb)
 {
     uint32_t company;
-    int x, y, mx, my, slot, gpu;
+    int x, y, slot, gpu;
     g_overlay_pal = pal;
     render_hat_colour = hat_colour;
     move_view();
@@ -1397,13 +1407,7 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
     /* the pointer: the game's (the entry of its pointer table it uses), drawn where the mouse is now, as the game
      * draws it (its top left corner 16 pixels up and left of the mouse; the game's mouse runs over its 400 lines
      * from line 40 of the frame); over the side panel and the bars the game's own picture shows it */
-    canvas_mouse(&mx, &my);
-    {
-        uint32_t entry = RD32(g_addrs->data + POINTER_CURRENT(g_addrs->ar));
-        if (entry != 0)
-            render_image(rgb, g_cw, 480, pal, RD32(entry), M[entry + 4u], M[entry + 5u], mx - 16, my - 16, VIEW_LEFT,
-                         VIEW_TOP, g_cw, VIEW_BOTTOM);
-    }
+    draw_pointer(rgb, pal);
     /* the numbers over the agents of the squad: the frames the game shows, over each agent where the smooth city
      * has it */
     company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
@@ -1771,7 +1775,10 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     draw_scanner_extras(rgb, w);
     if (g_marker_us == 0 || host_time_us() - g_marker_us >= MARKER_US) {
         g_marker_us = 0;
-        if (g_menu) mission_menu(rgb, w);
+        if (g_menu) {
+        mission_menu(rgb, w);
+        draw_pointer(rgb, palette); /* over the menu */
+    }
         return render_gpu_changed;
     }
     age = host_time_us() - g_marker_us;
@@ -1780,7 +1787,10 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     alpha = (int)(255 * (MARKER_US - age) / MARKER_US); /* it fades out */
     diamond(rgb, w, fx, fy, hw, 4, MARKER_COLOUR, alpha);
     diamond(rgb, w, fx, fy, 4, 0, MARKER_COLOUR, alpha);
-    if (g_menu) mission_menu(rgb, w);
+    if (g_menu) {
+        mission_menu(rgb, w);
+        draw_pointer(rgb, palette); /* over the menu */
+    }
     return render_gpu_changed;
 }
 
