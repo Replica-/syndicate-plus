@@ -89,6 +89,7 @@ static int g_fw, g_fh;
 static int g_crt_on;
 static int g_frame_city;            /* the frame being made has the city on the GPU */
 #define WM_APP_SHOT (WM_APP + 7)
+#define WM_APP_OPTION (WM_APP + 8) /* the mission's menu changed option wParam by lParam (1, -1) */
 
 /* the city on the GPU: not while the frame must hold all of the picture (the CRT filter) or without Direct3D */
 int host_city_gpu(void)
@@ -1109,6 +1110,73 @@ static void save_screenshot(void)
     save_png(copy, w, h);
 }
 
+/* ==== the options of the mission's menu (Escape): the window menu's, changed on the window's thread ======== */
+enum { OPT_TIME, OPT_SHADOWS, OPT_FULL, OPT_FPS, OPT_CRT, OPT_MUSIC, OPT_SOUND, OPT_ROUTES, OPT_COLOUR, NB_OPTS };
+
+static void option_value(char *v, size_t n, const wchar_t *w)
+{
+    size_t i = 0;
+    for (; *w && i + 1 < n; w++)
+        if (*w != L'&') v[i++] = (char)(*w >= L'a' && *w <= L'z' ? *w - 32 : *w < 128 ? *w : '?');
+    v[i] = 0;
+}
+
+int host_options(HostOption *o, int max)
+{
+    static const char *const names[NB_OPTS] = {"TIME OF DAY", "SUN SHADOWS", "FULL SCREEN", "FRAMES A SECOND",
+                                               "CRT SCANLINES", "MUSIC VOLUME", "SOUND VOLUME", "SQUAD ROUTES",
+                                               "COMPANY COLOUR"};
+    static const char *const times[4] = {"MISSION", "OFF", "DUSK", "NIGHT"};
+    int k, n = max < NB_OPTS ? max : NB_OPTS;
+    for (k = 0; k < n; k++) {
+        snprintf(o[k].name, sizeof o[k].name, "%s", names[k]);
+        switch (k) {
+        case OPT_TIME: snprintf(o[k].value, sizeof o[k].value, "%s", times[g_time & 3]); break;
+        case OPT_SHADOWS: snprintf(o[k].value, sizeof o[k].value, "%s", g_shadows ? "ON" : "OFF"); break;
+        case OPT_FULL: snprintf(o[k].value, sizeof o[k].value, "%s", g_full ? "ON" : "OFF"); break;
+        case OPT_FPS: snprintf(o[k].value, sizeof o[k].value, "%s", g_fps_on ? "ON" : "OFF"); break;
+        case OPT_CRT: snprintf(o[k].value, sizeof o[k].value, "%s", g_crt_on ? "ON" : "OFF"); break;
+        case OPT_MUSIC: snprintf(o[k].value, sizeof o[k].value, "%d%%", g_music_vol); break;
+        case OPT_SOUND: snprintf(o[k].value, sizeof o[k].value, "%d%%", g_sound_vol); break;
+        case OPT_ROUTES: snprintf(o[k].value, sizeof o[k].value, "%s", g_routes ? "ON" : "OFF"); break;
+        case OPT_COLOUR:
+            if (g_colour == 0)
+                snprintf(o[k].value, sizeof o[k].value, "THE GAME'S");
+            else
+                option_value(o[k].value, sizeof o[k].value, k_colours[g_colour].name);
+            break;
+        }
+    }
+    return n;
+}
+
+void host_option_step(int index, int dir)
+{
+    if (g_hwnd != NULL) PostMessageW(g_hwnd, WM_APP_OPTION, (WPARAM)index, (LPARAM)dir);
+}
+
+static void option_step(int index, int dir)
+{
+    static const int time_order[4] = {0, 2, 3, 1}; /* mission, dusk, night, off */
+    int k;
+    switch (index) {
+    case OPT_TIME:
+        for (k = 0; k < 4 && time_order[k] != g_time; k++) {
+        }
+        set_time(time_order[(k + 4 + dir) % 4]);
+        break;
+    case OPT_SHADOWS: toggle_shadows(); break;
+    case OPT_FULL: set_fullscreen(!g_full); break;
+    case OPT_FPS: toggle_fps(); break;
+    case OPT_CRT: toggle_crt(g_hwnd); break;
+    case OPT_MUSIC: set_volumes((g_music_vol / 25 + 5 + dir) % 5 * 25, g_sound_vol); break;
+    case OPT_SOUND: set_volumes(g_music_vol, (g_sound_vol / 25 + 5 + dir) % 5 * 25); break;
+    case OPT_ROUTES: toggle_routes(); break;
+    case OPT_COLOUR: set_colour((g_colour + NB_COLOURS + dir) % NB_COLOURS); break;
+    default: break;
+    }
+}
+
 /* ==== the window ========================================================================================= */
 static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
 {
@@ -1359,6 +1427,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         return 0;
     case WM_APP_SHOT:
         save_screenshot();
+        return 0;
+    case WM_APP_OPTION:
+        option_step((int)w, (int)l);
         return 0;
     case WM_APP_FATAL:
         g_modal++;

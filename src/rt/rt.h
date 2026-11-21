@@ -69,6 +69,8 @@ void game_mouse_filter(int *x, int *y);
 int game_canvas_width(int w, int h);
 /* the mouse wheel (game thread) */
 void game_wheel(int notches);
+/* the game layer may keep a change of the mouse buttons from the game (a menu of its own is open): 1 when kept */
+int game_mouse_buttons(int buttons);
 /* when the frame being made will be shown (host_time_us's clock) */
 extern uint64_t rt_display_us;
 RT_NORETURN void rt_exit_process(int code);

@@ -389,9 +389,11 @@ static volatile int g_centre_slot;    /* 1-4: centre the view on that agent at t
 static uint64_t g_press_us[4];
 static uint8_t g_down[256], g_moved[256]; /* keys held; held keys that scroll in place of an arrow key */
 
+static volatile int g_menu; /* the mission's menu (Escape) is open: the mission waits */
+
 static int in_mission(void)
 {
-    return g_tick_us != 0 && host_time_us() - g_tick_us < 200000u;
+    return g_tick_us != 0 && (g_menu || host_time_us() - g_tick_us < 200000u);
 }
 
 static int renderer_on(void);
@@ -403,10 +405,31 @@ int game_canvas_width(int w, int h)
     return host_canvas_width();
 }
 
+/* the menu's keys (a scancode, 0xE000 for the arrows), read on the game thread */
+static volatile uint32_t g_menu_key;
+static volatile int g_pass_esc; /* Abort mission: the game gets this Escape */
+#define SC_ESC 0x01u
+
 uint32_t game_key_filter(uint32_t sc, int down)
 {
     uint32_t k = sc & 0xFFu;
     int was_down;
+    if (k == SC_ESC && !(sc & 0xE000u)) {
+        static uint8_t esc_down;
+        int was = esc_down;
+        esc_down = (uint8_t)(down != 0);
+        if (g_pass_esc) {
+            if (!down) g_pass_esc = 0;
+            return sc;
+        }
+        if (!in_mission() || g_addrs == NULL || !renderer_on()) return sc;
+        if (down && !was) g_menu_key = g_menu ? SC_ESC : 0xFFFFu; /* open, or close (on the game thread) */
+        return 0;
+    }
+    if (g_menu) {
+        if (down) g_menu_key = sc;
+        return 0;
+    }
     if (sc & 0xE000u) {
         /* the arrows (extended keys): this program's view too */
         static uint8_t moved[256];
@@ -738,6 +761,23 @@ static void plot(uint32_t *rgb, int w, int x, int y, uint32_t c, int alpha)
         *p = (*p & ~(0xFFu << k)) | (v << k);
     }
     *p = (*p & 0x00FFFFFFu) | ((255u - na) << 24);
+}
+
+/* a pixel anywhere in the frame (opaque), and blended */
+static void plot_any(uint32_t *rgb, int w, int x, int y, uint32_t c)
+{
+    if (x >= 0 && x < w && y >= 0 && y < 480) rgb[y * w + x] = c;
+}
+
+static void plot_any_blend(uint32_t *rgb, int w, int x, int y, uint32_t c, int alpha)
+{
+    uint32_t o, a = (uint32_t)alpha, k, r = 0, op;
+    if (x < 0 || x >= w || y < 0 || y >= 480) return;
+    o = rgb[y * w + x];
+    op = 255u - (o >> 24);
+    /* over a see-through pixel (the city under it) the colour shows as opaque as the panel */
+    for (k = 0; k < 24; k += 8) r |= (((c >> k) & 0xFF) * a + ((o >> k) & 0xFF) * (255u - a) * op / 255u) / 255u << k;
+    rgb[y * w + x] = r | (uint32_t)(255u - (a + (255u - a) * op / 255u)) << 24;
 }
 
 /* a diamond lying on the floor, half width hw (half height hw / 2): filled, or only its outer `edge` */
@@ -1260,6 +1300,213 @@ static void light_editor(uint32_t *rgb, int w)
     draw_text(rgb, w, VIEW_LEFT + 10, VIEW_TOP + 42, line, 0xFFFFFF);
 }
 
+/* ---- the mission's menu (Escape): the game's briefing look, its menu font (MFNT-0: each character a few rows
+ * of runs: a count of pixels that follow, a negative one of see-through ones, 0 the end of a row), twice its size,
+ * its greens ---- */
+#define MENU_W 500
+#define MENU_ROW 30
+#define MENU_SCALE 2
+#define MENU_BG 0x082800u
+#define MENU_BAR 0x144904u
+#define MENU_BAR_SEL 0x1E6A0Au
+#define MENU_FRAME 0x1C9200u
+#define MENU_TEXT 0x1C9200u
+#define MENU_BRIGHT 0x61FF24u
+#define MENU_SEL_TEXT 0xC8FFB4u
+#define MENU_SHADE 0x041800u
+#define NB_GLYPHS 205
+#define MAX_OPTIONS 16
+
+typedef struct Glyph {
+    uint8_t w, h;
+    uint8_t px[16][16]; /* 0 see-through, 1 the edge, 2 the letter */
+} Glyph;
+static Glyph g_font[NB_GLYPHS];
+static int g_font_loaded;
+
+static void load_menu_font(void)
+{
+    char path[1200];
+    static uint8_t dat[16384], tab[2048];
+    size_t nd, nt;
+    VFile *f;
+    int i;
+    g_font_loaded = 1;
+    snprintf(path, sizeof path, "%s/%s/DATA/MFNT-0.DAT", rt_game_dir, g_addrs->ar ? "DATADISK" : "SYNDICAT");
+    f = vfs_open(path, "rb");
+    if (f == NULL) return;
+    nd = vfs_read(f, dat, sizeof dat);
+    vfs_close(f);
+    snprintf(path, sizeof path, "%s/%s/DATA/MFNT-0.TAB", rt_game_dir, g_addrs->ar ? "DATADISK" : "SYNDICAT");
+    f = vfs_open(path, "rb");
+    if (f == NULL) return;
+    nt = vfs_read(f, tab, sizeof tab);
+    vfs_close(f);
+    for (i = 0; i < NB_GLYPHS && (size_t)(i * 6 + 6) <= nt; i++) {
+        uint32_t at = (uint32_t)tab[i * 6] | (uint32_t)tab[i * 6 + 1] << 8 | (uint32_t)tab[i * 6 + 2] << 16 |
+                      (uint32_t)tab[i * 6 + 3] << 24;
+        Glyph *g = &g_font[i];
+        int y;
+        g->w = tab[i * 6 + 4] > 16 ? 16 : tab[i * 6 + 4];
+        g->h = tab[i * 6 + 5] > 16 ? 16 : tab[i * 6 + 5];
+        for (y = 0; y < g->h; y++) {
+            int x = 0;
+            for (;;) {
+                int n;
+                if (at >= nd) return;
+                n = (int8_t)dat[at++];
+                if (n == 0) break;
+                if (n < 0) {
+                    x -= n;
+                    continue;
+                }
+                while (n-- > 0 && at < nd) {
+                    uint8_t c = dat[at++];
+                    if (x < 16) g->px[y][x] = (uint8_t)(c >= 0xFD ? 2 : c != 0 ? 1 : 0);
+                    x++;
+                }
+            }
+        }
+    }
+}
+
+static int menu_text_width(const char *t)
+{
+    int w = 0;
+    for (; *t; t++) {
+        int i = (uint8_t)*t - 32;
+        w += (i > 0 && i < NB_GLYPHS && g_font[i].w > 0 ? g_font[i].w : 4) * MENU_SCALE;
+    }
+    return w;
+}
+
+static void menu_text(uint32_t *rgb, int w, int x, int y, const char *t, uint32_t body)
+{
+    for (; *t; t++) {
+        int i = (uint8_t)(*t >= 'a' && *t <= 'z' ? *t - 32 : *t) - 32, gx, gy, a, b;
+        const Glyph *g;
+        if (i <= 0 || i >= NB_GLYPHS || g_font[i].w == 0) {
+            x += 4 * MENU_SCALE;
+            continue;
+        }
+        g = &g_font[i];
+        for (gy = 0; gy < g->h; gy++)
+            for (gx = 0; gx < g->w; gx++) {
+                uint8_t v = g->px[gy][gx];
+                if (v == 0) continue;
+                for (b = 0; b < MENU_SCALE; b++)
+                    for (a = 0; a < MENU_SCALE; a++)
+                        plot_any(rgb, w, x + gx * MENU_SCALE + a, y + gy * MENU_SCALE + b, v == 2 ? body : MENU_SHADE);
+            }
+        x += g->w * MENU_SCALE;
+    }
+}
+
+static int g_menu_sel;
+static int g_menu_mx, g_menu_my; /* where the pointer was: it chooses an item when it moves */
+static volatile int g_menu_click, g_menu_buttons, g_menu_hold;
+static int g_abort;
+
+int game_mouse_buttons(int buttons)
+{
+    int pressed = (buttons & 1) && !(g_menu_buttons & 1);
+    g_menu_buttons = buttons;
+    if (g_menu) {
+        if (pressed) g_menu_click = 1;
+        return 1;
+    }
+    if (g_menu_hold) {
+        if (buttons == 0) g_menu_hold = 0;
+        return 1;
+    }
+    return 0;
+}
+
+static void menu_close(void)
+{
+    g_menu = 0;
+    g_menu_hold = g_menu_buttons != 0; /* the click that closed it is not the game's */
+}
+
+/* drawn over the mission, its keys and clicks acted on (game thread) */
+static void mission_menu(uint32_t *rgb, int w)
+{
+    HostOption opts[MAX_OPTIONS];
+    int nopt = host_options(opts, MAX_OPTIONS), n = nopt + 2, i, mx, my, key = (int)g_menu_key, act = 0, dir = 1;
+    int left, top, right, bottom, cx = (VIEW_LEFT + w) / 2;
+    g_menu_key = 0;
+    if (!g_font_loaded) load_menu_font();
+    left = cx - MENU_W / 2;
+    right = cx + MENU_W / 2;
+    top = 240 - (n * MENU_ROW + 80) / 2;
+    if (top < VIEW_TOP + 4) top = VIEW_TOP + 4;
+    bottom = top + n * MENU_ROW + 80;
+    /* the keys: up, down, left, right, Enter, Escape (resume) */
+    if (key == 0x48 + 0xE000 || key == 0x48) g_menu_sel = (g_menu_sel + n - 1) % n;
+    if (key == 0x50 + 0xE000 || key == 0x50) g_menu_sel = (g_menu_sel + 1) % n;
+    if (key == 0x4B + 0xE000 || key == 0x4B) act = 1, dir = -1;
+    if (key == 0x4D + 0xE000 || key == 0x4D || key == 0x1C || key == 0x1C + 0xE000) act = 1;
+    if (key == SC_ESC) {
+        menu_close();
+        return;
+    }
+    /* the pointer: over an item it is the one chosen, a click acts on it */
+    canvas_mouse(&mx, &my);
+    if (mx != g_menu_mx || my != g_menu_my || g_menu_click) {
+        int row = (my - (top + 60)) / MENU_ROW;
+        if (mx >= left + 16 && mx < right - 16 && my >= top + 60 && row >= 0 && row < n) {
+            g_menu_sel = row;
+            if (g_menu_click) act = 1;
+        }
+        g_menu_mx = mx;
+        g_menu_my = my;
+    }
+    g_menu_click = 0;
+    if (act) {
+        if (g_menu_sel == 0) {
+            menu_close();
+            return;
+        }
+        if (g_menu_sel == n - 1) {
+            g_abort = 1; /* the game gets an Escape at its next tick */
+            menu_close();
+            return;
+        }
+        host_option_step(g_menu_sel - 1, dir);
+        nopt = host_options(opts, MAX_OPTIONS);
+    }
+    /* the panel: dark green, a green frame, the title, a bar for each item */
+    for (i = top; i < bottom; i++) {
+        int x;
+        for (x = left; x < right; x++) plot_any_blend(rgb, w, x, i, MENU_BG, 235);
+    }
+    for (i = 0; i < 2; i++) {
+        int x, y;
+        for (x = left; x < right; x++) {
+            plot_any(rgb, w, x, top + i, MENU_FRAME);
+            plot_any(rgb, w, x, bottom - 1 - i, MENU_FRAME);
+        }
+        for (y = top; y < bottom; y++) {
+            plot_any(rgb, w, left + i, y, MENU_FRAME);
+            plot_any(rgb, w, right - 1 - i, y, MENU_FRAME);
+        }
+    }
+    menu_text(rgb, w, cx - menu_text_width("MISSION PAUSED") / 2, top + 18, "MISSION PAUSED", MENU_BRIGHT);
+    for (i = 0; i < n; i++) {
+        int y = top + 60 + i * MENU_ROW, x, yy, sel = i == g_menu_sel;
+        const char *name = i == 0 ? "RESUME" : i == n - 1 ? "ABORT MISSION" : opts[i - 1].name;
+        for (yy = y; yy < y + MENU_ROW - 6; yy++)
+            for (x = left + 16; x < right - 16; x++) plot_any(rgb, w, x, yy, sel ? MENU_BAR_SEL : MENU_BAR);
+        for (yy = y + 7; yy < y + 17; yy++)
+            for (x = left + 26; x < left + 36; x++) plot_any(rgb, w, x, yy, MENU_BRIGHT);
+        menu_text(rgb, w, left + 48, y + 5, name, sel ? MENU_SEL_TEXT : MENU_TEXT);
+        if (i > 0 && i < n - 1) {
+            const char *v = opts[i - 1].value;
+            menu_text(rgb, w, right - 28 - menu_text_width(v), y + 5, v, sel ? MENU_SEL_TEXT : MENU_BRIGHT);
+        }
+    }
+}
+
 #define MARKER_COLOUR 0x5aff5au
 
 int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h)
@@ -1278,19 +1525,26 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     }
     draw_drops(rgb, w);
     if (g_editor && renderer_on()) light_editor(rgb, w);
+    if (g_menu_key == 0xFFFFu) { /* Escape: the menu opens */
+        g_menu_key = 0;
+        g_menu = 1;
+        g_menu_sel = 0;
+        canvas_mouse(&g_menu_mx, &g_menu_my);
+    }
     solid_selected_boxes(index, palette, rgb, w);
     draw_scanner_extras(rgb, w);
-    if (g_marker_us == 0) return render_gpu_changed;
-    age = host_time_us() - g_marker_us;
-    if (age >= MARKER_US) {
+    if (g_marker_us == 0 || host_time_us() - g_marker_us >= MARKER_US) {
         g_marker_us = 0;
+        if (g_menu) mission_menu(rgb, w);
         return render_gpu_changed;
     }
+    age = host_time_us() - g_marker_us;
     world_to_frame(g_marker[0], g_marker[1], g_marker[2], &fx, &fy);
     hw = 6 + (int)(22 * (MARKER_US - age) / MARKER_US);
     alpha = (int)(255 * (MARKER_US - age) / MARKER_US); /* it fades out */
     diamond(rgb, w, fx, fy, hw, 4, MARKER_COLOUR, alpha);
     diamond(rgb, w, fx, fy, 4, 0, MARKER_COLOUR, alpha);
+    if (g_menu) mission_menu(rgb, w);
     return render_gpu_changed;
 }
 
@@ -1461,6 +1715,20 @@ static uint64_t g_pace_period;
 
 static int on_frame_wait(uint32_t addr)
 {
+    /* the menu open: the mission waits (the frames go on) */
+    while (g_menu && !host_should_quit()) {
+        host_sleep_us(2000);
+        rt_poll();
+    }
+    /* Abort mission: the game's Escape, held a few ticks (the game looks at the keys held at its ticks) */
+    if (g_abort == 1) {
+        g_pass_esc = 1;
+        rt_key_event(SC_ESC, 1);
+    }
+    if (g_abort > 0 && ++g_abort > 4) {
+        g_abort = 0;
+        rt_key_event(SC_ESC, 0);
+    }
     uint64_t now = host_time_us(), period;
     int32_t n = (int32_t)RD32(g_addrs->speed);
     const char *e = getenv("SYND_PACE");

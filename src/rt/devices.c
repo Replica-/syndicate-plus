@@ -222,6 +222,7 @@ void rt_mouse_motion(int dx, int dy)
 void rt_mouse_buttons(int buttons)
 {
     int i, x, y, cur;
+    if (game_mouse_buttons(buttons)) return;
     host_lock();
     cur = g_mbuttons;
     mouse_get(&x, &y, NULL);

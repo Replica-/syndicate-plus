@@ -190,6 +190,20 @@ int host_display_timing(uint64_t *vblank_us, uint64_t *period_us)
     return 0;
 }
 
+/* the mission's menu: no options of this front end yet */
+int host_options(HostOption *o, int max)
+{
+    (void)o;
+    (void)max;
+    return 0;
+}
+
+void host_option_step(int index, int dir)
+{
+    (void)index;
+    (void)dir;
+}
+
 /* 4:3 here (a wider picture: to do) */
 int host_canvas_width(void)
 {

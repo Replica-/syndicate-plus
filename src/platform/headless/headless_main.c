@@ -125,6 +125,44 @@ static void write_bmp(const char *path, const uint32_t *pix, int w, int h)
     fclose(f);
 }
 
+/* the mission's menu: what the headless program can change (time of day and shadows with --gpu, the routes) */
+static int g_opt_time, g_opt_shadows = 1, g_opt_routes = 1;
+
+int host_options(HostOption *o, int max)
+{
+    static const char *const times[4] = {"MISSION", "OFF", "DUSK", "NIGHT"};
+    if (max < 3) return 0;
+    snprintf(o[0].name, sizeof o[0].name, "TIME OF DAY");
+    snprintf(o[0].value, sizeof o[0].value, "%s", times[g_opt_time & 3]);
+    snprintf(o[1].name, sizeof o[1].name, "SUN SHADOWS");
+    snprintf(o[1].value, sizeof o[1].value, "%s", g_opt_shadows ? "ON" : "OFF");
+    snprintf(o[2].name, sizeof o[2].name, "SQUAD ROUTES");
+    snprintf(o[2].value, sizeof o[2].value, "%s", g_opt_routes ? "ON" : "OFF");
+    return 3;
+}
+
+void host_option_step(int index, int dir)
+{
+    if (index == 0) {
+        static const int order[4] = {0, 2, 3, 1}; /* mission, dusk, night, off: as the window's */
+        int k;
+        for (k = 0; k < 4 && order[k] != g_opt_time; k++) {
+        }
+        g_opt_time = order[(k + 4 + dir) % 4];
+#ifdef _WIN32
+        gpu_set_time(g_opt_time);
+#endif
+    } else if (index == 1) {
+        g_opt_shadows = !g_opt_shadows;
+#ifdef _WIN32
+        gpu_set_shadows(g_opt_shadows);
+#endif
+    } else if (index == 2) {
+        g_opt_routes = !g_opt_routes;
+        game_set_routes(g_opt_routes);
+    }
+}
+
 /* --wide W: missions in a frame W pixels wide (640: 4:3) */
 static int g_canvas_w = 640;
 

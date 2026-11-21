@@ -337,6 +337,18 @@ def squad_route(ctx):
 
 
 @test()
+def mission_menu(ctx):
+    """Escape in a mission opens its menu and the mission waits (nothing moves under it); Abort mission (down to
+    the last item, Enter) ends the mission as Escape did: the debriefing"""
+    r = ctx.run('menu', 36, start=SYN, every=500, inputs=TO_MISSION + [
+        '27000:click@36000;42000', '27500:esc', '30000:e050', '30200:e050', '30400:e050', '30600:e050', '31000:enter'])
+    a, b = r.at(28000), r.at(29500)
+    same = sum(1 for p, q in zip(a.pix, b.pix) if p == q) / len(a.pix)
+    check(same > 0.995, 'the mission did not wait under its menu: %s %s' % (name(a), name(b)))
+    check(is_green_screen(r.at(34000)), 'no debriefing after Abort mission: ' + name(r.at(34000)))
+
+
+@test()
 def save_load(ctx):
     """save a game named ABC in line 4 (1-3 hold the auto saves), then load it in a new run: the funds stored in the
     save show up"""

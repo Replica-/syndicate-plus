@@ -72,6 +72,17 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels);
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
                      float scale, const HostCityLight *lights, int nlights, float night);
 
+/* ---- the options a mission's menu (Escape) shows: the platform's settings ----
+ * host_options fills `o` with the options (at most `max`) and returns how many: a name, the value now; any thread.
+ * host_option_step changes option `index` to its next (dir 1) or previous (dir -1) value, as the platform's own
+ * menu does (it may do it a little later, on its own thread). */
+typedef struct HostOption {
+    char name[32];
+    char value[32];
+} HostOption;
+int host_options(HostOption *o, int max);
+void host_option_step(int index, int dir);
+
 /* the original game files built into the program (a pack written by tools/pack_game.py), used when no game
  * folder is given; NULL when the program has none */
 const uint8_t *host_game_pack(size_t *size);
