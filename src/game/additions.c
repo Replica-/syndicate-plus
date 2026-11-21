@@ -76,6 +76,7 @@ typedef struct GameAddrs {
     uint32_t frame_wait;   /* the mission loop's wait for the next tick (the timer counted `speed` interrupts) */
     uint32_t speed;        /* (32 bits) the interrupts a tick waits for (7; the game's keys change it, 3..12) */
     uint32_t wait_count;   /* (8 bits) the interrupts counted since the last tick */
+    uint32_t label_frames; /* (16 bits x 4) the frames of the squad's numbers, as the game draws them */
     int ar;                /* American Revolt: its pointers are further apart */
 } GameAddrs;
 
@@ -83,27 +84,27 @@ static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
      0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u,
-     0x408810u, 0x445304u, 0x450b50u, 0},
+     0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu,
-     0x408810u, 0x442afcu, 0x44e348u, 0},
+     0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u,
-     0x408810u, 0x442b60u, 0x44e3acu, 0},
+     0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
      0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu,
-     0x408700u, 0x4552ccu, 0x4662b1u, 1},
+     0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 1},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu,
-     0x408700u, 0x4529bcu, 0x4639a1u, 1},
+     0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 1},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u,
-     0x408700u, 0x452a24u, 0x463a09u, 1},
+     0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 1},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -945,41 +946,14 @@ static uint32_t hat_colour(int ped)
 /* the pointer table's current entry (HPOINTER: 6 bytes, pointer to the pixels, width, height): from the pointer
  * to HSPR's table, +0x10 in Syndicate (0x445324), +0x14 in American Revolt */
 #define POINTER_CURRENT(ar) ((ar) ? 0x14u : 0x10u)
-#define LABEL_SPRITE 1070  /* the numbers 1 to 4 of the squad: sprites 1070 + 2 x slot in yellow, + 1 in red */
-#define LABEL_DX (-2)      /* the top left of their coloured pixels from the agent's feet (as the game draws them) */
-#define LABEL_DY (-40)
-
-#define LABEL_SEARCH 12          /* pixels around where the game should have drawn a number */
-#define LABEL_HOLD_US 400000u    /* a number not found keeps its last state this long */
-static uint8_t g_label[4];       /* the numbers shown: 0 none, 1 yellow, 2 red */
-static uint64_t g_label_us[4];   /* when each was last found */
-
-/* sprite `id` in the game's picture, its coloured pixels' top left within LABEL_SEARCH of ax, ay (all of its coloured
- * pixels but a few, the rest may be under something) */
-static int find_label(const uint8_t *index, int id, int ax, int ay)
-{
-    int sw, sh, ix, iy, dx, dy, ink = 0, i;
-    const uint8_t *s = render_sprite_pixels(id, &sw, &sh);
-    if (s == NULL || !render_sprite_ink(id, &ix, &iy)) return 0;
-    for (i = 0; i < sw * sh; i++) ink += s[i] != 255 && s[i] != 0;
-    if (ink < 4) return 0;
-    for (dy = -LABEL_SEARCH; dy <= LABEL_SEARCH; dy++)
-        for (dx = -LABEL_SEARCH; dx <= LABEL_SEARCH; dx++) {
-            int x0 = ax + dx - ix, y0 = ay + dy - iy, x, y, hit = 0, miss = 0;
-            if (x0 < VIEW_LEFT || y0 < VIEW_TOP || x0 + sw > 640 || y0 + sh > VIEW_BOTTOM) continue;
-            for (y = 0; y < sh && miss * 8 <= ink; y++)
-                for (x = 0; x < sw; x++) {
-                    uint8_t c = s[y * sw + x];
-                    if (c == 255 || c == 0) continue;
-                    if (index[(y0 + y) * 640 + x0 + x] == c)
-                        hit++;
-                    else
-                        miss++;
-                }
-            if (hit * 8 >= ink * 7) return 1;
-        }
-    return 0;
-}
+/* the numbers over the squad's agents: the game's own routine (0x40dcb0 in Syndicate) draws, for each agent of the
+ * squad shown (+0x1d bit 2 set, +0xb bit 0 clear), the frame it keeps for it in label_frames (the selected agent's
+ * goes on to the next frame now and then: its number blinks), 16 pixels above where the agent stands; the frame
+ * of an object is drawn render_obj_dy (56) below that point */
+#define PED_SHOWN 0x1du
+#define PED_SHOWN_BIT 4u
+#define PED_GONE 0xbu
+#define LABEL_DY (-16 + VIEW_TOP - 56)
 
 /* the city on the playback clock (render.c), with the pointer and the squad's numbers over it */
 static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb)
@@ -1005,36 +979,15 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
             render_image(rgb, 640, 480, pal, RD32(entry), M[entry + 4u], M[entry + 5u], mx - 16, my - 16, VIEW_LEFT,
                          VIEW_TOP, 640, VIEW_BOTTOM);
     }
-    /* the numbers over the agents of the squad: drawn again over each agent where the smooth city has it, with the
-     * game's own sprites; whether the game shows a number, and in yellow (the selected agents) or red, is read from
-     * its picture: the number's sprite (each agent's digit is its own) looked for around where the game drew it
-     * (its picture may be a little behind its records); not found a moment, the last answer holds */
+    /* the numbers over the agents of the squad: the frames the game shows, over each agent where the smooth city
+     * has it */
     company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
     for (slot = 0; slot < 4; slot++) {
         uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
-        int ax, ay, bx, by, ix, iy, id;
-        int32_t vx = (int32_t)(int16_t)RD16(g_addrs->view) * 128, vy = (int32_t)(int16_t)RD16(g_addrs->view + 2u) * 128;
-        int32_t px = (int16_t)RD16(ped + PED_X), py = (int16_t)RD16(ped + PED_Y), pz = (int16_t)RD16(ped + PED_Z);
-        uint64_t now = host_time_us();
-        if (M[ped + PED_LOCATION] != 4) {
-            g_label[slot] = 0;
-            continue;
-        }
-        /* where the game drew the number: the top left of its coloured pixels */
-        ax = ((px - vx - (py - vy)) >> 3) + render_obj_dx + LABEL_DX;
-        ay = (((px - vx + py - vy) / 2 - pz) >> 3) + render_obj_dy + LABEL_DY;
-        if (find_label(index, LABEL_SPRITE + slot * 2, ax, ay))
-            g_label[slot] = 1, g_label_us[slot] = now;
-        else if (find_label(index, LABEL_SPRITE + slot * 2 + 1, ax, ay))
-            g_label[slot] = 2, g_label_us[slot] = now;
-        else if (now - g_label_us[slot] > LABEL_HOLD_US)
-            g_label[slot] = 0;
-        if (g_label[slot] == 0) continue;
+        int frame = RD16(g_addrs->label_frames + 2u * (uint32_t)slot), bx, by;
+        if (!(M[ped + PED_SHOWN] & PED_SHOWN_BIT) || (M[ped + PED_GONE] & 1u) || frame == 0) continue;
         if (!render_ped_place((int)M[company + COMPANY_SQUAD] + slot, &bx, &by)) continue;
-        id = LABEL_SPRITE + slot * 2 + (g_label[slot] == 1 ? 0 : 1);
-        if (!render_sprite_ink(id, &ix, &iy)) continue;
-        render_sprite(rgb, 640, 480, pal, id, bx + LABEL_DX - ix, by + LABEL_DY - iy, VIEW_LEFT, VIEW_TOP, 640,
-                      VIEW_BOTTOM);
+        render_frame(rgb, 640, 480, pal, frame, bx, by + LABEL_DY, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM);
     }
 }
 

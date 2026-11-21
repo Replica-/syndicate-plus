@@ -400,6 +400,12 @@ void render_image(uint32_t *rgb, int w, int h, const uint32_t *pal, uint32_t pix
     blit(&t, img, iw, ih, x, y, 0, 0);
 }
 
+void render_frame(uint32_t *rgb, int w, int h, const uint32_t *pal, int frame, int x, int y, int x0, int y0, int x1, int y1)
+{
+    Target t = {rgb, w, h, x0, y0, x1, y1, pal, 0};
+    draw_frame(&t, frame, x, y, (float)x, (float)y, 0);
+}
+
 const uint8_t *render_sprite_pixels(int id, int *w, int *h)
 {
     return sprite(id, w, h);
