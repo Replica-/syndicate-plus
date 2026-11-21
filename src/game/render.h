@@ -76,6 +76,8 @@ int render_ped_frame(uint32_t *rgb, int w, int h, const uint32_t *pal, int frame
 const uint8_t *render_sprite_pixels(int id, int *w, int *h);
 /* where person `ped` (its number in the level data) was drawn in the last frame; 0 when it was not */
 int render_ped_place(int ped, int *fx, int *fy);
+/* the point of the world at height z seen at sx, sy of the frame (the last city drawn) */
+void render_unproject(int sx, int sy, int32_t z, int32_t *x, int32_t *y);
 
 /* where the tiles and the frames go from their projected points (the calibration) */
 extern int render_tile_dx, render_tile_dy, render_obj_dx, render_obj_dy;

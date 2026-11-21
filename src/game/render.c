@@ -1130,6 +1130,15 @@ static int cmp_obj(const void *a, const void *b)
 static int16_t g_ped_fx[256], g_ped_fy[256];
 static uint8_t g_ped_drawn[256];
 
+void render_unproject(int sx, int sy, int32_t z, int32_t *x, int32_t *y)
+{
+    /* the unzoomed picture, then the projection backwards (project_f), the view of the last city drawn */
+    float lx = g_zcx + ((float)sx - g_zcx) / (float)g_zoom, ly = g_zcy + ((float)sy - g_zcy) / (float)g_zoom;
+    float a = 8.0f * (lx - (float)render_obj_dx), b = 2.0f * (8.0f * (ly - (float)render_obj_dy) + (float)z);
+    *x = (int32_t)floorf((a + b) / 2.0f - g_vfx) + g_vx;
+    *y = (int32_t)floorf((b - a) / 2.0f - g_vfy) + g_vy;
+}
+
 int render_ped_place(int ped, int *fx, int *fy)
 {
     if (ped < 0 || ped >= 256 || !g_ped_drawn[ped]) return 0;

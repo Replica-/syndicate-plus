@@ -375,6 +375,8 @@ static void cheat_names(void)
 #define SC_D 0x20u
 #define SC_B 0x30u                /* held in a mission: see inside the buildings */
 static volatile int g_see_inside;
+static int g_click_sx, g_click_sy; /* where on the picture the last click was (B held: the order goes to the floor seen
+                                    * there) */
 /* the light editor (Ctrl+L in a mission): its keys, then what they do to the tile under the pointer */
 #define SC_CTRL 0x1du
 #define SC_L 0x26u
@@ -1627,6 +1629,7 @@ int game_mouse_buttons(int buttons)
 {
     int pressed = (buttons & 1) && !(g_menu_buttons & 1);
     g_menu_buttons = buttons;
+    if (pressed && g_addrs != NULL && g_view_on) canvas_mouse(&g_click_sx, &g_click_sy);
     if (pressed && g_addrs != NULL && config_shown()) config_click();
     if (g_menu) {
         if (pressed) g_menu_click = 1;
@@ -1929,6 +1932,20 @@ static void watch_move_orders(void)
             g_marker[1] = (int16_t)ty;
             g_marker[2] = (int16_t)RD16(ped + PED_TARGET + 4u);
             g_marker_us = host_time_us();
+            /* B held: the floor of the squad's level seen where the player clicked, through the buildings (as
+             * FreeSynd's), when one can walk there */
+            if (g_see_inside && g_cut_level >= 1) {
+                int32_t fx, fy;
+                render_unproject(g_click_sx, g_click_sy, g_cut_level * 128, &fx, &fy);
+                if (path_walkable(fx >> 8, fy >> 8, g_cut_level)) {
+                    g_marker[0] = (int16_t)fx;
+                    g_marker[1] = (int16_t)fy;
+                    g_marker[2] = (int16_t)(g_cut_level * 128);
+                    WR16(ped + PED_TARGET, (uint16_t)fx);
+                    WR16(ped + PED_TARGET + 2u, (uint16_t)fy);
+                    WR16(ped + PED_TARGET + 4u, (uint16_t)(g_cut_level * 128));
+                }
+            }
             if (g_routes_on && g_marker_us != 0)
                 route_order(slot, ped, g_marker[0], g_marker[1], g_marker[2]);
             tx = RD16(ped + PED_TARGET);
