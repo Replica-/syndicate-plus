@@ -245,6 +245,17 @@ void rt_mouse_buttons(int buttons)
     host_unlock();
 }
 
+void mouse_fraction(int *fx, int *fy)
+{
+    *fx = g_mfx;
+    *fy = g_mfy;
+}
+
+void rt_mouse_wheel(int notches)
+{
+    game_wheel(notches);
+}
+
 void mouse_get(int *x, int *y, int *buttons)
 {
     if (g_mouse_set) {

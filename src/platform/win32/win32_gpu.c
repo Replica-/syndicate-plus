@@ -127,6 +127,7 @@ static HostCityQuad *g_city_quads;
 static int g_city_n, g_city_cap, g_city_on;
 static uint32_t g_city_pal[256];
 static int g_city_rect[4];
+static float g_city_scale = 1.0f;
 
 static void release(IUnknown **p)
 {
@@ -180,7 +181,8 @@ void gpu_city_image(int id, int w, int h, const uint8_t *pixels)
     ReleaseSRWLockExclusive(&g_city_lock);
 }
 
-void gpu_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1)
+void gpu_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
+                    float scale)
 {
     AcquireSRWLockExclusive(&g_city_lock);
     if (n > g_city_cap) {
@@ -199,6 +201,7 @@ void gpu_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, i
     g_city_rect[1] = y0;
     g_city_rect[2] = x1;
     g_city_rect[3] = y1;
+    g_city_scale = scale > 0.05f ? scale : 1.0f;
     g_city_on = 1;
     ReleaseSRWLockExclusive(&g_city_lock);
 }
@@ -461,7 +464,7 @@ static void draw_city(RECT dst, int fw, int fh)
     CityConsts cc;
     UINT stride = sizeof(CityVertex), offset = 0;
     int i, n, nv = 0;
-    float sx = (float)(dst.right - dst.left) / (float)fw, sy = (float)(dst.bottom - dst.top) / (float)fh;
+    float sx = (float)(dst.right - dst.left) / (float)fw, sy = (float)(dst.bottom - dst.top) / (float)fh, zoom;
     AcquireSRWLockExclusive(&g_city_lock);
     if (!g_city_on) {
         ReleaseSRWLockExclusive(&g_city_lock);
@@ -490,6 +493,7 @@ static void draw_city(RECT dst, int fw, int fh)
     }
     ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_paltex, 0, NULL, g_city_pal, 256 * 4, 0);
     n = g_city_n;
+    zoom = g_city_scale;
     if (n * 6 > verts_cap) {
         CityVertex *v = (CityVertex *)realloc(verts, sizeof *v * (size_t)n * 6);
         if (v == NULL) {
@@ -506,8 +510,8 @@ static void draw_city(RECT dst, int fw, int fh)
         CityVertex c[4];
         int k;
         if (im->w == 0) continue;
-        x1 = x0 + (float)im->w;
-        y1 = y0 + (float)im->h;
+        x1 = x0 + (float)im->w * zoom;
+        y1 = y0 + (float)im->h * zoom;
         u0 = q->flip ? (float)(im->ax + im->w) : (float)im->ax;
         u1 = q->flip ? (float)im->ax : (float)(im->ax + im->w);
         for (k = 0; k < 4; k++) {
@@ -550,7 +554,7 @@ static void draw_city(RECT dst, int fw, int fh)
     ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_city_vb, 0);
     cc.frame_size[0] = (float)fw;
     cc.frame_size[1] = (float)fh;
-    cc.scale = sx > 1.0f ? sx : 1.0f;
+    cc.scale = sx * zoom > 1.0f ? sx * zoom : 1.0f; /* window pixels a texel */
     cc.pad = 0;
     if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_city_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
         memcpy(map.pData, &cc, sizeof cc);

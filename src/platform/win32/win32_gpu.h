@@ -20,6 +20,7 @@ void gpu_present(const uint32_t *pixels, int w, int h, RECT dst, int sharp);
  * thread */
 void gpu_city_reset(void);
 void gpu_city_image(int id, int w, int h, const uint8_t *pixels);
-void gpu_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1);
+void gpu_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
+                    float scale);
 /* no city (a frame without one) */
 void gpu_city_off(void);

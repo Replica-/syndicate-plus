@@ -169,7 +169,7 @@ static void ini_set(const char *section, const char *key, const char *value)
 }
 
 /* ==== the picture ======================================================================================= */
-#define FRAME_MAX_W 640
+#define FRAME_MAX_W HOST_CANVAS_MAX
 #define FRAME_MAX_H 480
 static os_unfair_lock g_frame_lock = OS_UNFAIR_LOCK_INIT;
 static uint32_t g_frame[FRAME_MAX_W * FRAME_MAX_H];
@@ -190,6 +190,12 @@ int host_display_timing(uint64_t *vblank_us, uint64_t *period_us)
     return 0;
 }
 
+/* 4:3 here (a wider picture: to do) */
+int host_canvas_width(void)
+{
+    return 640;
+}
+
 /* the city is always in the frame here */
 int host_city_gpu(void)
 {
@@ -208,8 +214,10 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels)
     (void)pixels;
 }
 
-void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1)
+void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
+                     float scale)
 {
+    (void)scale;
     (void)quads;
     (void)n;
     (void)palette;

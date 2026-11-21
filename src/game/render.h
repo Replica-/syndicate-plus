@@ -22,6 +22,9 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
 void render_set_view(int own, int32_t vx, int32_t vy);
 /* the same with fractions of a world unit (the GPU draws between pixels) */
 void render_set_view_f(double vx, double vy);
+/* the city drawn `zoom` times its size about the point cx, cy of the frame (render_project and render_ped_place
+ * give the zoomed places) */
+void render_set_zoom(double zoom, float cx, float cy);
 /* a tick of the mission: where things are now */
 void render_tick(uint64_t now_us);
 /* a new mission: no tick before */
@@ -37,8 +40,10 @@ void render_image(uint32_t *rgb, int w, int h, const uint32_t *pal, uint32_t pix
                   int y0, int x1, int y1);
 /* the top left of the coloured pixels of sprite `id` (not black, not transparent); 0 when it has none */
 int render_sprite_ink(int id, int *x, int *y);
-/* draws frame `frame` (HFRA: its elements) with its anchor at x, y, inside x0..x1, y0..y1 */
-void render_frame(uint32_t *rgb, int w, int h, const uint32_t *pal, int frame, int x, int y, int x0, int y0, int x1, int y1);
+/* draws frame `frame` (HFRA: its elements) anchored `dy` pixels below where ped `ped` was drawn (unzoomed), each
+ * element at its zoomed place but at its own size, inside x0..x1, y0..y1; 0 if the ped was not drawn */
+int render_ped_frame(uint32_t *rgb, int w, int h, const uint32_t *pal, int frame, int ped, int dy, int x0, int y0, int x1,
+                     int y1);
 /* sprite `id` as palette indices (255 transparent), w x h; NULL if there is none */
 const uint8_t *render_sprite_pixels(int id, int *w, int *h);
 /* where person `ped` (its number in the level data) was drawn in the last frame; 0 when it was not */

@@ -728,13 +728,24 @@ void pic_eoi(int master)
 
 static void present(void)
 {
-    static uint32_t rgb[640 * 480], prev[640 * 480];
+    static uint32_t rgb[HOST_CANVAS_MAX * 480], prev[HOST_CANVAS_MAX * 480];
     static int prev_n;
     uint64_t now = host_time_us();
-    int w = 0, h = 0, i, moved;
+    int w = 0, h = 0, i, moved, gw;
     if (vga_render(g_frame, &w, &h, g_pal)) {
-        /* true colour from here on */
-        for (i = 0; i < w * h; i++) rgb[i] = g_pal[g_frame[i]];
+        /* true colour from here on; in missions the frame may be wider than the game's (its rows at the left) */
+        gw = w;
+        w = h == 480 ? game_canvas_width(gw, h) : gw;
+        if (w < gw || w > HOST_CANVAS_MAX) w = gw;
+        if (w == gw) {
+            for (i = 0; i < w * h; i++) rgb[i] = g_pal[g_frame[i]];
+        } else {
+            int x, y;
+            for (y = 0; y < h; y++) {
+                for (x = 0; x < gw; x++) rgb[y * w + x] = g_pal[g_frame[y * gw + x]];
+                for (; x < w; x++) rgb[y * w + x] = 0;
+            }
+        }
         moved = game_overlay(g_frame, g_pal, rgb, w, h);
         /* the frames shown that differ from the one before: the frames a second one sees (the city drawn by the
          * GPU under the frame is not in its pixels: the overlay tells when it moved) */

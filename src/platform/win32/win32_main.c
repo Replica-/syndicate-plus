@@ -77,7 +77,7 @@ static wchar_t g_ini[MAX_PATH * 2]; /* Syndicate64.ini: next to the program, els
 static int g_gpu; /* the picture is drawn with Direct3D 11 (win32_gpu.c); else with GDI */
 
 /* ==== the picture ======================================================================================= */
-#define FRAME_MAX_W 640
+#define FRAME_MAX_W HOST_CANVAS_MAX
 #define FRAME_MAX_H 480
 static SRWLOCK g_frame_lock = SRWLOCK_INIT;
 static uint32_t g_frame[FRAME_MAX_W * FRAME_MAX_H];
@@ -105,9 +105,10 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels)
     gpu_city_image(image, w, h, pixels);
 }
 
-void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1)
+void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
+                     float scale)
 {
-    gpu_city_frame(quads, n, palette, x0, y0, x1, y1);
+    gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale);
     g_frame_city = 1;
 }
 
@@ -131,20 +132,30 @@ void host_present(const uint32_t *pixels, int w, int h)
     if (g_hwnd != NULL) InvalidateRect(g_hwnd, NULL, FALSE);
 }
 
-/* the largest 4:3 rectangle in the client area, centred */
+/* the client area's size (any thread) */
+static volatile LONG g_client_w = 640, g_client_h = 480;
+
+int host_canvas_width(void)
+{
+    LONG cw = g_client_w, ch = g_client_h;
+    int w = ch > 0 ? (int)((long long)cw * 480 / ch) & ~1 : 640;
+    return w < 640 ? 640 : w > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : w;
+}
+
+/* the largest rectangle of the frame's shape (4:3, or wider in missions) in the client area, centred */
 static RECT picture_rect(HWND h)
 {
     RECT c, r;
-    int cw, ch, w, hh;
+    int cw, ch, w, hh, aw = g_fh == 480 && g_fw > 640 ? g_fw : 4, ah = g_fh == 480 && g_fw > 640 ? 480 : 3;
     GetClientRect(h, &c);
     cw = c.right - c.left;
     ch = c.bottom - c.top;
-    if (cw * 3 >= ch * 4) {
+    if ((long long)cw * ah >= (long long)ch * aw) {
         hh = ch;
-        w = ch * 4 / 3;
+        w = (int)((long long)ch * aw / ah);
     } else {
         w = cw;
-        hh = cw * 3 / 4;
+        hh = (int)((long long)cw * ah / aw);
     }
     r.left = (cw - w) / 2;
     r.top = (ch - hh) / 2;
@@ -1046,6 +1057,10 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         return 0;
     case WM_SIZE:
         g_minimized = w == SIZE_MINIMIZED;
+        if (!g_minimized && LOWORD(l) > 0 && HIWORD(l) > 0) {
+            InterlockedExchange(&g_client_w, LOWORD(l));
+            InterlockedExchange(&g_client_h, HIWORD(l));
+        }
         if (g_gpu && !g_minimized) gpu_resize(LOWORD(l), HIWORD(l));
         update_pause();
         InvalidateRect(h, NULL, FALSE);
@@ -1174,6 +1189,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         return 0;
     case WM_MOUSEMOVE:
         mouse_pos(h, l);
+        return 0;
+    case WM_MOUSEWHEEL:
+        rt_mouse_wheel(GET_WHEEL_DELTA_WPARAM(w) / WHEEL_DELTA);
         return 0;
     case WM_LBUTTONDOWN:
     case WM_LBUTTONUP:

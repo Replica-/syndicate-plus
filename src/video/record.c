@@ -397,7 +397,7 @@ void record_wait(void)
 void record_frame(const uint32_t *pixels, int w, int h, uint64_t now_us)
 {
     int64_t expected;
-    int count, x, y;
+    int count, x, y, top = 0, rows = VID_H;
     Frame *f;
     if (!g_recording || w <= 0 || h <= 0) return;
     if (g_nframes == 0) g_start_us = now_us;
@@ -414,10 +414,16 @@ void record_frame(const uint32_t *pixels, int w, int h, uint64_t now_us)
     unlock(&g_lock);
     f = (Frame *)malloc(sizeof *f);
     if (f == NULL) return;
-    /* nearest pixel to 640x480 (a 4:3 picture whatever the game's resolution) */
-    for (y = 0; y < VID_H; y++) {
-        const uint32_t *row = pixels + (size_t)(y * h / VID_H) * (size_t)w;
-        uint8_t *o = f->rgb + (size_t)y * VID_W * 3;
+    /* nearest pixel to 640x480 (a 4:3 picture whatever the game's resolution); a wider picture (480 lines, more than
+     * 640 across: a mission in a wide window) keeps its shape, with black above and below */
+    if (h == 480 && w > 640) {
+        rows = VID_W * h / w;
+        top = (VID_H - rows) / 2;
+    }
+    memset(f->rgb, 0, sizeof f->rgb);
+    for (y = 0; y < rows; y++) {
+        const uint32_t *row = pixels + (size_t)(y * h / rows) * (size_t)w;
+        uint8_t *o = f->rgb + (size_t)(y + top) * VID_W * 3;
         for (x = 0; x < VID_W; x++) {
             uint32_t p = row[x * w / VID_W];
             o[x * 3] = (uint8_t)(p >> 16);

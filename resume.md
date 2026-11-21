@@ -81,10 +81,23 @@ the count so the game's own wait passes. Snapshots are stamped with the slot tim
 Measured: 100% of frames within 10% of the same speed, 0 stalls (was 66%, 7). `SYND_PACE=off` gives the game's own
 pace. Addresses for all six programs are in the GameAddrs table (frame_wait, speed, wait_count).
 
+## Done: widescreen and zoom
+
+In missions the frame is as wide as the window shows a 480-line picture (`host_canvas_width`, 640..1280; headless
+`--wide W`): the game's 640 x 480 at the left, the city filling the rest (`game_canvas_width` in additions.c,
+`present` in core.c). The wheel zooms the city 0.5x..1.5x about the middle of the map part (`game_wheel`,
+`render_set_zoom`; the GPU scales its quads, the CPU path draws nearest-pixel). The game's camera is kept with its
+map window's middle at this picture's middle (`centre_shift`) and nudged at each tick so the city under the
+pointer is inside that window; `game_mouse_filter` gives the game that point (`unzoom`, `game_point`). The camera
+stays within the mission's limits (view + 0x1be32: the playable area, not the map's size), so a click beyond them
+(seen when wide or zoomed out at an edge) goes to the nearest point the game takes. The squad numbers come from
+the game's state (its routine 0x40dcb0: frames at label_frames, shown when +0x1d bit 2 and not +0xb bit 0), drawn
+at the zoomed place at their own size. Recordings letterbox wide frames. Test: `wide_zoom` (19 tests).
+
 ## Still to do after that
 
-Widescreen and mouse-wheel zoom (0.6x) with click mapping (the renderer can draw any rectangle at any view);
-lighting and time of day, hold B to see inside buildings, traffic-light glow, light editor; the 16 extra company
-colours with a colour/logo picker; instant click feedback (optional). Loose ends: blood spray on a real hit and the
+Lighting and time of day, hold B to see inside buildings, traffic-light glow, light editor; the 16 extra company
+colours with a colour/logo picker; instant click feedback (optional); improved path finding (the user asked for it
+to be on the list; it changes how agents move, so say what it would change and ask before doing it). Loose ends: blood spray on a real hit and the
 corpse fix on a real death are unchecked; the macOS front end has no menu items for the new features and was not
 built here; README.md needs a note on the GPU city and the playback clock.

@@ -65,6 +65,10 @@ uint32_t game_key_filter(uint32_t scancode, int down);
 int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h);
 /* the game layer may move the mouse position the game reads (any thread; x, y in the game's mouse range) */
 void game_mouse_filter(int *x, int *y);
+/* the width of the frame made from the game's w x h (wider in missions: host_canvas_width) */
+int game_canvas_width(int w, int h);
+/* the mouse wheel (game thread) */
+void game_wheel(int notches);
 /* when the frame being made will be shown (host_time_us's clock) */
 extern uint64_t rt_display_us;
 RT_NORETURN void rt_exit_process(int code);
@@ -133,6 +137,8 @@ uint16_t kbd_bios_get(void);
 uint16_t kbd_bios_shift(void);
 
 void mouse_get(int *x, int *y, int *buttons);
+/* where the mouse is on the picture shown: fractions 0..65535 across and down */
+void mouse_fraction(int *fx, int *fy);
 void mouse_take_motion(int *dx, int *dy);
 int mouse_used_swap(int used); /* sets whether the running program uses the mouse; returns the old value */
 int mouse_take_press(int button, int *count, int *x, int *y);

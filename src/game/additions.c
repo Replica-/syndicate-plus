@@ -379,6 +379,15 @@ static int in_mission(void)
     return g_tick_us != 0 && host_time_us() - g_tick_us < 200000u;
 }
 
+static int renderer_on(void);
+
+int game_canvas_width(int w, int h)
+{
+    if (g_addrs == NULL || w != 640 || h != 480 || !in_mission() || !renderer_on() || getenv("SYND_RENDER_TEST") != NULL)
+        return w;
+    return host_canvas_width();
+}
+
 uint32_t game_key_filter(uint32_t sc, int down)
 {
     uint32_t k = sc & 0xFFu;
@@ -439,24 +448,101 @@ static void game_camera(int32_t *x, int32_t *y)
     *y = (int16_t)RD16(g_addrs->view + 2u);
 }
 
+/* ---- the picture in missions: as wide as the window shows it (host_canvas_width), the city zoomed with the wheel
+ * about the middle of the map's part.  The game still sees its own 640 x 480 picture: its camera is kept where the
+ * middle of its map window (x 128..640) is the middle of this picture, nudged at each tick so that the city under
+ * the pointer is in that window, and the mouse it reads is moved to that point (game_mouse_filter). ---- */
+#define MAP_LEFT 128
+#define MAP_TOP 40
+#define MAP_BOTTOM 440
+#define MAP_CY 240.0
+#define GAME_MAP_CX 384.0   /* the middle of the game's map window */
+#define ZOOM_MIN 0.5
+#define ZOOM_MAX 1.5
+#define ZOOM_STEP 1.15      /* a notch of the wheel */
+#define MOUSE_MARGIN 8      /* the game's mouse kept this far inside its map window */
+#define NUDGE_MARGIN 24     /* the camera puts the city under the pointer at least this far inside it */
+static int g_cw = 640;      /* the width of the picture */
+static double g_zoom = 1.0, g_zoom_target = 1.0;
+
+static double map_cx(void)
+{
+    return (MAP_LEFT + g_cw) / 2.0;
+}
+
+/* the world units from the view to the camera that puts the middle of this picture in the middle of the game's */
+static void centre_shift(double *dx, double *dy)
+{
+    double e = map_cx() - GAME_MAP_CX; /* screen right: world (+4, -4) a pixel */
+    *dx = 4.0 * e;
+    *dy = -4.0 * e;
+}
+
+/* the mouse on this picture */
+static void canvas_mouse(int *sx, int *sy)
+{
+    int fx, fy, mx, my;
+    mouse_fraction(&fx, &fy);
+    mouse_get(&mx, &my, NULL);
+    *sx = (int)((long long)fx * g_cw / 65536);
+    *sy = my + MAP_TOP;
+}
+
+/* a point of this picture on the city as it would be unzoomed */
+static void unzoom(double sx, double sy, double *lx, double *ly)
+{
+    *lx = map_cx() + (sx - map_cx()) / g_zoom;
+    *ly = MAP_CY + (sy - MAP_CY) / g_zoom;
+}
+
+/* where the game's mouse (its map window: x 128..639, y 0..399) has the point lx, ly of the unzoomed picture,
+ * with its camera at world wx, wy */
+static void game_point(double lx, double ly, double wx, double wy, double *gx, double *gy)
+{
+    double dx = g_view_x - wx, dy = g_view_y - wy;
+    *gx = lx + (dx - dy) / 8.0;
+    *gy = ly - MAP_TOP + (dx + dy) / 16.0;
+}
+
+static double clampd(double v, double lo, double hi)
+{
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+void game_wheel(int notches)
+{
+    if (g_addrs == NULL || !in_mission() || !g_view_on) return;
+    g_zoom_target = clampd(g_zoom_target * pow(ZOOM_STEP, notches), ZOOM_MIN, ZOOM_MAX);
+}
+
 /* every frame: the keys held and the pointer at the edges move the view */
 static void move_view(void)
 {
     uint64_t now = host_time_us();
-    double dt = g_view_us != 0 && now > g_view_us ? (double)(now - g_view_us) / 1e6 : 0.0, sx = 0, sy = 0;
+    double dt = g_view_us != 0 && now > g_view_us ? (double)(now - g_view_us) / 1e6 : 0.0, sx = 0, sy = 0, shx, shy;
     int mx, my;
     if (dt > 0.1) dt = 0.1;
     g_view_us = now;
     if (!g_view_on) return;
-    mouse_get(&mx, &my, NULL);
-    sx = (g_pan[1] || mx >= 639 - EDGE_PX ? 1 : 0) - (g_pan[0] || mx <= EDGE_PX ? 1 : 0);
-    sy = (g_pan[3] || my >= 399 - EDGE_PX ? 1 : 0) - (g_pan[2] || my <= EDGE_PX ? 1 : 0);
+    /* the zoom eases to where the wheel set it */
+    if (g_zoom != g_zoom_target) {
+        g_zoom += (g_zoom_target - g_zoom) * (dt * 14.0 > 1.0 ? 1.0 : dt * 14.0);
+        if (fabs(g_zoom - g_zoom_target) < 0.002) g_zoom = g_zoom_target;
+    }
+    render_set_zoom(g_zoom, (float)map_cx(), (float)MAP_CY);
+    canvas_mouse(&mx, &my);
+    sx = (g_pan[1] || mx >= g_cw - 1 - EDGE_PX ? 1 : 0) - (g_pan[0] || mx <= EDGE_PX ? 1 : 0);
+    sy = (g_pan[3] || my >= MAP_BOTTOM - 1 - EDGE_PX ? 1 : 0) - (g_pan[2] || my <= MAP_TOP + EDGE_PX ? 1 : 0);
     if (sx != 0 || sy != 0) {
-        /* screen right is world (+1, -1) at 1/4 px a unit, screen down (+1, +1) at 1/8 */
-        double px = sx * PAN_PX_S * dt, py = sy * PAN_PX_S * dt;
+        /* screen right is world (+1, -1) at 1/4 px a unit, screen down (+1, +1) at 1/8 (the same speed on the
+         * screen at any zoom) */
+        double px = sx * PAN_PX_S * dt / g_zoom, py = sy * PAN_PX_S * dt / g_zoom;
         double nx = g_view_x + px * 2.0 + py * 4.0, ny = g_view_y - px * 2.0 + py * 4.0;
         /* not beyond the game's limits for its camera (as the game stops scrolling there) */
-        int32_t cx = (int32_t)((nx + 64.0) / 128.0), cy = (int32_t)((ny + 64.0) / 128.0);
+        int32_t cx, cy;
+        centre_shift(&shx, &shy);
+        cx = (int32_t)((nx + shx + 64.0) / 128.0);
+        cy = (int32_t)((ny + shy + 64.0) / 128.0);
         uint32_t lim = g_addrs->view + VIEW_LIMITS;
         if (cx >= (int16_t)RD16(lim) && cx <= (int16_t)RD16(lim + 4u) && cy >= (int16_t)RD16(lim + 2u) &&
             cy <= (int16_t)RD16(lim + 6u)) {
@@ -469,7 +555,7 @@ static void move_view(void)
         g_view_x += (g_glide_x - g_view_x) * k;
         g_view_y += (g_glide_y - g_view_y) * k;
         if (fabs(g_glide_x - g_view_x) < 2.0 && fabs(g_glide_y - g_view_y) < 2.0) {
-            g_view_x = g_glide_x; /* there: exactly where the game's camera is */
+            g_view_x = g_glide_x; /* there: exactly where the game's camera has it */
             g_view_y = g_glide_y;
             g_gliding = 0;
         }
@@ -483,10 +569,13 @@ static void sync_camera(void)
 {
     int32_t cx, cy;
     uint32_t args[2];
+    double shx, shy, wx, wy;
+    int mx, my;
+    centre_shift(&shx, &shy);
     game_camera(&cx, &cy);
     if (!g_view_on) {
-        g_view_x = cx * 128.0;
-        g_view_y = cy * 128.0;
+        g_view_x = cx * 128.0 - shx;
+        g_view_y = cy * 128.0 - shy;
         g_cam_set_x = cx;
         g_cam_set_y = cy;
         g_view_on = 1;
@@ -495,15 +584,29 @@ static void sync_camera(void)
         return;
     }
     if (abs(cx - g_cam_set_x) >= FOLLOW_UNITS || abs(cy - g_cam_set_y) >= FOLLOW_UNITS) {
-        g_glide_x = cx * 128.0;
-        g_glide_y = cy * 128.0;
+        g_glide_x = cx * 128.0 - shx;
+        g_glide_y = cy * 128.0 - shy;
         g_gliding = 1;
         g_cam_set_x = cx;
         g_cam_set_y = cy;
         return;
     }
-    args[0] = (uint32_t)(int32_t)((g_view_x + 64.0) / 128.0);
-    args[1] = (uint32_t)(int32_t)((g_view_y + 64.0) / 128.0);
+    /* the camera with the middle of the game's map window in the middle of this picture, moved so the city under
+     * the pointer is inside that window (where the game can be given the mouse) */
+    wx = g_view_x + shx;
+    wy = g_view_y + shy;
+    canvas_mouse(&mx, &my);
+    if (mx >= MAP_LEFT && my >= MAP_TOP && my < MAP_BOTTOM) {
+        double lx, ly, gx, gy, ex, ey;
+        unzoom(mx, my, &lx, &ly);
+        game_point(lx, ly, wx, wy, &gx, &gy);
+        ex = gx - clampd(gx, MAP_LEFT + NUDGE_MARGIN, 639 - NUDGE_MARGIN);
+        ey = gy - clampd(gy, NUDGE_MARGIN, 399 - NUDGE_MARGIN);
+        wx += 4.0 * ex + 8.0 * ey;
+        wy += 8.0 * ey - 4.0 * ex;
+    }
+    args[0] = (uint32_t)(int32_t)floor((wx + 64.0) / 128.0);
+    args[1] = (uint32_t)(int32_t)floor((wy + 64.0) / 128.0);
     if ((int32_t)args[0] != cx || (int32_t)args[1] != cy) guest_call(g_addrs->set_view, args, 2);
     game_camera(&cx, &cy);
     g_cam_set_x = cx;
@@ -513,18 +616,21 @@ static void sync_camera(void)
 void game_mouse_filter(int *x, int *y)
 {
     int32_t cx, cy;
-    double dx, dy;
-    if (!g_view_on || g_addrs == NULL || !in_mission() || *x < 128 /* the map's left edge */ || *y < 0 || *y >= 400) return;
-    /* a point of the city seen at x, y from the view is where the game's camera puts it this much further */
+    int fx, fy, sx;
+    double lx, ly, gx, gy;
+    if (!g_view_on || g_addrs == NULL || !in_mission() || *y < 0 || *y >= 400) return;
+    mouse_fraction(&fx, &fy);
+    sx = (int)((long long)fx * g_cw / 65536);
+    if (sx < MAP_LEFT) {
+        *x = sx; /* the side panel: where it is on this picture */
+        return;
+    }
+    /* the point of the city under the pointer, where the game's camera has it */
+    unzoom(sx, *y + MAP_TOP, &lx, &ly);
     game_camera(&cx, &cy);
-    dx = g_view_x - cx * 128.0;
-    dy = g_view_y - cy * 128.0;
-    *x += (int)((dx - dy) / 8.0);
-    *y += (int)((dx + dy) / 16.0);
-    if (*x < 128) *x = 128;
-    if (*x > 639) *x = 639;
-    if (*y < 0) *y = 0;
-    if (*y > 399) *y = 399;
+    game_point(lx, ly, cx * 128.0, cy * 128.0, &gx, &gy);
+    *x = (int)floor(clampd(gx, MAP_LEFT + MOUSE_MARGIN, 639 - MOUSE_MARGIN));
+    *y = (int)floor(clampd(gy, MOUSE_MARGIN, 399 - MOUSE_MARGIN));
 }
 
 static void centre_on_agent(int slot)
@@ -541,9 +647,11 @@ static void centre_on_agent(int slot)
     if (g_view_on) {
         /* this program's view glides there */
         int32_t cx, cy;
+        double shx, shy;
         game_camera(&cx, &cy);
-        g_glide_x = cx * 128.0;
-        g_glide_y = cy * 128.0;
+        centre_shift(&shx, &shy);
+        g_glide_x = cx * 128.0 - shx;
+        g_glide_y = cy * 128.0 - shy;
         g_gliding = 1;
         g_cam_set_x = cx;
         g_cam_set_y = cy;
@@ -562,8 +670,6 @@ static int32_t g_marker[3];           /* x, y, z of the last move order */
 static uint64_t g_marker_us;          /* when it was given (0: none) */
 
 /* where a point of the world is in the frame, as the game draws it (its sprite placement) */
-static int renderer_on(void);
-
 static void world_to_frame(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
 {
     if (renderer_on()) {
@@ -692,7 +798,7 @@ static void solid_selected_boxes(const uint8_t *pix, const uint32_t *pal, uint32
     static uint8_t mask[(PANEL_Y1 - PANEL_Y0) * (PANEL_X1 - PANEL_X0)];
     static uint16_t pairs[256][256];
     int x, y, a = -1, b = -1, best = 0;
-#define PX(x, y) pix[(y) * w + (x)]
+#define PX(x, y) pix[(y) * 640 + (x)] /* the game's picture: 640 wide */
 #define MK(x, y) mask[((y) - PANEL_Y0) * (PANEL_X1 - PANEL_X0) + (x) - PANEL_X0]
     memset(mask, 0, sizeof mask);
     memset(pairs, 0, sizeof pairs);
@@ -966,28 +1072,27 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
     /* on the GPU the map's part of the frame is see-through, the city drawn under it at the display's resolution */
     gpu = host_city_gpu();
     for (y = VIEW_TOP; y < VIEW_BOTTOM; y++)
-        for (x = VIEW_LEFT; x < 640; x++) rgb[y * 640 + x] = gpu ? 0xFF000000u : 0;
-    render_city(gpu ? NULL : rgb, 640, 480, pal, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM, rt_display_us);
+        for (x = VIEW_LEFT; x < g_cw; x++) rgb[y * g_cw + x] = gpu ? 0xFF000000u : 0;
+    render_city(gpu ? NULL : rgb, g_cw, 480, pal, VIEW_LEFT, VIEW_TOP, g_cw, VIEW_BOTTOM, rt_display_us);
     /* the pointer: the game's (the entry of its pointer table it uses), drawn where the mouse is now, as the game
      * draws it (its top left corner 16 pixels up and left of the mouse; the game's mouse runs over its 400 lines
      * from line 40 of the frame); over the side panel and the bars the game's own picture shows it */
-    mouse_get(&mx, &my, NULL);
-    my += VIEW_TOP;
+    canvas_mouse(&mx, &my);
     {
         uint32_t entry = RD32(g_addrs->data + POINTER_CURRENT(g_addrs->ar));
         if (entry != 0)
-            render_image(rgb, 640, 480, pal, RD32(entry), M[entry + 4u], M[entry + 5u], mx - 16, my - 16, VIEW_LEFT,
-                         VIEW_TOP, 640, VIEW_BOTTOM);
+            render_image(rgb, g_cw, 480, pal, RD32(entry), M[entry + 4u], M[entry + 5u], mx - 16, my - 16, VIEW_LEFT,
+                         VIEW_TOP, g_cw, VIEW_BOTTOM);
     }
     /* the numbers over the agents of the squad: the frames the game shows, over each agent where the smooth city
      * has it */
     company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
     for (slot = 0; slot < 4; slot++) {
         uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
-        int frame = RD16(g_addrs->label_frames + 2u * (uint32_t)slot), bx, by;
+        int frame = RD16(g_addrs->label_frames + 2u * (uint32_t)slot);
         if (!(M[ped + PED_SHOWN] & PED_SHOWN_BIT) || (M[ped + PED_GONE] & 1u) || frame == 0) continue;
-        if (!render_ped_place((int)M[company + COMPANY_SQUAD] + slot, &bx, &by)) continue;
-        render_frame(rgb, 640, 480, pal, frame, bx, by + LABEL_DY, VIEW_LEFT, VIEW_TOP, 640, VIEW_BOTTOM);
+        render_ped_frame(rgb, g_cw, 480, pal, frame, (int)M[company + COMPANY_SQUAD] + slot, LABEL_DY, VIEW_LEFT, VIEW_TOP,
+                         g_cw, VIEW_BOTTOM);
     }
 }
 
@@ -998,7 +1103,8 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     uint64_t age;
     int fx, fy, hw, alpha;
     render_gpu_changed = 0;
-    if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return 0;
+    if (g_addrs == NULL || w < 640 || h != 480 || !in_mission()) return 0;
+    g_cw = w;
     if (getenv("SYND_RENDER_TEST") != NULL) {
         render_test(rgb, palette);
     } else if (renderer_on()) {

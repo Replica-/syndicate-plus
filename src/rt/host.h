@@ -24,6 +24,10 @@ void host_sleep_us(uint32_t us);
  * what this version draws over them). Every VGA mode the games use fills a 4:3 screen (320x200 has tall
  * pixels). Called on the game thread; the platform copies what it needs before returning. */
 void host_present(const uint32_t *pixels, int w, int h);
+/* the width of a 480-line picture as wide as the display shows it (640: 4:3); in missions the frames may be that
+ * wide (the city fills the rest), at most HOST_CANVAS_MAX */
+#define HOST_CANVAS_MAX 1280
+int host_canvas_width(void);
 
 /* audio: the core produces signed 16-bit stereo at host_audio_rate() and pushes it here */
 int host_audio_rate(void);
@@ -58,8 +62,9 @@ int host_city_gpu(void);
 void host_city_reset(void);
 void host_city_image(int image, int w, int h, const uint8_t *pixels);
 /* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, with the
- * frame's palette */
-void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1);
+ * frame's palette, each image `scale` times its size (the zoom) */
+void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
+                     float scale);
 
 /* the original game files built into the program (a pack written by tools/pack_game.py), used when no game
  * folder is given; NULL when the program has none */
@@ -94,6 +99,8 @@ void rt_key_event(uint32_t scancode, int down);
  * the range the game gave the mouse driver); buttons bit 0 left, bit 1 right, bit 2 middle */
 void rt_mouse_move(int fx, int fy);
 void rt_mouse_buttons(int buttons);
+/* the mouse wheel turned `notches` (positive: away from the user) */
+void rt_mouse_wheel(int notches);
 /* relative motion in mickeys (used when the game reads motion counters) */
 void rt_mouse_motion(int dx, int dy);
 /* non-zero while the running program uses the mouse (reads its position, buttons or motion, or has an event

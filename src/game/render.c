@@ -202,14 +202,60 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
 /* `hat`: a colour for the pixels of colour HAT_INDEX (0: as they are) */
 static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, int dy, int flipped, uint32_t hat);
 
-/* a tile or a sprite (image number): on the GPU at its exact place, else as blit */
+/* ---- the zoom: the city drawn `g_zoom` times its size about the point g_zcx, g_zcy of the frame ---- */
+static double g_zoom = 1.0;
+static float g_zcx, g_zcy;
+
+void render_set_zoom(double zoom, float cx, float cy)
+{
+    g_zoom = zoom;
+    g_zcx = cx;
+    g_zcy = cy;
+}
+
+static float zoom_x(float x)
+{
+    return g_zcx + (x - g_zcx) * (float)g_zoom;
+}
+
+static float zoom_y(float y)
+{
+    return g_zcy + (y - g_zcy) * (float)g_zoom;
+}
+
+/* nearest pixel: src drawn `z` times its size with its top left corner at ox, oy */
+static void blit_scaled(const Target *t, const uint8_t *src, int sw, int sh, float ox, float oy, float z, int flipped,
+                        uint32_t hat)
+{
+    int x, y, xa = (int)floorf(ox), ya = (int)floorf(oy), xb = (int)ceilf(ox + sw * z), yb = (int)ceilf(oy + sh * z);
+    if (xa < t->x0) xa = t->x0;
+    if (ya < t->y0) ya = t->y0;
+    if (xb > t->x1) xb = t->x1;
+    if (yb > t->y1) yb = t->y1;
+    for (y = ya; y < yb; y++) {
+        int sy = (int)(((float)y + 0.5f - oy) / z);
+        if (sy < 0 || sy >= sh) continue;
+        for (x = xa; x < xb; x++) {
+            int sx = (int)(((float)x + 0.5f - ox) / z);
+            uint8_t c;
+            if (sx < 0 || sx >= sw) continue;
+            c = src[sy * sw + (flipped ? sw - 1 - sx : sx)];
+            if (c == 255) continue;
+            t->rgb[y * t->w + x] = hat != 0 && c == HAT_INDEX ? hat : t->pal[c];
+        }
+    }
+}
+
+/* a tile or a sprite (image number): on the GPU at its exact place, else as blit (both zoomed) */
 static void put(const Target *t, int image, const uint8_t *src, int sw, int sh, int dx, int dy, float fx, float fy,
                 int flipped, uint32_t hat)
 {
     if (t->gpu)
-        emit(image, src, sw, sh, fx, fy, flipped, hat);
-    else
+        emit(image, src, sw, sh, g_zoom == 1.0 ? fx : zoom_x(fx), g_zoom == 1.0 ? fy : zoom_y(fy), flipped, hat);
+    else if (g_zoom == 1.0)
         blit(t, src, sw, sh, dx, dy, flipped, hat);
+    else
+        blit_scaled(t, src, sw, sh, zoom_x(fx), zoom_y(fy), (float)g_zoom, flipped, hat);
 }
 
 static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, int dy, int flipped, uint32_t hat)
@@ -400,12 +446,6 @@ void render_image(uint32_t *rgb, int w, int h, const uint32_t *pal, uint32_t pix
     blit(&t, img, iw, ih, x, y, 0, 0);
 }
 
-void render_frame(uint32_t *rgb, int w, int h, const uint32_t *pal, int frame, int x, int y, int x0, int y0, int x1, int y1)
-{
-    Target t = {rgb, w, h, x0, y0, x1, y1, pal, 0};
-    draw_frame(&t, frame, x, y, (float)x, (float)y, 0);
-}
-
 const uint8_t *render_sprite_pixels(int id, int *w, int *h)
 {
     return sprite(id, w, h);
@@ -454,9 +494,10 @@ static void project_f(int32_t x, int32_t y, int32_t z, float *fx, float *fy)
 
 void render_project(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
 {
-    project(x, y, z, fx, fy);
-    *fx += render_obj_dx;
-    *fy += render_obj_dy;
+    float ffx, ffy;
+    project_f(x, y, z, &ffx, &ffy);
+    *fx = (int)floorf(zoom_x(ffx + (float)render_obj_dx) + 0.5f);
+    *fy = (int)floorf(zoom_y(ffy + (float)render_obj_dy) + 0.5f);
 }
 
 int render_gpu_changed;
@@ -486,8 +527,30 @@ static uint8_t g_ped_drawn[256];
 int render_ped_place(int ped, int *fx, int *fy)
 {
     if (ped < 0 || ped >= 256 || !g_ped_drawn[ped]) return 0;
-    *fx = g_ped_fx[ped];
-    *fy = g_ped_fy[ped];
+    *fx = (int)floorf(zoom_x((float)g_ped_fx[ped]) + 0.5f);
+    *fy = (int)floorf(zoom_y((float)g_ped_fy[ped]) + 0.5f);
+    return 1;
+}
+
+int render_ped_frame(uint32_t *rgb, int w, int h, const uint32_t *pal, int frame, int ped, int dy, int x0, int y0, int x1,
+                     int y1)
+{
+    Target t = {rgb, w, h, x0, y0, x1, y1, pal, 0};
+    uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), e;
+    int guard = 0;
+    if (ped < 0 || ped >= 256 || !g_ped_drawn[ped]) return 0;
+    e = rd16(frames + (uint32_t)frame * 8u);
+    for (;;) {
+        uint32_t ea = elements + e * 10u;
+        int sw, sh, id = rd16(ea) / 6;
+        const uint8_t *s = sprite(id, &sw, &sh);
+        /* its place zoomed, its size not */
+        float fx = zoom_x((float)(g_ped_fx[ped] + (int16_t)rd16(ea + 2u)));
+        float fy = zoom_y((float)(g_ped_fy[ped] + dy + (int16_t)rd16(ea + 4u)));
+        if (s != NULL) blit(&t, s, sw, sh, (int)floorf(fx + 0.5f), (int)floorf(fy + 0.5f), rd16(ea + 6u) != 0, 0);
+        e = rd16(ea + 8u);
+        if (e == 0 || ++guard > 64) break;
+    }
     return 1;
 }
 
@@ -518,6 +581,9 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     int mx = (int)rd32(map), my = (int)rd32(map + 4u), mz = (int)rd32(map + 8u), nobj = 0, li, s, k = 0, n = 0, t256;
     const Snap *sa = NULL, *sb = NULL;
     Target t = {rgb, w, h, x0, y0, x1, y1, pal, rgb == NULL};
+    /* the part of the unzoomed picture that the zoom brings into x0..x1, y0..y1 */
+    int lx0 = (int)floorf(g_zcx + ((float)x0 - g_zcx) / (float)g_zoom), lx1 = (int)ceilf(g_zcx + ((float)x1 - g_zcx) / (float)g_zoom);
+    int ly0 = (int)floorf(g_zcy + ((float)y0 - g_zcy) / (float)g_zoom), ly1 = (int)ceilf(g_zcy + ((float)y1 - g_zcy) / (float)g_zoom);
     if (mx <= 0 || my <= 0 || mz <= 0 || mx > 256 || my > 256 || mz > 16) return;
     g_nquads = 0;
     /* on the playback clock (now_us 0: as the game is now) */
@@ -590,8 +656,8 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                 int fx, fy;
                 if (tl != NULL) {
                     project(tx * 256, ty * 256, tz * 128, &fx, &fy);
-                    if (fx + render_tile_dx + TILE_W > x0 - 2 && fx + render_tile_dx < x1 + 2 &&
-                        fy + render_tile_dy + TILE_H > y0 - 2 && fy + render_tile_dy < y1 + 2) {
+                    if (fx + render_tile_dx + TILE_W > lx0 - 2 && fx + render_tile_dx < lx1 + 2 &&
+                        fy + render_tile_dy + TILE_H > ly0 - 2 && fy + render_tile_dy < ly1 + 2) {
                         float ffx, ffy;
                         project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
                         put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
@@ -612,6 +678,6 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         for (i = 0; i < n; i++) hash = (hash ^ b[i]) * 16777619u;
         render_gpu_changed = hash != prev_hash;
         prev_hash = hash;
-        host_city_frame(g_quads, g_nquads, pal, x0, y0, x1, y1);
+        host_city_frame(g_quads, g_nquads, pal, x0, y0, x1, y1, (float)g_zoom);
     }
 }

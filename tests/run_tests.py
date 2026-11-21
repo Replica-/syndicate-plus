@@ -264,6 +264,30 @@ def mission_keys(ctx):
 
 
 @test()
+def wide_zoom(ctx):
+    """a 16:9 mission (854 wide) zoomed out with the wheel: the city fills the width, and a click on it beyond the
+    game's own map window sends the agent there (the move marker appears under the pointer)"""
+    w, cx, cy = 854, 560, 240
+    fx, fy = cx * 65536 // w, (cy - 40) * 65536 // 400
+    r = ctx.run('wide', 29, start=SYN, every=100, extra=['--wide', str(w)],
+                inputs=TO_MISSION + ['27000:wheel@-2', '27500:move@%d;%d' % (fx, fy), '28000:click@%d;%d' % (fx, fy)])
+    f = r.at(27900)
+    check(f.w == w, 'the mission is not %d wide: %s' % (w, name(f)))
+    check(colour_mean(f, 0.8, 0.2, 1.0, 0.8) != colour_mean(f, 0.8, 0.0, 1.0, 0.05), 'no city at the right: ' + name(f))
+    marker = []
+    for t in range(28100, 28900, 100):
+        g = r.at(t)
+        # its green (it fades out over what is under it)
+        marker += [(i % g.w, i // g.w) for i, p in enumerate(g.pix)
+                   if (p >> 8) & 0xFF > 180 and (p >> 8) & 0xFF > ((p >> 16) & 0xFF) + 70 and (p >> 8) & 0xFF > (p & 0xFF) + 70
+                   and i % g.w >= 128]
+    check(marker, 'no move marker after the click')
+    mx = sum(p[0] for p in marker) / len(marker)
+    my = sum(p[1] for p in marker) / len(marker)
+    check(abs(mx - cx) < 8 and abs(my - cy) < 8, 'the marker is at %d, %d, not under the click at %d, %d' % (mx, my, cx, cy))
+
+
+@test()
 def save_load(ctx):
     """save a game named ABC in line 4 (1-3 hold the auto saves), then load it in a new run: the funds stored in the
     save show up"""

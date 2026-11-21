@@ -16,7 +16,8 @@
  * events in --input ("ms:event", comma separated, ms from the start): a key, held for 100 ms, as a scancode in
  * hex (1c = Enter) or a name (enter, esc, space, up, down, left, right, f1..f10, some letters and digits);
  * "key:down" / "key:up" to press or release only; "click@x;y" / "rclick@x;y" (held 150 ms) and "move@x;y"
- * with x, y fractions 0..65535 of the picture.
+ * with x, y fractions 0..65535 of the picture; "wheel@N" turns the mouse wheel N notches (negative: towards the
+ * user).  --wide W makes missions W pixels wide (as a wide window does).
  *
  * --cycles N limits the emulated CPU to N instructions a ms, as the window does (8000; without it the game runs as
  * fast as it can, as the tests want); --fps shows the frames a second at the top right.
@@ -121,6 +122,14 @@ static void write_bmp(const char *path, const uint32_t *pix, int w, int h)
     fclose(f);
 }
 
+/* --wide W: missions in a frame W pixels wide (640: 4:3) */
+static int g_canvas_w = 640;
+
+int host_canvas_width(void)
+{
+    return g_canvas_w;
+}
+
 /* the city is always in the frame here */
 int host_city_gpu(void)
 {
@@ -139,8 +148,10 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels)
     (void)pixels;
 }
 
-void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1)
+void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
+                     float scale)
 {
+    (void)scale;
     (void)quads;
     (void)n;
     (void)palette;
@@ -208,7 +219,10 @@ static void parse_input(const char *s)
         *c = 0;
         e->ms = (uint32_t)atoi(tok);
         c++;
-        if (!strncmp(c, "click@", 6) || !strncmp(c, "rclick@", 7) || !strncmp(c, "move@", 5)) {
+        if (!strncmp(c, "wheel@", 6)) {
+            e->kind = 5;
+            e->x = atoi(c + 6);
+        } else if (!strncmp(c, "click@", 6) || !strncmp(c, "rclick@", 7) || !strncmp(c, "move@", 5)) {
             e->kind = c[0] == 'c' ? 1 : c[0] == 'r' ? 2 : 3;
             c = strchr(c, '@') + 1;
             e->x = atoi(c);
@@ -299,6 +313,8 @@ int host_should_quit(void)
         Ev *e = &g_ev[g_iev++];
         if (e->kind == 0) {
             rt_key_event(e->code, !e->up);
+        } else if (e->kind == 5) {
+            rt_mouse_wheel(e->x);
         } else {
             rt_mouse_move(e->x, e->y);
             if (e->kind == 1)
@@ -364,6 +380,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--music-dir")) opt.music_dir = v, i++;
         else if (!strcmp(a, "--cheats")) opt.cheats = v, i++;
         else if (!strcmp(a, "--cycles")) rt_set_cpu_speed(atoi(v)), i++;
+        else if (!strcmp(a, "--wide")) g_canvas_w = atoi(v) < 640 ? 640 : atoi(v) > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : atoi(v) & ~1, i++;
         else if (!strcmp(a, "--fps")) rt_set_show_fps(1);
         else if (!strcmp(a, "--mem-dump") && g_ndumps < 16 && strchr(v, ':')) {
             g_dumps[g_ndumps].ms = (uint32_t)atoi(v);
