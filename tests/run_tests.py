@@ -41,6 +41,12 @@ TO_MISSION = SKIP_INTRO + [
 ]
 
 
+def abort(ms):
+    """a mission ended as Escape did in the original: Escape opens the mission's menu, up (from Resume, round to
+    the last item) Abort mission, Enter"""
+    return ['%d:esc' % ms, '%d:e048' % (ms + 300), '%d:enter' % (ms + 500)]
+
+
 class Failure(Exception):
     pass
 
@@ -217,7 +223,7 @@ def menus_revolt(ctx):
 @test()
 def mission(ctx):
     """into a mission; an agent walks where it is sent; Esc withdraws to the debriefing; then the world map"""
-    walk = TO_MISSION + ['27000:click@36000;42000', '31000:esc', '35000:enter']
+    walk = TO_MISSION + ['27000:click@36000;42000'] + abort(31000) + ['35000:enter']
     r = ctx.run('first', 40, start=SYN, inputs=walk)
     f0, f1 = r.at(27000), r.at(30000)
     check((f0.w, f0.h) == (640, 480), 'the mission is not on screen at 27 s: ' + name(f0))
@@ -233,11 +239,11 @@ def mission(ctx):
 @test()
 def combat(ctx):
     """agent 3 draws the pistol and fires: the debriefing counts the shots ("0%" instead of "no bullets fired")"""
-    calm = ctx.run('calm', 37, start=SYN, inputs=TO_MISSION + ['31000:esc'])
+    calm = ctx.run('calm', 37, start=SYN, inputs=TO_MISSION + abort(31000))
     fire = ctx.run('fire', 37, start=SYN, inputs=TO_MISSION + [
         '28000:click@1640;35500',                               # the pistol
         '29000:move@58368;42600', '29500:rclick@58368;42600', '30500:rclick@58368;42600',
-        '31500:rclick@58368;42600', '34000:esc'])
+        '31500:rclick@58368;42600'] + abort(34000))
     a, b = calm.last(), fire.last()
     check(is_green_screen(a) and is_green_screen(b), 'no debriefing: %s %s' % (name(a), name(b)))
     acc = (0.5, 0.635, 0.95, 0.685)
@@ -388,7 +394,7 @@ def auto_save(ctx):
     folder = os.path.join(ctx.user, 'Syndicate')
     check(sorted(os.listdir(folder)) == ['03.GAM'], 'the save in line 1 is not in line 4: %s' % os.listdir(folder))
     os.rename(os.path.join(folder, '03.GAM'), os.path.join(folder, '00.GAM'))   # as saved before auto saves
-    ctx.run('mission', 40, start=SYN, inputs=TO_MISSION + ['27000:click@36000;42000', '31000:esc', '35000:enter'])
+    ctx.run('mission', 40, start=SYN, inputs=TO_MISSION + ['27000:click@36000;42000'] + abort(31000) + ['35000:enter'])
     check(sorted(os.listdir(folder)) == ['00.GAM', '03.GAM'], 'the saves are %s' % os.listdir(folder))
     with open(os.path.join(folder, '00.GAM'), 'rb') as f:
         auto = f.read()
