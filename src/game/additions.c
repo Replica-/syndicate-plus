@@ -1096,9 +1096,9 @@ static void watch_move_orders(void)
  * a second as designed, ~20 with the pairs), American Revolt's at 120 (17 a second as designed).  Here each tick
  * starts on a steady clock instead, `speed` PACE_HZ-ths of a second apart, and the game's own wait is then passed
  * at once.  The ticks do the same; only when they come changes.  At 120 (17 a second) an agent without mods walks
- * 15 units a tick, 256 a second, as in FreeSynd; the user found that a little fast: 109 (15.6 a second, 10%
- * slower).  SYND_PACE=off: the game's own pace. */
-#define PACE_HZ 109u
+ * 15 units a tick, 256 a second, as in FreeSynd; the user found that too fast: 99 (14.1 a second, 20% slower;
+ * Syndicate as designed would be 73, 10.4 a second).  SYND_PACE=off: the game's own pace. */
+#define PACE_HZ 99u
 static uint64_t g_pace_next; /* when the next tick starts */
 static uint64_t g_pace_slot; /* when the last one started (0: not paced) */
 static uint64_t g_pace_period;
