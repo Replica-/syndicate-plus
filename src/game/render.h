@@ -25,6 +25,8 @@ void render_set_view_f(double vx, double vy);
 /* the city drawn `zoom` times its size about the point cx, cy of the frame (render_project and render_ped_place
  * give the zoomed places) */
 void render_set_zoom(double zoom, float cx, float cy);
+/* the tiles above level `level` (z / 128) are not drawn, to see inside the buildings; -1: all are */
+void render_set_cut(int level);
 /* a tick of the mission: where things are now */
 void render_tick(uint64_t now_us);
 /* a new mission: no tick before */

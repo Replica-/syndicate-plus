@@ -367,6 +367,8 @@ static void cheat_names(void)
 #define SC_A 0x1eu
 #define SC_S 0x1fu
 #define SC_D 0x20u
+#define SC_B 0x30u                /* held in a mission: see inside the buildings */
+static volatile int g_see_inside;
 
 static volatile uint64_t g_tick_us;   /* the last tick of a mission */
 static volatile int g_pan[4];         /* scroll keys held: left, right, up, down */
@@ -414,6 +416,16 @@ uint32_t game_key_filter(uint32_t sc, int down)
             g_press_us[slot] = 0;
         } else {
             g_press_us[slot] = now;
+        }
+    }
+    /* B held in a mission: the buildings are seen inside (the game does not get it) */
+    if (k == SC_B) {
+        static uint8_t held;
+        if (down && !was_down) held = (uint8_t)in_mission();
+        if (held) {
+            if (!down) held = 0;
+            g_see_inside = down && held;
+            return 0;
         }
     }
     /* W, A, S, D and the arrows scroll this program's view (a key pressed in a mission does until it is released);
@@ -1061,6 +1073,10 @@ static uint32_t hat_colour(int ped)
 #define PED_GONE 0xbu
 #define LABEL_DY (-16 + VIEW_TOP - 56)
 
+/* B held: the tiles drawn up to the floor the highest agent of the squad stands on (an agent stands on the top of
+ * the tile level under its height: z / 128 - 1), so the walls and what stands on that floor are not drawn */
+#define SEE_INSIDE_LEVELS (-1)
+
 /* the city on the playback clock (render.c), with the pointer and the squad's numbers over it */
 static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb)
 {
@@ -1069,6 +1085,20 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
     g_overlay_pal = pal;
     render_hat_colour = hat_colour;
     move_view();
+    /* B held: the tiles above the squad's floor are not drawn */
+    {
+        int level = -1;
+        if (g_see_inside) {
+            uint32_t co = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+            for (slot = 0; slot < 4; slot++) {
+                uint32_t ped = g_addrs->peds + (M[co + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
+                int l = (int16_t)RD16(ped + PED_Z) / 128 + SEE_INSIDE_LEVELS;
+                if (M[ped + PED_LOCATION] == 4 && l > level) level = l;
+            }
+            if (level < 0) level = 0;
+        }
+        render_set_cut(level);
+    }
     /* on the GPU the map's part of the frame is see-through, the city drawn under it at the display's resolution */
     gpu = host_city_gpu();
     for (y = VIEW_TOP; y < VIEW_BOTTOM; y++)

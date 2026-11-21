@@ -208,6 +208,12 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
 /* ---- the zoom: the city drawn `g_zoom` times its size about the point g_zcx, g_zcy of the frame ---- */
 static double g_zoom = 1.0;
 static float g_zcx, g_zcy;
+static int g_cut = -1; /* tile levels above this one are not drawn (-1: all are) */
+
+void render_set_cut(int level)
+{
+    g_cut = level;
+}
 
 void render_set_zoom(double zoom, float cx, float cy)
 {
@@ -830,7 +836,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             }
             for (tz = 0; tz < mz; tz++) {
                 int tid = M[col + (uint32_t)tz];
-                const uint8_t *tl = tile(tid);
+                const uint8_t *tl = g_cut >= 0 && tz > g_cut ? NULL : tile(tid);
                 int fx, fy;
                 if (tl != NULL) {
                     project(tx * 256, ty * 256, tz * 128, &fx, &fy);
