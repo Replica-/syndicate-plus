@@ -115,6 +115,18 @@ agents have a solid background instead of the checkerboard of orange and olive. 
 person hit, away from the shooter. Agents wear hats in the colour of their company, yours and the rival syndicates'
 (the original draws every hat in the red of the first colour).
 
+With Direct3D, a mission fills a wide window: the city goes on to its right edge (the side panel stays at the
+left).  The mouse wheel zooms the city out to half its size or in to one and a half.  The game's mission area
+limits where its camera can go, so at its edges the view may show city beyond it: a click there goes to the
+nearest point the game takes.  Holding B shows inside the buildings: what stands on the floor of the squad's
+highest agent (walls, roofs) is not drawn.
+
+The window menu's *Time of day* lights the city at dusk or at night (the side panel stays as it is): the city is
+darker, with the time's colour, and lit by its lamps (found in the tiles), the cars' headlights and the flashes of
+the shots.  Ctrl+L in a mission opens the light editor: the tile under the pointer is outlined, G changes what of
+it glows in the dark, L whether it lights what is around it, [ and ] the size of its light, C its colour; the
+settings are saved in `tile_lights.ini` beside the saves.
+
 ### The scanner
 
 The scanner (the map at the bottom left of a mission) shows more of the city around the leader: 6 pixels a tile
@@ -134,7 +146,7 @@ configurations *all missions, miniguns, full mods*, for both games).
 F12 records the game with its sound as an MP4 (1280x960, sharp pixels) in a `Videos` folder beside
 `Syndicate64.ini`; it needs [ffmpeg](https://ffmpeg.org) in the PATH (`winget install ffmpeg`).  While it records,
 the title bar says so; F12 again stops, and the video is finished in the background.  F11 saves a PNG screenshot
-in `Screenshots`.  The headless program records with `--record DIR`.
+in `Screenshots`: with Direct3D, the picture as the window shows it (its size, lit at dusk or night).  The headless program records with `--record DIR`.
 
 ## Development (Windows)
 
@@ -157,16 +169,21 @@ window size), with vsync.  GDI is only used when Direct3D cannot start.
 
 ### Smooth motion
 
-The original engine draws the city about 10 to 18 times a second (in DOSBox too).  In missions this version draws
-the city itself (`src/game/render.c`, from the game's own data in memory) at every frame shown, 70 a second, with
-the people, vehicles, objects and the view placed on a steady clock that runs through the game's updates at
-their average rate, about one and a half updates behind (the game's updates come unevenly, a few at once), so
-they move smoothly and evenly; the pointer and the agents' numbers are drawn with the game's own sprites (the
-pointer where the mouse is now).  At most 60
-frames a second, each made just before the display's refresh that shows it.  The emulated CPU is
-limited to 60000 instructions a millisecond (`[game] cycles` in `Syndicate64.ini`): enough for the game's ~20
-updates a second (GOG's DOSBox speed, 8000, gives it only 10).  The frames a second shown are at the
-top right (window menu: *Show frames a second*).  Both games, every language; `SYND_RENDER=off` turns it off.
+The original engine draws the city about 10 to 18 times a second (in DOSBox too), and on a fast computer makes its
+updates in pairs (two at once, then nothing for 85 ms: its wait for the next update is skipped when it finds no
+timer tick yet).  In missions this version starts each of the game's updates on a steady clock instead, 12 a
+second (`PACE_HZ` in `src/game/additions.c`; the game's own updates are unchanged, only when they come), and draws
+the city itself (`src/game/render.c`, from the game's own data in memory) at every frame shown, the people,
+vehicles, objects and the view placed between the updates, two updates behind: every frame moves by the same
+amount.  The pointer and the agents' numbers are drawn with the game's own sprites and frames (the pointer where
+the mouse is now).  At most 60 frames a second, each made just before the display's refresh that shows it (every
+second refresh at 120 Hz).  The frames a second shown are at the top right (window menu: *Show frames a second*).
+Both games, every language; `SYND_RENDER=off` turns the renderer off and `SYND_PACE=off` the steady clock.
+
+With Direct3D the city is not drawn into the frame but as a list of images on the GPU (`win32_gpu.c`): each tile
+and sprite at its exact place at the window's resolution, sharp, under the frame (whose map part is see-through);
+at dusk and night through a light map.  The headless program does the same offscreen with `--gpu WxH` (and
+`--time`, `--wide`, `--screenshot`), so the tests check it.
 
 ## Tests
 
@@ -175,7 +192,8 @@ top right (window menu: *Show frames a second*).  Both games, every language; `S
 
 The tests play the games headless on an emulated clock (runs repeat exactly) and check pictures, files and
 sound: the launcher in several installations, the main menus of both games in every language, a mission, shooting,
-saving and loading, the intro music and length, the built-in files, and that two runs end on the same frame.
+saving and loading, the intro music and length, the built-in files, that two runs end on the same frame, a wide
+zoomed mission's clicks, and the GPU's picture at night.
 They need the game files in `_references/dos`.
 
 ## Layout

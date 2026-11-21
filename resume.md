@@ -94,9 +94,23 @@ stays within the mission's limits (view + 0x1be32: the playable area, not the ma
 the game's state (its routine 0x40dcb0: frames at label_frames, shown when +0x1d bit 2 and not +0xb bit 0), drawn
 at the zoomed place at their own size. Recordings letterbox wide frames. Test: `wide_zoom` (19 tests).
 
+## Done: lighting, see inside, light editor, screenshots, GPU tests
+
+- Headless `--gpu WxH` renders through Direct3D offscreen (`gpu_init(NULL)`, hardware else WARP) and dumps that
+  picture; `--time day|dusk|night`, `--screenshot MS:FILE`. Test `gpu_night`.
+- Time of day (window menu, `[video] time`): at dusk/night the city goes into a scene texture + an emissive one
+  (MRT), a light map (ambient + additive soft ellipses), composited under the frame. Lights: lamps found in tiles
+  (a small spot of very bright pixels in the mission palette), tiles' settings (defaults = the fork's
+  tile_lights.ini data, overridden by `tile_lights.ini` in the user folder), shot flashes (the effects list), car
+  headlights (direction from motion).
+- Hold B: tiles above the squad's floor (highest agent z/128 - 1) not drawn (`render_set_cut`).
+- Light editor: Ctrl+L in a mission; G/L/[/]/C on the tile under the pointer; saved at once.
+- Screenshots in GPU mode capture the presented picture (`gpu_capture`); PNGs keep their shape.
+
 ## Still to do after that
 
-Lighting and time of day, hold B to see inside buildings, traffic-light glow, light editor; the 16 extra company
+Traffic lights glowing (find their tiles with the light editor), a walkable outline when B is held, sun shadows by
+day; the 16 extra company
 colours with a colour/logo picker; instant click feedback (optional); improved path finding (the user asked for it
 to be on the list; it changes how agents move, so say what it would change and ask before doing it). Loose ends: blood spray on a real hit and the
 corpse fix on a real death are unchecked; the macOS front end has no menu items for the new features and was not
