@@ -312,8 +312,8 @@ def gpu_night(ctx):
 @test()
 def company_colour(ctx):
     """a company colour chosen in the window's menu (headless --colour): the squad's hats are drawn in it"""
-    r = ctx.run('colour', 27, start=SYN, extra=['--colour', '00E5FF'], inputs=TO_MISSION + ['26200:wheel@3'])
-    f = r.at(26900)
+    r = ctx.run('colour', 27, start=SYN, every=250, extra=['--colour', '00E5FF'], inputs=TO_MISSION + ['26200:wheel@3'])
+    f = r.at(26700)
     cyan = sum(1 for p in f.pix if p & 0xFFFFFF == 0x00E5FF)
     check(cyan >= 4, 'no hats in the chosen colour: ' + name(f))
 
