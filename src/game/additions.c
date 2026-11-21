@@ -33,12 +33,14 @@
  * every mission and $100 000 000. */
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include "../rt/rt.h"
 #include "../rt/vfs.h"
 #include "hooks.h"
+#include "render.h"
 
 /* where the functions and data of each program are: English Syndicate's found by following the game (the
  * SYND_CENSUS list, hooks.c), the others' with tools/find_equiv.py */
@@ -716,6 +718,53 @@ static void company_hats(const uint8_t *pix, const uint32_t *pal, uint32_t *rgb,
     }
 }
 
+/* development: SYND_RENDER_TEST=match logs how many pixels of the map the renderer draws as the game does (once
+ * a second; the first time it also looks for the tiles' offset); =show draws the renderer's city instead */
+static void render_test(uint32_t *rgb, const uint32_t *pal)
+{
+    static uint32_t mine[640 * 480];
+    static uint64_t next;
+    static int calibrated;
+    const char *mode = getenv("SYND_RENDER_TEST");
+    int x, y, same = 0;
+    uint64_t now = host_time_us();
+    if (strcmp(mode, "show") == 0) {
+        for (y = 40; y < 440; y++)
+            for (x = 128; x < 640; x++) rgb[y * 640 + x] = 0;
+        render_city(rgb, 640, 480, pal, 128, 40, 640, 440);
+        return;
+    }
+    if (now < next) return;
+    next = now + 1000000u;
+    if (!calibrated) {
+        int best = -1, bx = 0, by = 0, dx, dy;
+        calibrated = 1;
+        for (dy = 0; dy < 80; dy += 2)
+            for (dx = 64; dx < 160; dx += 2) {
+                int n = 0;
+                render_tile_dx = dx;
+                render_tile_dy = dy;
+                memset(mine, 0, sizeof mine);
+                render_city(mine, 640, 480, pal, 128, 40, 640, 440);
+                for (y = 40; y < 440; y += 2)
+                    for (x = 128; x < 640; x += 2) n += mine[y * 640 + x] == rgb[y * 640 + x];
+                if (n > best) {
+                    best = n;
+                    bx = dx;
+                    by = dy;
+                }
+            }
+        render_tile_dx = bx;
+        render_tile_dy = by;
+        rt_log("render: tiles at %+d %+d", bx, by);
+    }
+    memset(mine, 0, sizeof mine);
+    render_city(mine, 640, 480, pal, 128, 40, 640, 440);
+    for (y = 40; y < 440; y++)
+        for (x = 128; x < 640; x++) same += mine[y * 640 + x] == rgb[y * 640 + x];
+    rt_log("render: %.1f%% of the map as the game draws it", 100.0 * same / (512.0 * 400.0));
+}
+
 #define MARKER_COLOUR 0x5aff5au
 
 void game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h)
@@ -723,6 +772,7 @@ void game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, 
     uint64_t age;
     int fx, fy, hw, alpha;
     if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return;
+    if (g_addrs->game == GAME_SYN && getenv("SYND_RENDER_TEST") != NULL) render_test(rgb, palette);
     company_hats(index, palette, rgb, w);
     draw_drops(rgb, w);
     solid_selected_boxes(index, palette, rgb, w);
