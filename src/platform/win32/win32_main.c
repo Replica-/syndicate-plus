@@ -58,6 +58,7 @@
 #define SC_APP_FPS 0x10D0u
 #define SC_APP_TIME 0x1300u /* + 0x10 * time (0 day, 1 dusk, 2 night) */
 #define SC_APP_SHADOWS 0x10E0u
+#define SC_APP_COLOUR 0x1400u /* + 0x10 * colour (0: the game's) */
 #define SC_APP_MUSIC_VOL 0x1100u /* + 0x10 * step (0..4): off, 25%, 50%, 75%, 100% */
 #define SC_APP_SOUND_VOL 0x1200u
 #define WM_APP_GAME_DONE (WM_APP + 1)
@@ -918,6 +919,35 @@ static void set_time(int t)
 
 static int g_shadows = 1;
 
+/* the player's company colour: the game's, or one of these (its agents' hats in missions) */
+static const struct {
+    const wchar_t *name;
+    uint32_t rgb;
+} k_colours[] = {
+    {L"&As chosen in the game", 0},  {L"Crimson", 0xDC143C},    {L"Scarlet", 0xFF2400},  {L"Orange", 0xFF8C00},
+    {L"Gold", 0xFFD700},             {L"Lime", 0x9ACD32},       {L"Emerald", 0x2ECC71}, {L"Teal", 0x008B8B},
+    {L"Cyan", 0x00E5FF},             {L"Sky blue", 0x5DADE2},   {L"Royal blue", 0x2F4FD8}, {L"Indigo", 0x5B2C9F},
+    {L"Violet", 0x9B59B6},           {L"Magenta", 0xFF00C8},    {L"Pink", 0xFF8FB8},    {L"White", 0xF4F4F4},
+    {L"Steel", 0x8A9AA8},
+};
+#define NB_COLOURS (int)(sizeof k_colours / sizeof k_colours[0])
+static int g_colour;
+
+static void set_colour(int k)
+{
+    int i;
+    if (k < 0 || k >= NB_COLOURS) k = 0;
+    g_colour = k;
+    game_set_player_colour(k_colours[k].rgb ? 0xFF000000u | k_colours[k].rgb : 0);
+    for (i = 0; i < NB_COLOURS && g_hwnd != NULL; i++)
+        CheckMenuItem(GetSystemMenu(g_hwnd, FALSE), SC_APP_COLOUR + 0x10u * (UINT)i, i == k ? MF_CHECKED : MF_UNCHECKED);
+    if (g_ini[0]) {
+        wchar_t v[16];
+        _snwprintf(v, 16, L"%d", k);
+        WritePrivateProfileStringW(L"game", L"company_colour", v, g_ini);
+    }
+}
+
 static void toggle_shadows(void)
 {
     g_shadows = !g_shadows;
@@ -1077,6 +1107,13 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             AppendMenuW(sm, MF_POPUP, (UINT_PTR)times, L"&Time of day (missions)");
             AppendMenuW(sm, MF_STRING | (g_shadows ? MF_CHECKED : 0), SC_APP_SHADOWS, L"Sun s&hadows (missions)");
         }
+        {
+            HMENU colours = CreatePopupMenu();
+            int k;
+            for (k = 0; k < NB_COLOURS; k++)
+                AppendMenuW(colours, MF_STRING | (k == g_colour ? MF_CHECKED : 0), SC_APP_COLOUR + 0x10u * (UINT)k, k_colours[k].name);
+            AppendMenuW(sm, MF_POPUP, (UINT_PTR)colours, L"Company &colour (agents' hats)");
+        }
         AppendMenuW(sm, MF_STRING, SC_APP_RECORD, L"&Record video\tF12");
         AppendMenuW(sm, MF_STRING, SC_APP_SCREENSHOT, L"Scree&nshot\tF11");
         AppendMenuW(sm, MF_STRING | (g_fps_on ? MF_CHECKED : MF_UNCHECKED), SC_APP_FPS, L"Show &frames a second");
@@ -1123,6 +1160,10 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         release_all();
         return 0;
     case WM_SYSCOMMAND:
+        if ((w & 0xFFF0u) >= SC_APP_COLOUR && (w & 0xFFF0u) < SC_APP_COLOUR + 0x10u * NB_COLOURS) {
+            set_colour((int)(((w & 0xFFF0u) - SC_APP_COLOUR) / 0x10u));
+            return 0;
+        }
         switch (w & 0xFFF0u) {
         case SC_APP_ABOUT:
             about();
@@ -1145,6 +1186,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         case SC_APP_SHADOWS:
             toggle_shadows();
             return 0;
+
         case SC_APP_TIME: case SC_APP_TIME + 0x10u: case SC_APP_TIME + 0x20u:
             set_time((int)(((w & 0xFFF0u) - SC_APP_TIME) / 0x10u));
             return 0;
@@ -1536,6 +1578,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
         gpu_set_time(g_time);
         g_shadows = GetPrivateProfileIntW(L"video", L"shadows", 1, g_ini) != 0;
         gpu_set_shadows(g_shadows);
+        g_colour = (int)GetPrivateProfileIntW(L"game", L"company_colour", 0, g_ini);
+        if (g_colour < 0 || g_colour >= NB_COLOURS) g_colour = 0;
+        game_set_player_colour(k_colours[g_colour].rgb ? 0xFF000000u | k_colours[g_colour].rgb : 0);
     }
     rt_set_show_fps(g_fps_on);
     if (music_dir[0] == 0)

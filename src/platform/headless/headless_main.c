@@ -454,6 +454,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--music-dir")) opt.music_dir = v, i++;
         else if (!strcmp(a, "--cheats")) opt.cheats = v, i++;
         else if (!strcmp(a, "--cycles")) rt_set_cpu_speed(atoi(v)), i++;
+        else if (!strcmp(a, "--colour")) game_set_player_colour(0xFF000000u | (uint32_t)strtoul(v, NULL, 16)), i++;
         else if (!strcmp(a, "--gpu") && sscanf(v, "%dx%d", &g_gpu_w, &g_gpu_h) == 2) i++;
 #ifdef _WIN32
         else if (!strcmp(a, "--screenshot") && strchr(v, ':')) g_shot_ms = (uint32_t)atoi(v), g_shot_file = strchr(v, ':') + 1, i++;

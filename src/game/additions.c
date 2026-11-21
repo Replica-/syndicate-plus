@@ -1070,10 +1070,20 @@ static int renderer_on(void)
     return g_addrs != NULL && (e == NULL || strcmp(e, "off") != 0);
 }
 
+/* the player's company in a colour of the player's choice (game_set_player_colour; 0: the game's) */
+static volatile uint32_t g_player_colour;
+
+void game_set_player_colour(uint32_t rgb)
+{
+    g_player_colour = rgb;
+}
+
 static uint32_t hat_colour(int ped)
 {
     uint32_t company, c;
     if (ped >= 8 * AGENTS_A_COMPANY || M[g_addrs->peds + (uint32_t)ped * PED_SIZE + PED_TYPE] != 2) return 0;
+    if (g_player_colour != 0 && ped / AGENTS_A_COMPANY == (int16_t)RD16(g_addrs->player))
+        return g_player_colour & 0xFFFFFFu;
     company = g_addrs->companies + (uint32_t)(ped / AGENTS_A_COMPANY) * g_addrs->company_size;
     c = company_rgb(company, g_overlay_pal);
     return c == g_overlay_pal[HAT_COLOUR] ? 0 : c;

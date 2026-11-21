@@ -1,6 +1,8 @@
 /* game.h - the Syndicate Plus program: which recompiled DOS programs it contains and how it starts. */
 #pragma once
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,6 +25,10 @@ int game_main(const GameOptions *opt);
 /* check that `dir` holds the original game files this program was built from; returns NULL when it does,
  * else a sentence describing what is missing or different */
 const char *game_check_dir(const char *dir);
+
+/* the player's company is shown in this colour (0xFFRRGGBB: its agents' hats in missions); 0: the game's own
+ * (any thread) */
+void game_set_player_colour(uint32_t rgb);
 
 #ifdef __cplusplus
 }
