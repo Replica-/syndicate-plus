@@ -58,6 +58,8 @@ void rt_register_reloc_module(const RtModuleDef *def);
 void game_hooks_install(const RtModuleDef *def);
 /* the running program */
 const RtModuleDef *rt_current_module(void);
+/* the game layer sees every key event first (any thread) and may change it: returns the scancode to queue */
+uint32_t game_key_filter(uint32_t scancode, int down);
 RT_NORETURN void rt_exit_process(int code);
 extern int rt_exit_code;
 

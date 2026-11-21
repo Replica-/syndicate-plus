@@ -41,6 +41,7 @@ void kbd_init(void)
 
 void rt_key_event(uint32_t scancode, int down)
 {
+    scancode = game_key_filter(scancode, down);
     host_lock();
     if (scancode & 0xE000u) {
         if ((g_kq_tail + 1) % KQ != g_kq_head) {

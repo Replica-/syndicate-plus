@@ -6,6 +6,9 @@
  * the player found in those lines is first moved to a free line further down.  A save the player makes in one of
  * the auto save lines goes to the first free line from the fourth on instead (none free: not saved).
  *
+ * Keys in missions: W, A, S and D scroll the view as the arrow keys do; 1 to 4 select an agent (the game's own)
+ * and pressed twice within 0.4 s centre the view on it.
+ *
  * The MINIGUN SQUAD cheat, as the company or player name (Configure Company), like the game's own cheats: every
  * weapon and mod researched, and the 18 agents of the company with every mod at version 3 and a minigun in each
  * of their 8 weapon slots.  The research is completed as the game's COOPER TEAM cheat does it. */
@@ -35,21 +38,31 @@ typedef struct GameAddrs {
     uint32_t weapon_research; /* 20 of WEAPON_RESEARCH_SIZE, the weapons' */
     uint32_t weapon_known; /* 20 bytes: what a researched weapon's entry holds at +0x1f4 */
     uint32_t ammo;         /* (16 bits, by weapon) the ammunition of a new weapon */
+    /* missions */
+    uint32_t mission_tick; /* called on every tick of a mission */
+    uint32_t set_view;     /* set_view(x, y): the view's position (clamped to the map) */
+    uint32_t peds;         /* the people of the mission, PED_SIZE bytes each */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
-     0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au},
+     0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
+     0x41d380u, 0x40e300u, 0x478110u},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
-     0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u},
+     0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
+     0x41d2c0u, 0x40e2f0u, 0x478110u},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
-     0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u},
+     0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
+     0x41d2c0u, 0x40e2f0u, 0x478110u},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
-     0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u},
+     0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
+     0x41e9c0u, 0x40e270u, 0x488110u},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
-     0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u},
+     0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
+     0x41e940u, 0x40e280u, 0x488110u},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
-     0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu},
+     0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
+     0x41e940u, 0x40e280u, 0x488110u},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -270,6 +283,84 @@ static int on_cheat_check(uint32_t addr)
     return 0;
 }
 
+/* ==== keys in missions ====================================================================================== */
+#define COMPANY_SQUAD 0xb5u   /* in a company: (byte) the ped of its first agent in a mission */
+#define PED_SIZE 0x5cu
+#define PED_X 4u              /* (16 bits) where it is */
+#define PED_Y 6u
+#define PED_Z 8u
+#define PED_FLAGS 0x1du       /* bit 2: there (an agent of the squad still in the mission) */
+#define DOUBLE_PRESS_US 400000u
+#define SC_1 0x02u            /* 1 to 4: 0x02 to 0x05 */
+#define SC_W 0x11u
+#define SC_A 0x1eu
+#define SC_S 0x1fu
+#define SC_D 0x20u
+
+static volatile uint64_t g_tick_us;   /* the last tick of a mission */
+static volatile int g_centre_slot;    /* 1-4: centre the view on that agent at the next tick */
+static uint64_t g_press_us[4];
+static uint8_t g_down[256], g_moved[256]; /* keys held; held keys that scroll in place of an arrow key */
+
+static int in_mission(void)
+{
+    return g_tick_us != 0 && host_time_us() - g_tick_us < 200000u;
+}
+
+uint32_t game_key_filter(uint32_t sc, int down)
+{
+    uint32_t k = sc & 0xFFu;
+    int was_down;
+    if (sc & 0xE000u) return sc;
+    was_down = g_down[k];
+    g_down[k] = (uint8_t)(down != 0);
+    /* 1-4 pressed twice (not held) */
+    if (k >= SC_1 && k < SC_1 + 4u && down && !was_down && in_mission()) {
+        uint64_t now = host_time_us();
+        int slot = (int)(k - SC_1);
+        if (g_press_us[slot] != 0 && now - g_press_us[slot] < DOUBLE_PRESS_US) {
+            g_centre_slot = slot + 1;
+            g_press_us[slot] = 0;
+        } else {
+            g_press_us[slot] = now;
+        }
+    }
+    /* W, A, S, D: the arrow keys (a key pressed in a mission stays one until it is released) */
+    if (k == SC_W || k == SC_A || k == SC_S || k == SC_D) {
+        if (down && !was_down) g_moved[k] = (uint8_t)in_mission();
+        if (g_moved[k]) {
+            if (!down) g_moved[k] = 0;
+            return k == SC_W ? 0xE048u : k == SC_A ? 0xE04Bu : k == SC_S ? 0xE050u : 0xE04Du;
+        }
+    }
+    return sc;
+}
+
+static void centre_on_agent(int slot)
+{
+    uint32_t company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+    uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot - 1u) * PED_SIZE, args[2];
+    int32_t z;
+    if (!(M[ped + PED_FLAGS] & 4u)) return;
+    /* as the game centres the view at the start of a mission */
+    z = (int16_t)RD16(ped + PED_Z);
+    args[0] = (uint32_t)(int16_t)(((int16_t)RD16(ped + PED_X) - 0xa00 - z) >> 7);
+    args[1] = (uint32_t)(int16_t)(((int16_t)RD16(ped + PED_Y) - 0x200 - z) >> 7);
+    guest_call(g_addrs->set_view, args, 2);
+}
+
+static int on_mission_tick(uint32_t addr)
+{
+    int slot = g_centre_slot;
+    (void)addr;
+    g_tick_us = host_time_us();
+    if (slot) {
+        g_centre_slot = 0;
+        centre_on_agent(slot);
+    }
+    return 0;
+}
+
 /* ==== the hooks ============================================================================================= */
 void additions_install(int game)
 {
@@ -282,4 +373,5 @@ void additions_install(int game)
     hook_add(g_addrs->world_map, on_world_map);
     hook_add(g_addrs->save_game, on_save_game);
     hook_add(g_addrs->cheat_check, on_cheat_check);
+    hook_add(g_addrs->mission_tick, on_mission_tick);
 }

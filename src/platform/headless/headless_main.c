@@ -5,6 +5,7 @@
  *   synd_headless --game-dir DIR [--user-dir DIR] [--start "SYNDICAT\MAIN.EXE /args"] [--seconds N]
  *                 [--dump DIR] [--dump-every MS] [--input "ms:key[:up],..."] [--verbose N] [--log FILE]
  *                 [--wav FILE] [--virtual-time STEP_US] [--record DIR] [--music-dir DIR]
+ *                 [--mem-dump MS:FILE]...
  *
  * --virtual-time runs on a virtual clock (each clock reading advances it by STEP_US microseconds, a sleep by
  * its length): runs repeat exactly and go as fast as the machine allows; times in --seconds/--input are then
@@ -17,7 +18,8 @@
  *
  * --record DIR records the run as an MP4 video into DIR (src/video/record.c, needs ffmpeg).  --music-dir plays
  * the songs from the files of DIR (src/rt/music.c); without it the FM music plays, so test runs do not depend on
- * the music folder of the game. */
+ * the music folder of the game.  --mem-dump writes the guest's memory from 4 MiB to 16 MiB (the program's image
+ * , its data and what it allocates) to FILE at MS (to find where the game keeps something: dump before and after it changes). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,6 +47,11 @@ typedef struct Ev {
     int x, y;
 } Ev;
 static Ev g_ev[256];
+static struct {
+    uint32_t ms;
+    const char *file;
+} g_dumps[16];
+static int g_ndumps;
 static int g_nev, g_iev;
 
 int host_audio_rate(void)
@@ -275,6 +282,20 @@ int host_should_quit(void)
                 rt_mouse_buttons(0);
         }
     }
+    {
+        int k;
+        for (k = 0; k < g_ndumps; k++) {
+            if (g_dumps[k].file != NULL && ms >= g_dumps[k].ms) {
+                extern uint8_t *M;
+                FILE *f = fopen(g_dumps[k].file, "wb");
+                if (f != NULL) {
+                    fwrite(M + 0x400000u, 1, 0xC00000u, f);
+                    fclose(f);
+                }
+                g_dumps[k].file = NULL;
+            }
+        }
+    }
     return g_end_us != 0 && now >= g_end_us;
 }
 
@@ -314,6 +335,12 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--verbose")) opt.verbose = atoi(v), i++;
         else if (!strcmp(a, "--log")) g_logfile = fopen(v, "w"), i++;
         else if (!strcmp(a, "--music-dir")) opt.music_dir = v, i++;
+        else if (!strcmp(a, "--mem-dump") && g_ndumps < 16 && strchr(v, ':')) {
+            g_dumps[g_ndumps].ms = (uint32_t)atoi(v);
+            g_dumps[g_ndumps].file = strchr(v, ':') + 1;
+            g_ndumps++;
+            i++;
+        }
         else if (!strcmp(a, "--record")) {
             if (!record_start(v, 44100)) {
                 fprintf(stderr, "cannot record (is ffmpeg in the PATH?)\n");

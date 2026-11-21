@@ -246,6 +246,24 @@ def combat(ctx):
 
 
 @test()
+def mission_keys(ctx):
+    """in a mission D scrolls the view as the right arrow key does, and 2 pressed twice brings it back to agent 2"""
+    r = ctx.run('keys', 34, start=SYN, inputs=TO_MISSION + ['28000:d:down', '30000:d:up', '31000:2', '31200:2'])
+    start, moved, back = r.at(27000), r.at(30500), r.at(33000)
+
+    def alike(f, g):
+        """the share of the pixels of the map view that are the same (the agents move a little)"""
+        same = total = 0
+        for y in range(int(f.h * 0.1), int(f.h * 0.9)):
+            for x in range(int(f.w * 0.25), int(f.w * 0.95)):
+                total += 1
+                same += f.pix[y * f.w + x] == g.pix[y * g.w + x]
+        return same / total
+    check(alike(start, moved) < 0.5, 'D did not scroll: ' + name(moved))
+    check(alike(start, back) > 0.9, '2 2 did not come back: ' + name(back))
+
+
+@test()
 def save_load(ctx):
     """save a game named ABC in line 4 (1-3 hold the auto saves), then load it in a new run: the funds stored in the
     save show up"""
