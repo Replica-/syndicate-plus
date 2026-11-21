@@ -1,17 +1,18 @@
 # Resume: porting the freesynd-enhanced features to syndicate-plus
 
 Where the work stands, for the next session. Everything is committed locally on `main`; nothing is pushed
-(the remote is Onur BUYUKCAGLAR's repo; never push).
+(the remote is Onur BUYUKCAGLAR's repo; never push). Last commit: `baa31b6` "Steadier motion and squad numbers".
 
 ## Ground rules from the user
 
-- Never change the AI, mission triggers or gameplay (combat stays as the original). Close-range friendly fire was dropped.
+- Never change the AI, mission triggers or gameplay (combat stays as the original). Close-range friendly fire was
+  dropped.
 - Licence: syndicate-plus stays **MIT**. Never copy or port FreeSynd (GPL v3) code; carry over ideas, behaviour and
   file-format knowledge only, and write fresh code.
 - The game is played only in **true colour on the GPU** (no 256-colour limits for anything new).
-- Test headless, without sound (when the window must be checked: mute both volumes in `Syndicate64.ini`, then
-  delete that ini afterwards).
-- Group 1 (FreeSynd bug fixes the original never had) is skipped.
+- **Test headless only, muted. Never open the game window, capture the desktop or post input to a window**
+  (it steals focus). Window-only features: build, test headless, then ask the user to look.
+- Commit to `main` (no branches). Group 1 (FreeSynd bug fixes the original never had) is skipped.
 
 ## Build, run, test
 
@@ -19,108 +20,76 @@ Where the work stands, for the next session. Everything is committed locally on 
   `python tools/gen_all.py` (needs `pip install capstone`), about 40 s.
 - `dev\build.cmd` builds into `build-dev\RelWithDebInfo` (Ninja; a change to `src/rt/recomp.h` or `gen/` rebuilds
   everything, about 8 min).
-- Tests: `SYND_HEADLESS=build-dev\RelWithDebInfo\synd_headless.exe python tests/run_tests.py --quick` (17 tests).
-- Start the games with the launcher's sound arguments: `--start "SYNDICAT\MAIN.EXE /c0 /iirq7 /idma1 /iio220"`
-  (`DATADISK\...` for American Revolt). `/s` means no sound.
-- VS Code: `.vscode/launch.json` has the launcher, both games, both games with `--cheats "MINIGUN SQUAD:TO THE TOP"`
+- Tests (18): `SYND_HEADLESS=D:/development/syndicate-plus/build-dev/RelWithDebInfo/synd_headless.exe python
+  tests/run_tests.py` (the path must be absolute). `tests/frames.py` `run(..., virtual_step=0)` runs on the real
+  clock; `run_tests.TO_MISSION` is the input script into a mission (~27 s).
+- Games start with `--start "SYNDICAT\MAIN.EXE /c0 /iirq7 /idma1 /iio220"` (`DATADISK\...` for American Revolt).
+- VS Code: `.vscode/launch.json` has the launcher, both games, both with `--cheats "MINIGUN SQUAD:TO THE TOP"`
   (all missions, $100M, v3 mods, miniguns) and a headless recorded mission.
+- Measuring timing headless: temporarily add an `rt_log` under a `getenv("SYND_..._TRACE")` check, run with
+  `virtual_step=0`, parse the log, then remove it (scratchpad scripts for this were `ticks.py`, `playsim.py`).
 
-## Done (groups 2 and 3, and the start of 4)
+## How additions hook the game
 
-Music from files (`src/rt/music.c`, follows the AIL/32 driver's sequence calls), volumes, video recording (F12,
-ffmpeg), screenshots (F11), auto saves (lines 1-3), MINIGUN SQUAD, `--cheats`, WASD scrolling, double-press 1-4 to
-centre, scanner range and extra marks, move-order marker, solid selected-agent box, hats in company colours, blood
-sprays, true-colour frames (`host_present` takes 0x00RRGGBB; `game_overlay` in `src/game/additions.c` draws over
-them), Direct3D 11 presentation on Windows (`src/platform/win32/win32_gpu.c`).
+`RT_ENTER` in every recompiled function checks a bitmap (`src/game/hooks.c`); `additions_install()` in
+`src/game/additions.c` adds the hooks of each program from one address table per program (English/Spanish/German
+Syndicate and American Revolt). `tools/find_equiv.py` finds a function and its data addresses in the other
+programs. `guest_call(fn, args, n)` calls game functions. Dev aids: `SYND_CENSUS=FILE`, `SYND_SKIP=addr,...`,
+headless `--mem-dump MS:FILE`, `SYND_RENDER_TEST=match|show`, `SYND_RENDER=off`.
 
-How additions hook the game: `RT_ENTER` in every recompiled function checks a bitmap (`src/game/hooks.c`);
-`additions_install()` in `src/game/additions.c` adds the hooks of each program from one address table per program
-(English/Spanish/German Syndicate and American Revolt). `tools/find_equiv.py` finds a function and its data addresses
-in the other programs. Dev aids: `SYND_CENSUS=FILE`, `SYND_SKIP=addr,...`, headless `--mem-dump MS:FILE`.
+## Done
 
-## In progress when the session ended: frame pacing and FPS
+Groups 2 and 3: music from files (`src/rt/music.c`), volumes, video recording (F12, ffmpeg), screenshots (F11),
+auto saves (lines 1-3), MINIGUN SQUAD, `--cheats`, WASD scrolling, double-press 1-4 to centre, scanner extras,
+move-order marker, solid selected-agent box, hats in company colours, blood sprays, true-colour frames
+(`host_present` takes 0x00RRGGBB; `game_overlay` draws over them), Direct3D 11 presentation, FPS counter (top right,
+counts frames that differ from the one before; a dip = the picture stalled).
 
-The user saw the game "frame skipping, as if double". Measured: the recompiled game runs on an unlimited CPU, so in
-each ~100 ms it does 2-3 updates and 2 frames within a few ms (the first frame is never seen), then waits.
-Fix: the emulated CPU gets the speed of GOG's DOSBox (`cycles=8000`):
+Group 4 so far, the renderer (`src/game/render.c`, fresh code, 99.7% the same pixels as the game):
 
-- `tools/recomp.py` emits `RT_CYC(n)` (instructions of each run) and `gen/` was regenerated; `rt_cycles` in
-  `src/rt/recomp.h`; `cpu_speed_limit()` in `rt_poll` (`src/rt/core.c`); `rt_set_cpu_speed()` in `host.h`.
-- The window sets 8000 (`[game] cycles` in `Syndicate64.ini`); headless is unlimited unless `--cycles N`.
-- Measured after: frames evenly spaced, about 55 ms apart (was pairs 5 ms apart then ~90 ms gaps).
-- FPS counter at the top right (`rt_set_show_fps`, the game's different frames a second), on in the window
-  (system menu "Show frames a second", `[video] fps`), headless `--fps`.
+- **Smooth city:** in missions the city is drawn from the game's data in memory at the display's rate, things
+  placed between the game's ticks on a playback clock (snapshots of position, frame and on-map byte at each tick).
+- **Pacing:** frames at most 60 a second, each made 5 ms before the refresh that shows it (`next_frame_time` in
+  `src/rt/core.c`, DWM timing); on displays over 60 Hz frames keep to every k-th refresh (it was ~90 a second at
+  120 Hz). Window CPU speed default 60000 cycles (8000 gave only 10 updates a second).
+- **Free view:** the view is ours (`move_view` every frame; `sync_camera` gives the game the nearest camera at each
+  tick; `game_mouse_filter` maps clicks).
+- **GPU city (`3e28467`):** with Direct3D the tiles and sprites go to the platform as a list of images
+  (`host_city_*` in `host.h`), packed in an R8 palette-index atlas (`win32_gpu.c`) and drawn at their exact
+  sub-pixel places at the window's resolution with sharp bilinear filtering; the frame is see-through over the map
+  (top byte of its pixels: 255 = city shows). Pointer, labels, marker and blood stay in the frame (`plot` blends
+  over see-through pixels). Videos, screenshots (taken from the next CPU-made frame) and the CRT filter use the CPU
+  city. Headless and macOS have stubs (`host_city_gpu` returns 0). Checked in the window: correct, scrolls.
+- **Steadier motion (`baa31b6`):** the game's ticks come in pairs (one VGA retrace apart) then ~85 ms of nothing,
+  and the rate wanders 19-23 a second. Playback is now 3.5 ticks behind (~120 ms), rate over the last 80 ticks,
+  continuous target, filtered speed correction (gain 0.03 per tick off, at most 10%). Measured: 91% of frames
+  within 10% of the median speed; still ~16 stalled frames in 10 s (the game's own hiccups).
+- **Squad numbers:** found in the game's picture by their own digit sprite (1070 + 2 x slot yellow, +1 red) within
+  12 px, holding 0.4 s when not found. The selected agents' numbers blink yellow/red: that is the game's own blink
+  (irregular because the game draws ~10 times a second).
 
-To finish: run the tests, check the window (FPS readable, motion smooth), compare the feel with DOSBox and tune the
-cycles if needed, update README.md (pacing and FPS), commit.
+## Proposed next (the user asked, answer given, waiting for "go ahead")
 
-## Smoothness (the user's top complaint)
+**Steady simulation: our clock drives the game's mission ticks.** Findings: each tick is a fixed step; the game
+paces its loop by counting VGA retraces (making retrace waits return at once ran it at ~38 ticks/s, so the pace
+is the retrace waits; a "latch missed retraces" fix gave 27/s: both reverted, gameplay speed must not change). The
+loop is tick, tick, then draw + wait ~85 ms. Plan:
+1. Find the mission main loop around the mission-tick function (`mission_tick` in the GameAddrs table), its
+   retrace wait and the city drawing it calls.
+2. In missions replace that wait with a fixed clock: one tick every 50 ms (the measured average; make it a
+   setting). Same updates in the same order; only even spacing.
+3. Skip the game's own city drawing in missions (ours replaces it); keep anything that changes state (animation
+   counters, sound, scanner); side panel and scanner still drawn by the game.
+4. Playback then needs ~1 tick behind (~50 ms), no stalls; the 60 fps cap can be lifted for 120/144 Hz.
+5. Prove unchanged gameplay: tick spacing and speed measured headless before and after; the same scripted mission
+   on the virtual clock compared; 18 tests pass. Then the American Revolt addresses.
+Risk: something in the draw step that changes state. Note: the squad-number detection reads the game's picture,
+so if its city drawing is skipped the numbers need another source (the game's selection state in memory).
 
-The user finds the game not smooth, much less than FreeSynd ("very low frame rate"). Measured (headless, real
-clock, mission frames that differ from the one before): the original engine draws the map at about 10-18 frames a
-second whatever the CPU speed (unlimited: ~18 drawn but in pairs 5 ms apart, so ~10 seen; 8000: ~16, mostly even;
-16000: ~10, even; 30000: ~18 with pairs). The measurement is noisy (a still scene counts few frames). No CPU speed
-reaches FreeSynd's smoothness: FreeSynd draws at the display's rate with its own renderer. So the first goal of
-the new renderer is smoothness: draw at the display's rate (60+), placing people, vehicles and the view between
-the game's updates (interpolate their positions from the level data between two ticks of the mission).
+## Still to do after that
 
-## Done since: the smooth city (renderer v1)
-
-`src/game/render.c` draws the mission's city from the game's data in memory: 99.7% the same pixels as the game
-(`SYND_RENDER_TEST=match` measures it, `=show` shows it). In missions it now replaces the game's map in each frame
-(`smooth_city` in `src/game/additions.c`): positions and the view interpolated between the last two mission ticks
-(`render_tick` at each tick of `on_mission_tick`), one tick behind; the game's pointer (a box of +-96 px around
-the mouse; the game's mouse y + 40) and the squad's numbers are copied from its frame where it differs from the
-city as it is now; the hats are coloured in the renderer. Measured: ~46 different frames a second while agents
-walk, gaps 22 ms on average. All six programs (99.7% match in Syndicate, 99.6% in American Revolt; vehicles are
-on the map with +0xa = 4 or 0x0c); `SYND_RENDER=off` turns it off.
-
-Pacing (after the user's play test: smoother, but uneven, wants 60 a second): a playback clock (render.c
-`playback`) goes through a history of 8 tick snapshots at the ticks' average rate, 1.5 ticks behind; frames at
-most 60 a second, each made 5 ms before the display refresh that shows it (`next_frame_time` in core.c,
-`host_display_timing` from DWM in the window), drawn for that time (`rt_display_us`). Measured headless: frames
-17.8 ms apart (sd 1 ms), a walking agent moves 0.57 px every frame evenly. The pointer is copied from around the
-game's own pointer position (sprite table pointer + 0x7c, American Revolt + 0x84). Note: ffmpeg gdigrab by window
-title cannot see the Direct3D flip-model window (it shows a frozen picture); capture `desktop` instead.
-
-To do next: hear back from the user on how it feels in the window; the animation frames still change
-only at the game's ticks (walk cycles); then widescreen and zoom (the renderer can draw any rectangle at any
-view), lighting, see-inside-buildings.
-
-Artifacts fixed after the user's second play test: the squad's numbers (were copied from the game's picture,
-came out cut with bits of heads) are drawn with the game's sprites 1070-1077 (yellow 1070 + 2 x slot, red + 1;
-placed by their coloured pixels 2 px left of the feet and 40 above; yellow/red/shown read from the game's
-picture, palette indices 11/14); the pointer is the game's HPOINTER entry in use (sprite table pointer + 0x10,
-American Revolt + 0x14) drawn at the newest mouse position (top left 16 px up-left). Nothing over the city is
-copied from the game's picture any more. During shooting the renderer still matches the game (99.5-99.7%).
-
-Third play test (corpses disappearing and coming back, keyboard lag, agents sliding before turning): at cycles
-8000 (and 16000) the game makes only 10.4 updates a second (from 30000 up and unlimited: ~20), so the window's
-default is now 60000; the snapshots keep each thing's frame and on-map byte, so the pose and what is shown go
-with the position (the sliding: the pose was read from the newest data while the position was behind); a thing is
-shown unless bit 0 of its +0xa byte is set (the game's own rule, 0x40d528; the corpses: their byte left the list
-of values accepted); the playback clock is 1 tick behind (was 1.5). Corpses not checked on a real death.
-
-Inputs not on the game's clock (the user: "nor should the panning"): in missions the view is this program's
-(additions.c `move_view` every frame: arrows, WASD, the pointer within 2 px of an edge, 480 px/s, not beyond the
-game's camera limits at view + 0x1be32); the game never gets those keys; at each tick `sync_camera` gives the game
-the nearest camera (set_view); a camera the game moved itself by 3 steps or more (mission start) and the
-double-press centring make the view glide there (snapping within 2 units); `game_mouse_filter` (devices.c calls
-it for int 33h 3, 5, 6 and the event handler) moves the mouse position the game reads over the city by the
-difference between the view and its camera, so clicks land where they are seen (checked: the move marker lands
-under the click after a pan). Note: a downscaled screenshot of the dithered ground looks a different colour when
-the picture is shifted by a pixel (that was not a bug).
-
-## Next: group 4, the new renderer (fresh MIT code)
-
-Plan: (1) read the game's decompressed data from memory: in English Syndicate the pointers are at `0x44535c` (map,
-MAPxx.DAT), `0x445360` (tiles, HBLK01.DAT), `0x445330` (sprites, HSPR-0.DAT); level data at `0x470108` (people
-`0x478110`, 0x5c each; statics `0x47e790`, 30 bytes each; layout as FreeSynd's `leveldata.h`); camera words at
-`0x470000`; world-to-frame: `dx = x - camx*128, dy = y - camy*128, fx = (dx - dy)/8 + 128,
-fy = ((dx + dy)/2 - z)/8 + 56`. (2) A reference renderer checked pixel for pixel against the game's frame.
-(3) Widescreen and zoom on the GPU, with clicks mapped back into the game. (4) Lighting, time of day,
-see-inside-buildings (hold B), traffic-light glow, light editor.
-
-Also open: the 16 extra company colours and a colour/logo picker (now possible in true colour); the blood spray's
-hit detection was not checked on a real hit; the macOS front end has no menu items for the new features and was not
-built here.
+Widescreen and mouse-wheel zoom (0.6x) with click mapping (the renderer can draw any rectangle at any view);
+lighting and time of day, hold B to see inside buildings, traffic-light glow, light editor; the 16 extra company
+colours with a colour/logo picker; instant click feedback (optional). Loose ends: blood spray on a real hit and the
+corpse fix on a real death are unchecked; the macOS front end has no menu items for the new features and was not
+built here; README.md needs a note on the GPU city and the playback clock.
