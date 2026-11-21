@@ -215,8 +215,9 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels)
 }
 
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale, const HostCityLight *lights, int nlights)
+                     float scale, const HostCityLight *lights, int nlights, float night)
 {
+    (void)night;
     (void)lights;
     (void)nlights;
     (void)scale;

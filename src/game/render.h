@@ -42,6 +42,9 @@ int render_tile_setting(int id, RenderTileSetting *out);
 int render_set_tile_setting(int id, const RenderTileSetting *in);
 /* the mission's map: its size in tiles (0 when there is none), the tile at x, y, z (-1 outside) */
 int render_map_size(int *mx, int *my, int *mz);
+/* how dark the mission's own palette makes it (0 day .. 1 night): its lights glow that much by default
+ * (host_city_frame's `night`) */
+void render_set_mission_night(float night);
 int render_map_tile(int x, int y, int z);
 /* the tile seen at sx, sy of the frame in the last city drawn: its number and where it is drawn */
 int render_tile_at(int sx, int sy, int *id, int *rx, int *ry, int *rw, int *rh);

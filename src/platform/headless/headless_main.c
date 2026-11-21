@@ -166,14 +166,15 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels)
 }
 
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale, const HostCityLight *lights, int nlights)
+                     float scale, const HostCityLight *lights, int nlights, float night)
 {
 #ifdef _WIN32
     if (g_gpu_on) {
-        gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale, lights, nlights);
+        gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale, lights, nlights, night);
         g_frame_city = 1;
     }
 #else
+    (void)night;
     (void)lights;
     (void)nlights;
     (void)scale;
@@ -459,7 +460,8 @@ int main(int argc, char **argv)
 #ifdef _WIN32
         else if (!strcmp(a, "--screenshot") && strchr(v, ':')) g_shot_ms = (uint32_t)atoi(v), g_shot_file = strchr(v, ':') + 1, i++;
         else if (!strcmp(a, "--shadows")) gpu_set_shadows(strcmp(v, "off") != 0), i++;
-        else if (!strcmp(a, "--time")) gpu_set_time(!strcmp(v, "night") ? 2 : !strcmp(v, "dusk") ? 1 : 0), i++;
+        else if (!strcmp(a, "--time"))
+            gpu_set_time(!strcmp(v, "night") ? 3 : !strcmp(v, "dusk") ? 2 : !strcmp(v, "off") || !strcmp(v, "day") ? 1 : 0), i++;
 #endif
         else if (!strcmp(a, "--wide")) g_canvas_w = atoi(v) < 640 ? 640 : atoi(v) > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : atoi(v) & ~1, i++;
         else if (!strcmp(a, "--fps")) rt_set_show_fps(1);

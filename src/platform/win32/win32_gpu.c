@@ -40,7 +40,7 @@ static ID3D11Texture2D *g_lit_tex[3];
 static ID3D11RenderTargetView *g_lit_rtv[3];
 static ID3D11ShaderResourceView *g_lit_srv[3];
 static int g_lit_w, g_lit_h;
-static volatile LONG g_time; /* 0 day (the game's own look), 1 dusk, 2 night */
+static volatile LONG g_time; /* 0 the mission's own, 1 off (the game's own look), 2 dusk, 3 night */
 static volatile LONG g_shadows = 1; /* the sun's shadows */
 static ID3D11SamplerState *g_linear;
 static ID3D11BlendState *g_blend;
@@ -189,7 +189,8 @@ typedef struct LightConsts {
 /* the times of day: the ambient light, how strong the lights are, how much what glows adds */
 static const struct {
     float ambient[3], strength, glow;
-} k_times[3] = {
+} k_times[4] = {
+    {{1, 1, 1}, 0.6f, 0.8f}, /* the mission's own: its colours; strength and glow times how dark it is */
     {{1, 1, 1}, 0, 0},
     {{0.80f, 0.60f, 0.52f}, 0.55f, 0.45f},
     {{0.24f, 0.27f, 0.45f}, 0.8f, 1.0f},
@@ -211,6 +212,7 @@ static int g_atlas_reset;                    /* the atlas must be cleared */
 static HostCityQuad *g_city_quads;
 static int g_city_n, g_city_cap, g_city_on;
 static HostCityLight *g_city_lights;
+static float g_city_night; /* how dark the mission's palette is */
 static int g_city_nl, g_city_lcap;
 static uint32_t g_city_pal[256];
 static int g_city_rect[4];
@@ -275,13 +277,14 @@ void gpu_set_shadows(int on)
 
 void gpu_set_time(int time)
 {
-    InterlockedExchange(&g_time, time < 0 ? 0 : time > 2 ? 2 : time);
+    InterlockedExchange(&g_time, time < 0 ? 0 : time > 3 ? 3 : time);
 }
 
 void gpu_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                    float scale, const HostCityLight *lights, int nlights)
+                    float scale, const HostCityLight *lights, int nlights, float night)
 {
     AcquireSRWLockExclusive(&g_city_lock);
+    g_city_night = night;
     if (nlights > g_city_lcap) {
         HostCityLight *l = (HostCityLight *)realloc(g_city_lights, sizeof *l * (size_t)nlights);
         if (l != NULL) {
@@ -691,6 +694,7 @@ static void draw_city(RECT dst, int fw, int fh)
     static int lverts_cap;
     UINT stride = sizeof(CityVertex), offset = 0;
     int i, n, nv = 0, nlv = 0, time = (int)g_time;
+    float strength, glow;
     float sx = (float)(dst.right - dst.left) / (float)fw, sy = (float)(dst.bottom - dst.top) / (float)fh, zoom;
     AcquireSRWLockExclusive(&g_city_lock);
     if (!g_city_on) {
@@ -764,15 +768,23 @@ static void draw_city(RECT dst, int fw, int fh)
     sc.top = dst.top + (LONG)((float)g_city_rect[1] * sy);
     sc.right = dst.left + (LONG)((float)g_city_rect[2] * sx);
     sc.bottom = dst.top + (LONG)((float)g_city_rect[3] * sy);
+    /* off; or the mission's own look, lit as dark as it is (a day mission: as the game draws it) */
+    strength = k_times[time].strength;
+    glow = k_times[time].glow;
+    if (time == 0) {
+        strength *= g_city_night;
+        glow *= g_city_night;
+    }
+    if (time == 1 || (time == 0 && g_city_night < 0.02f)) time = -1;
     /* the lights: a quad around each ellipse */
-    if (time != 0 && g_city_nl * 6 > lverts_cap) {
+    if (time >= 0 && g_city_nl * 6 > lverts_cap) {
         LightVertex *v = (LightVertex *)realloc(lverts, sizeof *v * (size_t)g_city_nl * 6);
         if (v != NULL) {
             lverts = v;
             lverts_cap = g_city_nl * 6;
         }
     }
-    for (i = 0; time != 0 && i < g_city_nl && (i + 1) * 6 <= lverts_cap; i++) {
+    for (i = 0; time >= 0 && i < g_city_nl && (i + 1) * 6 <= lverts_cap; i++) {
         const HostCityLight *l = &g_city_lights[i];
         LightVertex c[4];
         int k;
@@ -818,7 +830,7 @@ static void draw_city(RECT dst, int fw, int fh)
     }
     {
         ID3D11ShaderResourceView *srv[2] = {g_atlas_srv, g_pal_srv};
-        int lit = time != 0 && lit_targets(dst.right - dst.left, dst.bottom - dst.top);
+        int lit = time >= 0 && lit_targets(dst.right - dst.left, dst.bottom - dst.top);
         ID3D11DeviceContext_IASetInputLayout(g_ctx, g_city_layout);
         ID3D11DeviceContext_IASetVertexBuffers(g_ctx, 0, 1, &g_city_vb, &stride, &offset);
         ID3D11DeviceContext_IASetPrimitiveTopology(g_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -853,8 +865,8 @@ static void draw_city(RECT dst, int fw, int fh)
             memset(&lc, 0, sizeof lc);
             lc.frame_size[0] = (float)fw;
             lc.frame_size[1] = (float)fh;
-            lc.strength = k_times[time].strength;
-            lc.glow = k_times[time].glow;
+            lc.strength = strength;
+            lc.glow = glow;
             lc.origin[0] = (float)dst.left;
             lc.origin[1] = (float)dst.top;
             if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_comp_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {

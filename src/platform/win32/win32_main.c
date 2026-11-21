@@ -56,7 +56,7 @@
 #define SC_APP_RECORD 0x10B0u
 #define SC_APP_SCREENSHOT 0x10C0u
 #define SC_APP_FPS 0x10D0u
-#define SC_APP_TIME 0x1300u /* + 0x10 * time (0 day, 1 dusk, 2 night) */
+#define SC_APP_TIME 0x1300u /* + 0x10 * time (0 as the mission is, 1 off, 2 dusk, 3 night) */
 #define SC_APP_SHADOWS 0x10E0u
 #define SC_APP_ROUTES 0x10F0u
 #define SC_APP_COLOUR 0x1400u /* + 0x10 * colour (0: the game's) */
@@ -107,9 +107,9 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels)
 }
 
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale, const HostCityLight *lights, int nlights)
+                     float scale, const HostCityLight *lights, int nlights, float night)
 {
-    gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale, lights, nlights);
+    gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale, lights, nlights, night);
     g_frame_city = 1;
 }
 
@@ -232,11 +232,13 @@ static void gdi_image(HDC dc, const uint32_t *pixels, int w, int h, RECT r)
 }
 
 static void save_capture(void);
+static void follow_picture(HWND h);
 
 /* the picture on the GPU: the frame is copied out under the lock, which is released before the (vsync) present,
  * so the game thread never waits for the display */
 static void gpu_paint(HWND h)
 {
+    follow_picture(h);
     static uint32_t copy[FRAME_MAX_W * FRAME_MAX_H];
     RECT r = picture_rect(h);
     int w, hh;
@@ -267,6 +269,7 @@ static void paint(HWND h)
         gpu_paint(h);
         return;
     }
+    follow_picture(h);
     dc = BeginPaint(h, &ps);
     GetClientRect(h, &c);
     /* the bars around the picture */
@@ -458,11 +461,14 @@ static DWORD WINAPI game_thread(LPVOID unused)
 
 /* in full screen the pointer stays on the picture while the game has the focus (on several monitors it would
  * otherwise wander onto another one, where a click goes to another program); free in menus and dialogs */
+static RECT g_clip_rect; /* the picture's rectangle the pointer is kept in (client coordinates) */
+
 static void update_clip(void)
 {
     int want = g_full && !g_minimized && !g_modal && !g_in_menu && GetForegroundWindow() == g_hwnd;
     if (want) {
         RECT r = picture_rect(g_hwnd);
+        g_clip_rect = r;
         MapWindowPoints(g_hwnd, NULL, (POINT *)&r, 2);
         ClipCursor(&r);
         g_clipped = 1;
@@ -470,6 +476,15 @@ static void update_clip(void)
         ClipCursor(NULL);
         g_clipped = 0;
     }
+}
+
+/* the picture changed shape (a mission wider than 4:3, back to 4:3 in the menus): the pointer is kept in the new one */
+static void follow_picture(HWND h)
+{
+    RECT r;
+    if (!g_clipped) return;
+    r = picture_rect(h);
+    if (!EqualRect(&r, &g_clip_rect)) update_clip();
 }
 
 static void update_pause(void)
@@ -908,14 +923,14 @@ static int g_fps_on;
 
 /* the time of day the city is lit for (with Direct3D) */
 static int g_time;
-static const wchar_t *const k_time_names[3] = {L"day", L"dusk", L"night"};
+static const wchar_t *const k_time_names[4] = {L"mission", L"off", L"dusk", L"night"};
 
 static void set_time(int t)
 {
     int k;
     g_time = t;
     gpu_set_time(t);
-    for (k = 0; k < 3; k++)
+    for (k = 0; k < 4; k++)
         CheckMenuItem(GetSystemMenu(g_hwnd, FALSE), SC_APP_TIME + 0x10u * (UINT)k, k == t ? MF_CHECKED : MF_UNCHECKED);
     if (g_ini[0]) WritePrivateProfileStringW(L"video", L"time", k_time_names[t], g_ini);
 }
@@ -1119,9 +1134,10 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         }
         {
             HMENU times = CreatePopupMenu();
-            AppendMenuW(times, MF_STRING | (g_time == 0 ? MF_CHECKED : 0), SC_APP_TIME, L"&Day (as the game draws it)");
-            AppendMenuW(times, MF_STRING | (g_time == 1 ? MF_CHECKED : 0), SC_APP_TIME + 0x10u, L"D&usk");
-            AppendMenuW(times, MF_STRING | (g_time == 2 ? MF_CHECKED : 0), SC_APP_TIME + 0x20u, L"&Night");
+            AppendMenuW(times, MF_STRING | (g_time == 0 ? MF_CHECKED : 0), SC_APP_TIME, L"As the &mission is");
+            AppendMenuW(times, MF_STRING | (g_time == 2 ? MF_CHECKED : 0), SC_APP_TIME + 0x20u, L"D&usk");
+            AppendMenuW(times, MF_STRING | (g_time == 3 ? MF_CHECKED : 0), SC_APP_TIME + 0x30u, L"&Night");
+            AppendMenuW(times, MF_STRING | (g_time == 1 ? MF_CHECKED : 0), SC_APP_TIME + 0x10u, L"&Off (the game's own look)");
             AppendMenuW(sm, MF_POPUP, (UINT_PTR)times, L"&Time of day (missions)");
             AppendMenuW(sm, MF_STRING | (g_shadows ? MF_CHECKED : 0), SC_APP_SHADOWS, L"Sun s&hadows (missions)");
         }
@@ -1209,7 +1225,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             toggle_routes();
             return 0;
 
-        case SC_APP_TIME: case SC_APP_TIME + 0x10u: case SC_APP_TIME + 0x20u:
+        case SC_APP_TIME: case SC_APP_TIME + 0x10u: case SC_APP_TIME + 0x20u: case SC_APP_TIME + 0x30u:
             set_time((int)(((w & 0xFFF0u) - SC_APP_TIME) / 0x10u));
             return 0;
         case SC_APP_MUSIC_VOL: case SC_APP_MUSIC_VOL + 0x10u: case SC_APP_MUSIC_VOL + 0x20u:
@@ -1594,8 +1610,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     {
         wchar_t t[16];
         int k;
-        GetPrivateProfileStringW(L"video", L"time", L"day", t, 16, g_ini);
-        for (k = 0; k < 3; k++)
+        GetPrivateProfileStringW(L"video", L"time", L"mission", t, 16, g_ini);
+        for (k = 0; k < 4; k++)
             if (!_wcsicmp(t, k_time_names[k])) g_time = k;
         gpu_set_time(g_time);
         g_shadows = GetPrivateProfileIntW(L"video", L"shadows", 1, g_ini) != 0;

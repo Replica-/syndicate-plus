@@ -68,9 +68,9 @@ void host_city_reset(void);
 void host_city_image(int image, int w, int h, const uint8_t *pixels);
 /* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, with the
  * frame's palette, each image `scale` times its size (the zoom); the lights shine when the platform shows the city
- * at dusk or at night */
+ * at dusk or at night, or as the mission is: `night` (0..1) is how dark the mission's own palette is */
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale, const HostCityLight *lights, int nlights);
+                     float scale, const HostCityLight *lights, int nlights, float night);
 
 /* the original game files built into the program (a pack written by tools/pack_game.py), used when no game
  * folder is given; NULL when the program has none */

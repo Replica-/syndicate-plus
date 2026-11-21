@@ -708,6 +708,20 @@ static int tile_glow(int image)
     return image < IMAGE_SPRITES ? tile_light(image)->glow : RENDER_GLOW_NONE;
 }
 
+/* how dark the mission is (0 day .. 1 night: its own palette's, render_set_mission_night) */
+static float g_mission_night;
+
+void render_set_mission_night(float night)
+{
+    g_mission_night = night;
+}
+
+static float mission_night(const uint32_t *pal)
+{
+    (void)pal;
+    return g_mission_night;
+}
+
 /* a light at fx, fy of the unzoomed picture */
 static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 {
@@ -1150,6 +1164,6 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         for (i = 0; i < n; i++) hash = (hash ^ b[i]) * 16777619u;
         render_gpu_changed = hash != prev_hash;
         prev_hash = hash;
-        host_city_frame(g_quads, g_nquads, pal, x0, y0, x1, y1, (float)g_zoom, g_lights, g_nlights);
+        host_city_frame(g_quads, g_nquads, pal, x0, y0, x1, y1, (float)g_zoom, g_lights, g_nlights, mission_night(pal));
     }
 }
