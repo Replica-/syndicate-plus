@@ -395,6 +395,7 @@ static void snaps_reset(void)
 void render_reset(void)
 {
     snaps_reset();
+    lights_forget();
 }
 
 /* the playback clock at `now_us`: the snapshots to draw between and how far (0..256); 0 when there are too few */
@@ -524,9 +525,12 @@ static const uint32_t *g_light_palette;
 static HostCityLight g_lights[NB_LIGHTS];
 static int g_nlights;
 
+static float g_car_dir[64][2];
+
 static void lights_forget(void)
 {
     memset(g_tile_light, 0, sizeof g_tile_light);
+    memset(g_car_dir, 0, sizeof g_car_dir);
 }
 
 static int bright(uint32_t c)
@@ -592,6 +596,49 @@ static const TileLight *tile_light(int id)
 static int tile_glow(int image)
 {
     return image < IMAGE_SPRITES ? tile_light(image)->glow : GLOW_NONE;
+}
+
+/* a light at fx, fy of the unzoomed picture */
+static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
+{
+    HostCityLight *h;
+    if (g_nlights == NB_LIGHTS) return;
+    h = &g_lights[g_nlights++];
+    h->x = zoom_x(fx);
+    h->y = zoom_y(fy);
+    h->rx = rx * (float)g_zoom;
+    h->ry = ry * (float)g_zoom;
+    h->colour = colour;
+}
+
+/* things that light up what is around them: a shot's flash (the effects' list), a car's headlights (ahead of it,
+ * the way it last moved) */
+#define LIST_CARS 1
+#define LIST_EFFECTS 4
+#define FLASH_COLOUR 0xFFB050u
+#define HEADLIGHT_COLOUR 0xFFF2D8u
+
+static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_t vx, int32_t vy)
+{
+    float fx, fy;
+    if (li == LIST_EFFECTS) {
+        project_f(x, y, z, &fx, &fy);
+        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy - 8.0f, 44, 30, FLASH_COLOUR);
+    } else if (li == LIST_CARS && i < 64) {
+        float d = sqrtf((float)vx * vx + (float)vy * vy);
+        int k;
+        if (d > 2.0f) {
+            g_car_dir[i][0] = (float)vx / d;
+            g_car_dir[i][1] = (float)vy / d;
+        }
+        if (g_car_dir[i][0] == 0 && g_car_dir[i][1] == 0) return;
+        for (k = 1; k <= 2; k++) {
+            float ahead = 220.0f * (float)k;
+            project_f(x + (int32_t)(g_car_dir[i][0] * ahead), y + (int32_t)(g_car_dir[i][1] * ahead), z, &fx, &fy);
+            add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, 30.0f + 8.0f * k, 20.0f + 5.0f * k,
+                      HEADLIGHT_COLOUR);
+        }
+    }
 }
 
 /* a tile drawn with its top left at fx, fy (unzoomed): its light */
@@ -747,6 +794,9 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                 z = (int16_t)rd16(a + 8u);
             }
             if (x < 0 || y < 0 || x >= mx * 256 || y >= my * 256) continue;
+            if (t.gpu && (li == LIST_CARS || li == LIST_EFFECTS))
+                object_lights(li, (int)i, x, y, z, t256 >= 0 ? sb->pos[n][0] - sa->pos[n][0] : 0,
+                              t256 >= 0 ? sb->pos[n][1] - sa->pos[n][1] : 0);
             objs[nobj].key = (x >> 8) + (y >> 8) * mx;
             objs[nobj].z = z >> 7;
             objs[nobj].x = x;

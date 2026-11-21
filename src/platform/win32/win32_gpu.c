@@ -186,7 +186,7 @@ static const struct {
 } k_times[3] = {
     {{1, 1, 1}, 0, 0},
     {{0.80f, 0.60f, 0.52f}, 0.55f, 0.45f},
-    {{0.24f, 0.27f, 0.45f}, 1.0f, 1.0f},
+    {{0.24f, 0.27f, 0.45f}, 0.8f, 1.0f},
 };
 
 /* ---- the city's images and list, set on the game thread, drawn on the UI thread ---- */
