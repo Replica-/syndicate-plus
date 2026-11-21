@@ -1263,8 +1263,45 @@ static void frame_box(uint32_t *rgb, int w, int h, int x0, int y0, int x1, int y
     }
 }
 
+/* the menus in true colour: what the game draws in the player's company colour (its palette entry for the game's
+ * colour nearest the one chosen) is in the colour chosen */
+static void menu_true_colour(const uint8_t *index, uint32_t *rgb, int w, int h)
+{
+    int i, near, idx;
+    uint32_t c;
+    if (g_player_pick < NB_GAME_COLOURS) return;
+    near = nearest_game_colour(g_player_pick);
+    idx = M[g_addrs->colours + (uint32_t)near];
+    c = k_pick_colours[g_player_pick];
+    for (i = 0; i < w * h; i++)
+        if (index[i] == idx) rgb[i] = c;
+}
+
+/* the pointer over the grids: the game draws it into its picture, under them; the picture as it is without the
+ * pointer is kept (away from it), so what differs near it is the pointer, drawn again on top */
+static void config_pointer(uint32_t *rgb, int w, int h, const uint8_t *index, const uint32_t *pal)
+{
+    static uint8_t ref[320 * 200];
+    static uint32_t ref_us;
+    int fx, fy, mx, my, x, y;
+    uint32_t now = (uint32_t)(host_time_us() / 1000u);
+    mouse_fraction(&fx, &fy);
+    mx = (int)((long long)fx * w / 65536);
+    my = (int)((long long)fy * h / 65536);
+    if (now - ref_us > 500u) memcpy(ref, index, sizeof ref); /* the screen came again */
+    ref_us = now;
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++) {
+            int near = x >= mx - 24 && x < mx + 24 && y >= my - 24 && y < my + 28;
+            if (!near)
+                ref[y * w + x] = index[y * w + x];
+            else if (index[y * w + x] != ref[y * w + x])
+                rgb[y * w + x] = pal[index[y * w + x]];
+        }
+}
+
 /* the grids: the colours, then the logos in the colour chosen (each half size), the choices outlined */
-static void config_grids(uint32_t *rgb, int w, int h)
+static void config_grids(uint32_t *rgb, int w, int h, const uint8_t *index, const uint32_t *pal)
 {
     int k, x, y, colour = g_player_pick >= NB_GAME_COLOURS ? g_player_pick : g_config_colour;
     uint32_t c;
@@ -1286,6 +1323,7 @@ static void config_grids(uint32_t *rgb, int w, int h)
             }
         if (k == g_config_logo) frame_box(rgb, w, h, x0 - 1, y0 - 1, x0 + LOGO_SIZE + 1, y0 + LOGO_SIZE + 1, PICK_BRIGHT);
     }
+    config_pointer(rgb, w, h, index, pal);
 }
 
 static uint32_t hat_colour(int ped)
@@ -1682,8 +1720,9 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     uint64_t age;
     int fx, fy, hw, alpha;
     render_gpu_changed = 0;
-    if (g_addrs != NULL && w == 320 && h == 200 && config_shown()) {
-        config_grids(rgb, w, h);
+    if (g_addrs != NULL && w == 320 && h == 200) {
+        menu_true_colour(index, rgb, w, h);
+        if (config_shown()) config_grids(rgb, w, h, index, palette);
         return 0;
     }
     if (g_addrs == NULL || w < 640 || h != 480 || !in_mission()) return 0;
