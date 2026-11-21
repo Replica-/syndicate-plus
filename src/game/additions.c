@@ -512,8 +512,9 @@ static void game_camera(int32_t *x, int32_t *y)
  * middle of its map window (x 128..640) is the middle of this picture, nudged at each tick so that the city under
  * the pointer is in that window, and the mouse it reads is moved to that point (game_mouse_filter). ---- */
 #define MAP_LEFT 128
-#define MAP_TOP 40
-#define MAP_BOTTOM 440
+#define GAME_TOP 40         /* the game's map window: from line 40 of its frame, 400 lines (its mouse's) */
+#define VIEW_TOP 0          /* this picture's city: the whole height right of the side panel (as FreeSynd's) */
+#define VIEW_BOTTOM 480
 #define MAP_CY 240.0
 #define GAME_MAP_CX 384.0   /* the middle of the game's map window */
 #define ZOOM_MIN 0.5
@@ -540,11 +541,10 @@ static void centre_shift(double *dx, double *dy)
 /* the mouse on this picture */
 static void canvas_mouse(int *sx, int *sy)
 {
-    int fx, fy, mx, my;
+    int fx, fy;
     mouse_fraction(&fx, &fy);
-    mouse_get(&mx, &my, NULL);
     *sx = (int)((long long)fx * g_cw / 65536);
-    *sy = my + MAP_TOP;
+    *sy = (int)((long long)fy * 480 / 65536);
 }
 
 /* a point of this picture on the city as it would be unzoomed */
@@ -560,7 +560,7 @@ static void game_point(double lx, double ly, double wx, double wy, double *gx, d
 {
     double dx = g_view_x - wx, dy = g_view_y - wy;
     *gx = lx + (dx - dy) / 8.0;
-    *gy = ly - MAP_TOP + (dx + dy) / 16.0;
+    *gy = ly - GAME_TOP + (dx + dy) / 16.0;
 }
 
 static double clampd(double v, double lo, double hi)
@@ -591,7 +591,7 @@ static void move_view(void)
     render_set_zoom(g_zoom, (float)map_cx(), (float)MAP_CY);
     canvas_mouse(&mx, &my);
     sx = (g_pan[1] || mx >= g_cw - 1 - EDGE_PX ? 1 : 0) - (g_pan[0] || mx <= EDGE_PX ? 1 : 0);
-    sy = (g_pan[3] || my >= MAP_BOTTOM - 1 - EDGE_PX ? 1 : 0) - (g_pan[2] || my <= MAP_TOP + EDGE_PX ? 1 : 0);
+    sy = (g_pan[3] || my >= VIEW_BOTTOM - 1 - EDGE_PX ? 1 : 0) - (g_pan[2] || my <= VIEW_TOP + EDGE_PX ? 1 : 0);
     if (sx != 0 || sy != 0) {
         /* screen right is world (+1, -1) at 1/4 px a unit, screen down (+1, +1) at 1/8 (the same speed on the
          * screen at any zoom) */
@@ -655,7 +655,7 @@ static void sync_camera(void)
     wx = g_view_x + shx;
     wy = g_view_y + shy;
     canvas_mouse(&mx, &my);
-    if (mx >= MAP_LEFT && my >= MAP_TOP && my < MAP_BOTTOM) {
+    if (mx >= MAP_LEFT && my >= VIEW_TOP && my < VIEW_BOTTOM) {
         double lx, ly, gx, gy, ex, ey;
         unzoom(mx, my, &lx, &ly);
         game_point(lx, ly, wx, wy, &gx, &gy);
@@ -675,17 +675,20 @@ static void sync_camera(void)
 void game_mouse_filter(int *x, int *y)
 {
     int32_t cx, cy;
-    int fx, fy, sx;
+    int fx, fy, sx, sy;
     double lx, ly, gx, gy;
     if (!g_view_on || g_addrs == NULL || !in_mission() || *y < 0 || *y >= 400) return;
     mouse_fraction(&fx, &fy);
     sx = (int)((long long)fx * g_cw / 65536);
+    sy = (int)((long long)fy * 480 / 65536);
     if (sx < MAP_LEFT) {
-        *x = sx; /* the side panel: where it is on this picture */
+        /* the side panel: where it is on this picture */
+        *x = sx;
+        *y = sy - GAME_TOP < 0 ? 0 : sy - GAME_TOP > 399 ? 399 : sy - GAME_TOP;
         return;
     }
     /* the point of the city under the pointer, where the game's camera has it */
-    unzoom(sx, *y + MAP_TOP, &lx, &ly);
+    unzoom(sx, sy, &lx, &ly);
     game_camera(&cx, &cy);
     game_point(lx, ly, cx * 128.0, cy * 128.0, &gx, &gy);
     *x = (int)floor(clampd(gx, MAP_LEFT + MOUSE_MARGIN, 639 - MOUSE_MARGIN));
@@ -719,9 +722,7 @@ static void centre_on_agent(int slot)
 
 /* ---- drawing over the mission ---- */
 #define PED_TARGET 0x2eu      /* (16 bits x, y, z) where it walks to */
-#define VIEW_LEFT 128         /* the map's part of a 640 x 480 frame */
-#define VIEW_TOP 40
-#define VIEW_BOTTOM 440
+#define VIEW_LEFT 128         /* the map's part of the frame: right of the side panel */
 #define MARKER_US 600000u
 
 static uint16_t g_last_target[4][2];
@@ -738,7 +739,7 @@ static void world_to_frame(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
     int32_t dx = x - (int32_t)(int16_t)RD16(g_addrs->view) * 128;
     int32_t dy = y - (int32_t)(int16_t)RD16(g_addrs->view + 2u) * 128;
     *fx = ((dx - dy) >> 3) + VIEW_LEFT;
-    *fy = ((((dx + dy) / 2) - z) >> 3) + 16 + VIEW_TOP;
+    *fy = ((((dx + dy) / 2) - z) >> 3) + 16 + GAME_TOP;
 }
 
 /* blends colour c (0x00RRGGBB) into a pixel of the map's part of the frame, `alpha` 0..255; the pixel may be
@@ -1055,7 +1056,7 @@ static void company_hats(const uint8_t *pix, const uint32_t *pal, uint32_t *rgb,
         /* the head, below the number of an agent of the squad */
         for (y = fy - 31; y <= fy - 14; y++)
             for (x = fx - 8; x <= fx + 8; x++)
-                if (x >= VIEW_LEFT && x < w && y >= VIEW_TOP && y < VIEW_BOTTOM && pix[y * w + x] == HAT_COLOUR)
+                if (x >= VIEW_LEFT && x < w && y >= GAME_TOP && y < GAME_TOP + 400 && pix[y * w + x] == HAT_COLOUR)
                     rgb[y * w + x] = colour;
     }
 }
@@ -1352,7 +1353,7 @@ static uint32_t hat_colour(int ped)
 #define PED_SHOWN 0x1du
 #define PED_SHOWN_BIT 4u
 #define PED_GONE 0xbu
-#define LABEL_DY (-16 + VIEW_TOP - 56)
+#define LABEL_DY (-16 + GAME_TOP - 56)
 
 static int g_cut_level = -1;
 #define FLOOR_OUTLINE 0x5AFF5Au

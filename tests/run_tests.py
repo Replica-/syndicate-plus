@@ -37,7 +37,7 @@ TO_MISSION = SKIP_INTRO + [
     '14000:click@8500;58500',                               # world map: brief
     '17000:click@8500;58700',                               # brief: accept -> team selection
     '20000:click@8500;58700',                               # team selection: accept -> the mission
-    '26000:click@6550;18000',                               # select agent 3
+    '26000:click@6550;20461',                               # select agent 3 (y: of the 480 lines)
 ]
 
 
@@ -223,7 +223,7 @@ def menus_revolt(ctx):
 @test()
 def mission(ctx):
     """into a mission; an agent walks where it is sent; Esc withdraws to the debriefing; then the world map"""
-    walk = TO_MISSION + ['27000:click@36000;42000'] + abort(31000) + ['35000:enter']
+    walk = TO_MISSION + ['27000:click@36000;40455'] + abort(31000) + ['35000:enter']
     r = ctx.run('first', 40, start=SYN, inputs=walk)
     f0, f1 = r.at(27000), r.at(30000)
     check((f0.w, f0.h) == (640, 480), 'the mission is not on screen at 27 s: ' + name(f0))
@@ -241,9 +241,9 @@ def combat(ctx):
     """agent 3 draws the pistol and fires: the debriefing counts the shots ("0%" instead of "no bullets fired")"""
     calm = ctx.run('calm', 37, start=SYN, inputs=TO_MISSION + abort(31000))
     fire = ctx.run('fire', 37, start=SYN, inputs=TO_MISSION + [
-        '28000:click@1640;35500',                               # the pistol
-        '29000:move@58368;42600', '29500:rclick@58368;42600', '30500:rclick@58368;42600',
-        '31500:rclick@58368;42600'] + abort(34000))
+        '28000:click@1640;35044',                               # the pistol
+        '29000:move@58368;40960', '29500:rclick@58368;40960', '30500:rclick@58368;40960',
+        '31500:rclick@58368;40960'] + abort(34000))
     a, b = calm.last(), fire.last()
     check(is_green_screen(a) and is_green_screen(b), 'no debriefing: %s %s' % (name(a), name(b)))
     acc = (0.5, 0.635, 0.95, 0.685)
@@ -274,7 +274,7 @@ def wide_zoom(ctx):
     """a 16:9 mission (854 wide) zoomed out with the wheel: the city fills the width, and a click on it beyond the
     game's own map window sends the agent there (the move marker appears under the pointer)"""
     w, cx, cy = 854, 560, 240
-    fx, fy = cx * 65536 // w, (cy - 40) * 65536 // 400
+    fx, fy = cx * 65536 // w, cy * 65536 // 480   # the picture: the city over its whole height
     r = ctx.run('wide', 29, start=SYN, every=100, extra=['--wide', str(w)],
                 inputs=TO_MISSION + ['27000:wheel@-2', '27500:move@%d;%d' % (fx, fy), '28000:click@%d;%d' % (fx, fy)])
     f = r.at(27900)
@@ -331,7 +331,7 @@ def squad_route(ctx):
     import struct
     dump = os.path.join(ctx.dir, 'mem.bin')
     w, cx, cy = 854, 330, 90
-    fx, fy = cx * 65536 // w, (cy - 40) * 65536 // 400
+    fx, fy = cx * 65536 // w, cy * 65536 // 480   # the picture: the city over its whole height
     ctx.run('route', 60, start=SYN, extra=['--wide', str(w), '--mem-dump', '59500:' + dump],
             inputs=TO_MISSION + ['26300:wheel@-3', '27000:move@%d;%d' % (fx, fy), '27600:click@%d;%d' % (fx, fy)])
     check(os.path.exists(dump), 'no memory dump')
@@ -347,7 +347,7 @@ def mission_menu(ctx):
     """Escape in a mission opens its menu and the mission waits (nothing moves under it); Abort mission (down to
     the last item, Enter) ends the mission as Escape did: the debriefing"""
     r = ctx.run('menu', 36, start=SYN, every=500, inputs=TO_MISSION + [
-        '27000:click@36000;42000', '27500:esc', '30000:e050', '30200:e050', '30400:e050', '30600:e050', '31000:enter'])
+        '27000:click@36000;40455', '27500:esc', '30000:e050', '30200:e050', '30400:e050', '30600:e050', '31000:enter'])
     a, b = r.at(28000), r.at(29500)
     same = sum(1 for p, q in zip(a.pix, b.pix) if p == q) / len(a.pix)
     check(same > 0.995, 'the mission did not wait under its menu: %s %s' % (name(a), name(b)))
@@ -413,7 +413,7 @@ def auto_save(ctx):
     folder = os.path.join(ctx.user, 'Syndicate')
     check(sorted(os.listdir(folder)) == ['03.GAM'], 'the save in line 1 is not in line 4: %s' % os.listdir(folder))
     os.rename(os.path.join(folder, '03.GAM'), os.path.join(folder, '00.GAM'))   # as saved before auto saves
-    ctx.run('mission', 40, start=SYN, inputs=TO_MISSION + ['27000:click@36000;42000'] + abort(31000) + ['35000:enter'])
+    ctx.run('mission', 40, start=SYN, inputs=TO_MISSION + ['27000:click@36000;40455'] + abort(31000) + ['35000:enter'])
     check(sorted(os.listdir(folder)) == ['00.GAM', '03.GAM'], 'the saves are %s' % os.listdir(folder))
     with open(os.path.join(folder, '00.GAM'), 'rb') as f:
         auto = f.read()
@@ -481,7 +481,7 @@ def builtin_files(ctx):
     if not os.path.exists(PACK):
         print('    (no %s: skipped)' % os.path.relpath(PACK, frames.ROOT))
         return
-    inputs = TO_MISSION + ['27000:click@36000;42000']
+    inputs = TO_MISSION + ['27000:click@36000;40455']
     a = ctx.run('folder', 30, start=SYN, inputs=inputs, user=os.path.join(ctx.dir, 'u1'))
     b = ctx.run('pack', 30, start=SYN, inputs=inputs, user=os.path.join(ctx.dir, 'u2'), extra=['--builtin', PACK])
     check('game files: built in' in b.log, 'the pack was not used')
@@ -492,7 +492,7 @@ def builtin_files(ctx):
 @test()
 def repeatable(ctx):
     """two runs with the same input end on the same picture"""
-    inputs = TO_MISSION + ['27000:click@36000;42000']
+    inputs = TO_MISSION + ['27000:click@36000;40455']
     a = ctx.run('a', 30, start=SYN, inputs=inputs, user=os.path.join(ctx.dir, 'u1'))
     b = ctx.run('b', 30, start=SYN, inputs=inputs, user=os.path.join(ctx.dir, 'u2'))
     check(same_pixels(a.last(), b.last()), 'the two runs differ: %s %s' % (name(a.last()), name(b.last())))
