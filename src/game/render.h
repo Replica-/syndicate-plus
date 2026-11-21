@@ -27,6 +27,19 @@ void render_set_view_f(double vx, double vy);
 void render_set_zoom(double zoom, float cx, float cy);
 /* the tiles above level `level` (z / 128) are not drawn, to see inside the buildings; -1: all are */
 void render_set_cut(int level);
+
+/* how a tile lights up at dusk and at night (the light editor) */
+enum { RENDER_GLOW_NONE, RENDER_GLOW_BRIGHT, RENDER_GLOW_FULL };   /* what of it shines */
+enum { RENDER_LIGHT_AUTO, RENDER_LIGHT_NONE, RENDER_LIGHT_ON };    /* whether it lights what is around it */
+typedef struct RenderTileSetting {
+    int glow, light, radius;   /* radius 0: from the tile */
+    uint32_t colour;           /* 0xFFRRGGBB, or 0: from the tile */
+} RenderTileSetting;
+int render_tile_setting(int id, RenderTileSetting *out);
+/* changes a tile's setting (at once) and saves them all in the user's folder (tile_lights.ini) */
+int render_set_tile_setting(int id, const RenderTileSetting *in);
+/* the tile seen at sx, sy of the frame in the last city drawn: its number and where it is drawn */
+int render_tile_at(int sx, int sy, int *id, int *rx, int *ry, int *rw, int *rh);
 /* a tick of the mission: where things are now */
 void render_tick(uint64_t now_us);
 /* a new mission: no tick before */

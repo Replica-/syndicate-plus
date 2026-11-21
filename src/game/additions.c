@@ -369,6 +369,15 @@ static void cheat_names(void)
 #define SC_D 0x20u
 #define SC_B 0x30u                /* held in a mission: see inside the buildings */
 static volatile int g_see_inside;
+/* the light editor (Ctrl+L in a mission): its keys, then what they do to the tile under the pointer */
+#define SC_CTRL 0x1du
+#define SC_L 0x26u
+#define SC_G 0x22u
+#define SC_C 0x2eu
+#define SC_LBRACKET 0x1au
+#define SC_RBRACKET 0x1bu
+static volatile int g_editor;
+static volatile int g_edit_key;
 
 static volatile uint64_t g_tick_us;   /* the last tick of a mission */
 static volatile int g_pan[4];         /* scroll keys held: left, right, up, down */
@@ -417,6 +426,15 @@ uint32_t game_key_filter(uint32_t sc, int down)
         } else {
             g_press_us[slot] = now;
         }
+    }
+    /* Ctrl+L in a mission: the light editor on or off; while it is on its keys are its own */
+    if (k == SC_L && down && !was_down && g_down[SC_CTRL] && in_mission()) {
+        g_editor = !g_editor;
+        return 0;
+    }
+    if (g_editor && in_mission() && (k == SC_G || k == SC_L || k == SC_C || k == SC_LBRACKET || k == SC_RBRACKET)) {
+        if (down && !was_down) g_edit_key = (int)k;
+        return 0;
     }
     /* B held in a mission: the buildings are seen inside (the game does not get it) */
     if (k == SC_B) {
@@ -1126,6 +1144,102 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
     }
 }
 
+/* ---- the light editor's panel: a small font of its own (3 x 5 pixels, drawn twice the size) ---- */
+static const char *const k_font_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:-+[]./,_()";
+static const uint16_t k_font[] = {
+    /* A-Z: 15 bits, 5 rows of 3 from the top, bit 0 the top left */
+    0x5BEA, 0x7AEB, 0x624E, 0x3B6B, 0x73CF, 0x13CF, 0x6B4E, 0x5BED, 0x7497, 0x2B24, 0x5AED, 0x7249, 0x5B7D, 0x5B6B,
+    0x2B6A, 0x13EB, 0x4F6A, 0x5AEB, 0x388E, 0x2497, 0x7B6D, 0x2B6D, 0x5F6D, 0x5AAD, 0x24AD, 0x72A7,
+    /* 0-9 */
+    0x7B6F, 0x749A, 0x73E7, 0x79E7, 0x49ED, 0x79CF, 0x7BCF, 0x4927, 0x7BEF, 0x79EF,
+    /* : - + [ ] . / , _ ( ) */
+    0x0410, 0x01C0, 0x05D0, 0x6496, 0x3493, 0x2000, 0x12A4, 0x1400, 0x7000, 0x4494, 0x1491,
+};
+
+static void draw_text(uint32_t *rgb, int w, int x, int y, const char *t, uint32_t c)
+{
+    for (; *t; t++, x += 8) {
+        const char *k = strchr(k_font_chars, *t >= 'a' && *t <= 'z' ? *t - 32 : *t);
+        int gx, gy, bits;
+        if (*t == ' ' || k == NULL) continue;
+        bits = k_font[k - k_font_chars];
+        for (gy = 0; gy < 5; gy++)
+            for (gx = 0; gx < 3; gx++)
+                if (bits & (1 << (gy * 3 + gx))) {
+                    int px = x + gx * 2, py = y + gy * 2, a, b;
+                    for (b = 0; b < 2; b++)
+                        for (a = 0; a < 2; a++)
+                            if (px + a >= 0 && px + a < w && py + b >= 0 && py + b < 480) rgb[(py + b) * w + px + a] = c;
+                }
+    }
+}
+
+static void fill_box(uint32_t *rgb, int w, int x0, int y0, int x1, int y1, uint32_t c, int alpha)
+{
+    int x, y;
+    for (y = y0; y < y1; y++)
+        for (x = x0; x < x1; x++) plot(rgb, w, x, y, c, alpha);
+}
+
+static void outline_box(uint32_t *rgb, int w, int x0, int y0, int x1, int y1, uint32_t c)
+{
+    int x, y;
+    for (x = x0; x < x1; x++) {
+        plot(rgb, w, x, y0, c, 255);
+        plot(rgb, w, x, y1 - 1, c, 255);
+    }
+    for (y = y0; y < y1; y++) {
+        plot(rgb, w, x0, y, c, 255);
+        plot(rgb, w, x1 - 1, y, c, 255);
+    }
+}
+
+#define EDITOR_TEXT 0xFFE070u
+static const uint32_t k_edit_colours[] = {0, 0xFFFFE6B4u, 0xFFFFFFFFu, 0xFFFF4030u, 0xFFFFA030u, 0xFF50FF60u, 0xFF50E0FFu,
+                                          0xFF6080FFu};
+static const char *const k_edit_colour_names[] = {"AUTO", "WARM", "WHITE", "RED", "AMBER", "GREEN", "CYAN", "BLUE"};
+
+/* the tile under the pointer: outlined, its settings shown, the keys pressed applied to it */
+static void light_editor(uint32_t *rgb, int w)
+{
+    static const char *const glow[3] = {"NONE", "BRIGHT", "FULL"}, *const light[3] = {"AUTO", "NONE", "ON"};
+    int mx, my, id = -1, rx = 0, ry = 0, rw = 0, rh = 0, key = g_edit_key, k, c = 0;
+    char line[96];
+    RenderTileSetting set;
+    g_edit_key = 0;
+    canvas_mouse(&mx, &my);
+    if (mx >= VIEW_LEFT && my >= VIEW_TOP && my < VIEW_BOTTOM) render_tile_at(mx, my, &id, &rx, &ry, &rw, &rh);
+    fill_box(rgb, w, VIEW_LEFT + 4, VIEW_TOP + 4, VIEW_LEFT + 4 + 8 * 62, VIEW_TOP + 4 + 62, 0, 190);
+    draw_text(rgb, w, VIEW_LEFT + 10, VIEW_TOP + 10, "LIGHT EDITOR (CTRL+L CLOSES). DUSK OR NIGHT SHOWS IT.", EDITOR_TEXT);
+    if (id < 0) {
+        draw_text(rgb, w, VIEW_LEFT + 10, VIEW_TOP + 26, "POINT AT A TILE OF THE CITY.", 0xFFFFFF);
+        return;
+    }
+    render_tile_setting(id, &set);
+    if (key != 0) {
+        if (key == SC_G) set.glow = (set.glow + 1) % 3;
+        if (key == SC_L) set.light = (set.light + 1) % 3;
+        if (key == SC_LBRACKET) set.radius = set.radius >= 10 ? set.radius - 10 : 0;
+        if (key == SC_RBRACKET) set.radius = set.radius + 10 > 250 ? 250 : set.radius + 10;
+        if (key == SC_C) {
+            for (k = 0; k < (int)(sizeof k_edit_colours / sizeof k_edit_colours[0]); k++)
+                if (k_edit_colours[k] == set.colour) c = k;
+            set.colour = k_edit_colours[(c + 1) % (sizeof k_edit_colours / sizeof k_edit_colours[0])];
+        }
+        render_set_tile_setting(id, &set);
+    }
+    for (k = 0, c = -1; k < (int)(sizeof k_edit_colours / sizeof k_edit_colours[0]); k++)
+        if (k_edit_colours[k] == set.colour) c = k;
+    outline_box(rgb, w, rx, ry, rx + rw, ry + rh, EDITOR_TEXT);
+    snprintf(line, sizeof line, "TILE %d.  G GLOW: %s.  L LIGHT: %s.", id, glow[set.glow % 3], light[set.light % 3]);
+    draw_text(rgb, w, VIEW_LEFT + 10, VIEW_TOP + 26, line, 0xFFFFFF);
+    if (set.radius)
+        snprintf(line, sizeof line, "[ ] RADIUS: %d.  C COLOUR: %s.", set.radius, c >= 0 ? k_edit_colour_names[c] : "SET");
+    else
+        snprintf(line, sizeof line, "[ ] RADIUS: AUTO.  C COLOUR: %s.", c >= 0 ? k_edit_colour_names[c] : "SET");
+    draw_text(rgb, w, VIEW_LEFT + 10, VIEW_TOP + 42, line, 0xFFFFFF);
+}
+
 #define MARKER_COLOUR 0x5aff5au
 
 int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h)
@@ -1143,6 +1257,7 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
         company_hats(index, palette, rgb, w);
     }
     draw_drops(rgb, w);
+    if (g_editor && renderer_on()) light_editor(rgb, w);
     solid_selected_boxes(index, palette, rgb, w);
     draw_scanner_extras(rgb, w);
     if (g_marker_us == 0) return render_gpu_changed;

@@ -10,6 +10,7 @@
 #include "render.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -401,7 +402,7 @@ static void snaps_reset(void)
 void render_reset(void)
 {
     snaps_reset();
-    lights_forget();
+    lights_forget(); /* and the settings file is read again (it may have been changed) */
 }
 
 /* the playback clock at `now_us`: the snapshots to draw between and how far (0..256); 0 when there are too few */
@@ -507,17 +508,106 @@ static void project_f(int32_t x, int32_t y, int32_t z, float *fx, float *fy)
 
 /* ---- what shines at dusk and at night (the GPU's lighting): lamps in the tiles, found from their pixels in the
  * mission's palette, and the tiles set below ---- */
-enum { GLOW_NONE, GLOW_BRIGHT, GLOW_FULL };
-enum { LIGHT_AUTO, LIGHT_NONE, LIGHT_ON };
 static const struct {
     uint8_t tile, glow, light, radius; /* radius 0: from the tile */
 } k_tile_lights[] = {
-    {33, GLOW_NONE, LIGHT_ON, 0},   {92, GLOW_NONE, LIGHT_ON, 0},     {95, GLOW_NONE, LIGHT_ON, 0},
-    {119, GLOW_FULL, LIGHT_ON, 0},  {121, GLOW_BRIGHT, LIGHT_ON, 0},  {170, GLOW_NONE, LIGHT_ON, 0},
-    {187, GLOW_NONE, LIGHT_NONE, 0}, {201, GLOW_NONE, LIGHT_ON, 130}, {207, GLOW_FULL, LIGHT_ON, 80},
-    {226, GLOW_NONE, LIGHT_ON, 0},
+    {33, RENDER_GLOW_NONE, RENDER_LIGHT_ON, 0},   {92, RENDER_GLOW_NONE, RENDER_LIGHT_ON, 0},     {95, RENDER_GLOW_NONE, RENDER_LIGHT_ON, 0},
+    {119, RENDER_GLOW_FULL, RENDER_LIGHT_ON, 0},  {121, RENDER_GLOW_BRIGHT, RENDER_LIGHT_ON, 0},  {170, RENDER_GLOW_NONE, RENDER_LIGHT_ON, 0},
+    {187, RENDER_GLOW_NONE, RENDER_LIGHT_NONE, 0}, {201, RENDER_GLOW_NONE, RENDER_LIGHT_ON, 130}, {207, RENDER_GLOW_FULL, RENDER_LIGHT_ON, 80},
+    {226, RENDER_GLOW_NONE, RENDER_LIGHT_ON, 0},
 };
 #define LAMP_MAX_PIXELS 30  /* more bright pixels than this: a painted surface, not a lamp */
+#define TILE_LIGHTS_FILE "tile_lights.ini"
+
+/* the settings of each tile (render_tile_setting): the defaults above, then tile_lights.ini in the user's folder */
+static RenderTileSetting g_tile_set[NB_TILES];
+static int g_tile_set_loaded;
+
+static const char *const k_glow_names[3] = {"none", "bright", "full"};
+static const char *const k_light_names[3] = {"auto", "none", "on"};
+
+static int name_index(const char *v, const char *const *names, int n)
+{
+    int k;
+    for (k = 0; k < n; k++)
+        if (strncmp(v, names[k], strlen(names[k])) == 0) return k;
+    return 0;
+}
+
+static void tile_light_forget(int id);
+
+static void tile_settings_load(void)
+{
+    char path[1200], line[256];
+    FILE *f;
+    int k;
+    g_tile_set_loaded = 1;
+    memset(g_tile_set, 0, sizeof g_tile_set);
+    for (k = 0; k < (int)(sizeof k_tile_lights / sizeof k_tile_lights[0]); k++) {
+        RenderTileSetting *t = &g_tile_set[k_tile_lights[k].tile];
+        t->glow = k_tile_lights[k].glow;
+        t->light = k_tile_lights[k].light;
+        t->radius = k_tile_lights[k].radius;
+    }
+    snprintf(path, sizeof path, "%s/%s", rt_user_dir, TILE_LIGHTS_FILE);
+    f = fopen(path, "r");
+    if (f == NULL) return;
+    /* tile=N glow=none|bright|full light=auto|none|on radius=R colour=auto|r,g,b */
+    while (fgets(line, sizeof line, f) != NULL) {
+        const char *v;
+        RenderTileSetting t;
+        int id, r, g, b;
+        if (line[0] == '#' || sscanf(line, "tile=%d", &id) != 1 || id < 0 || id >= NB_TILES) continue;
+        memset(&t, 0, sizeof t);
+        if ((v = strstr(line, "glow=")) != NULL) t.glow = name_index(v + 5, k_glow_names, 3);
+        if ((v = strstr(line, "light=")) != NULL) t.light = name_index(v + 6, k_light_names, 3);
+        if ((v = strstr(line, "radius=")) != NULL) t.radius = atoi(v + 7);
+        if ((v = strstr(line, "colour=")) != NULL && sscanf(v + 7, "%d,%d,%d", &r, &g, &b) == 3)
+            t.colour = 0xFF000000u | (uint32_t)(r & 255) << 16 | (uint32_t)(g & 255) << 8 | (uint32_t)(b & 255);
+        g_tile_set[id] = t;
+    }
+    fclose(f);
+}
+
+int render_tile_setting(int id, RenderTileSetting *out)
+{
+    if (id < 0 || id >= NB_TILES) return 0;
+    if (!g_tile_set_loaded) tile_settings_load();
+    *out = g_tile_set[id];
+    return 1;
+}
+
+int render_set_tile_setting(int id, const RenderTileSetting *in)
+{
+    char path[1200];
+    FILE *f;
+    int k;
+    if (id < 0 || id >= NB_TILES) return 0;
+    if (!g_tile_set_loaded) tile_settings_load();
+    g_tile_set[id] = *in;
+    tile_light_forget(id); /* found again */
+    /* all the tiles with settings other than none (the file is the whole list) */
+    snprintf(path, sizeof path, "%s/%s", rt_user_dir, TILE_LIGHTS_FILE);
+    f = fopen(path, "w");
+    if (f == NULL) return 0;
+    fprintf(f, "# How the tiles light up at dusk and at night (the light editor: Ctrl+L in a mission)\n"
+               "#   glow   = none, bright (its brightest pixels shine), full (all of it)\n"
+               "#   light  = auto (when the tile has a small bright spot: a lamp), none, on\n"
+               "#   radius = of the light in pixels, 0: from the tile\n"
+               "#   colour = of the light: auto (from the tile) or r,g,b\n");
+    for (k = 0; k < NB_TILES; k++) {
+        const RenderTileSetting *t = &g_tile_set[k];
+        if (t->glow == RENDER_GLOW_NONE && t->light == RENDER_LIGHT_AUTO && t->radius == 0 && t->colour == 0) continue;
+        fprintf(f, "tile=%d glow=%s light=%s radius=%d colour=", k, k_glow_names[t->glow % 3], k_light_names[t->light % 3],
+                t->radius);
+        if (t->colour)
+            fprintf(f, "%u,%u,%u\n", (t->colour >> 16) & 255u, (t->colour >> 8) & 255u, t->colour & 255u);
+        else
+            fprintf(f, "auto\n");
+    }
+    fclose(f);
+    return 1;
+}
 #define NB_LIGHTS 1024
 
 typedef struct TileLight {
@@ -537,6 +627,12 @@ static void lights_forget(void)
 {
     memset(g_tile_light, 0, sizeof g_tile_light);
     memset(g_car_dir, 0, sizeof g_car_dir);
+    g_tile_set_loaded = 0;
+}
+
+static void tile_light_forget(int id)
+{
+    g_tile_light[id].known = 0;
 }
 
 static int bright(uint32_t c)
@@ -550,19 +646,17 @@ static const TileLight *tile_light(int id)
     TileLight *l = &g_tile_light[id];
     if (!l->known) {
         const uint8_t *px = tile(id);
-        int x, y, n = 0, k, opaque = 0;
+        int x, y, n = 0, opaque = 0;
         double sx = 0, sy = 0, ox = 0, oy = 0, cr = 0, cg = 0, cb = 0, mx;
+        RenderTileSetting set;
         memset(l, 0, sizeof *l);
         l->known = 1;
-        l->light = LIGHT_AUTO;
-        for (k = 0; k < (int)(sizeof k_tile_lights / sizeof k_tile_lights[0]); k++)
-            if (k_tile_lights[k].tile == id) {
-                l->glow = k_tile_lights[k].glow;
-                l->light = k_tile_lights[k].light;
-                l->radius = (float)k_tile_lights[k].radius;
-            }
+        render_tile_setting(id, &set);
+        l->glow = (uint8_t)set.glow;
+        l->light = (uint8_t)set.light;
+        l->radius = (float)set.radius;
         if (px == NULL || g_light_palette == NULL) {
-            l->light = LIGHT_NONE;
+            l->light = RENDER_LIGHT_NONE;
             return l;
         }
         for (y = 0; y < TILE_H; y++)
@@ -582,8 +676,8 @@ static const TileLight *tile_light(int id)
                     cb += v & 0xFF;
                 }
             }
-        if (l->light == LIGHT_AUTO) l->light = n > 0 && n <= LAMP_MAX_PIXELS ? LIGHT_ON : LIGHT_NONE;
-        if (l->light != LIGHT_ON) return l;
+        if (l->light == RENDER_LIGHT_AUTO) l->light = n > 0 && n <= LAMP_MAX_PIXELS ? RENDER_LIGHT_ON : RENDER_LIGHT_NONE;
+        if (l->light != RENDER_LIGHT_ON) return l;
         if (n > 0) {
             l->ox = (float)(sx / n);
             l->oy = (float)(sy / n);
@@ -595,13 +689,14 @@ static const TileLight *tile_light(int id)
             l->colour = 0xFFE6B4u; /* a warm lamp */
         }
         if (l->radius == 0) l->radius = (float)(48 + (n < 20 ? n : 20) * 2);
+        if (set.colour != 0) l->colour = set.colour & 0xFFFFFFu;
     }
     return l;
 }
 
 static int tile_glow(int image)
 {
-    return image < IMAGE_SPRITES ? tile_light(image)->glow : GLOW_NONE;
+    return image < IMAGE_SPRITES ? tile_light(image)->glow : RENDER_GLOW_NONE;
 }
 
 /* a light at fx, fy of the unzoomed picture */
@@ -647,12 +742,40 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
     }
 }
 
+/* the tiles drawn in the last frame, in order (unzoomed places) */
+#define NB_DRAWN 12288
+static struct {
+    uint8_t id;
+    int16_t x, y;
+} g_drawn[NB_DRAWN];
+static int g_ndrawn;
+
+int render_tile_at(int sx, int sy, int *id, int *rx, int *ry, int *rw, int *rh)
+{
+    float lx = g_zcx + ((float)sx - g_zcx) / (float)g_zoom, ly = g_zcy + ((float)sy - g_zcy) / (float)g_zoom;
+    int i;
+    for (i = g_ndrawn - 1; i >= 0; i--) {
+        int x = (int)floorf(lx) - g_drawn[i].x, y = (int)floorf(ly) - g_drawn[i].y;
+        const uint8_t *px;
+        if (x < 0 || y < 0 || x >= TILE_W || y >= TILE_H) continue;
+        px = tile(g_drawn[i].id);
+        if (px == NULL || px[y * TILE_W + x] == 255) continue;
+        *id = g_drawn[i].id;
+        *rx = (int)floorf(zoom_x((float)g_drawn[i].x));
+        *ry = (int)floorf(zoom_y((float)g_drawn[i].y));
+        *rw = (int)ceilf(TILE_W * (float)g_zoom);
+        *rh = (int)ceilf(TILE_H * (float)g_zoom);
+        return 1;
+    }
+    return 0;
+}
+
 /* a tile drawn with its top left at fx, fy (unzoomed): its light */
 static void tile_lights_at(int id, float fx, float fy)
 {
     const TileLight *l = tile_light(id);
     HostCityLight *h;
-    if (l->light != LIGHT_ON || g_nlights == NB_LIGHTS) return;
+    if (l->light != RENDER_LIGHT_ON || g_nlights == NB_LIGHTS) return;
     h = &g_lights[g_nlights++];
     h->x = zoom_x(fx + l->ox);
     h->y = zoom_y(fy + l->oy);
@@ -756,6 +879,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     if (mx <= 0 || my <= 0 || mz <= 0 || mx > 256 || my > 256 || mz > 16) return;
     g_nquads = 0;
     g_nlights = 0;
+    g_ndrawn = 0;
     if (t.gpu) {
         /* a new palette: the lamps are found again */
         uint32_t hash = 2166136261u;
@@ -847,6 +971,12 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
                             ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
                         if (t.gpu) tile_lights_at(tid, ffx + (float)render_tile_dx, ffy + (float)render_tile_dy);
+                        if (g_ndrawn < NB_DRAWN) {
+                            g_drawn[g_ndrawn].id = (uint8_t)tid;
+                            g_drawn[g_ndrawn].x = (int16_t)(fx + render_tile_dx);
+                            g_drawn[g_ndrawn].y = (int16_t)(fy + render_tile_dy);
+                            g_ndrawn++;
+                        }
                     }
                 }
                 for (; k < nobj && objs[k].key == key && objs[k].z <= tz; k++) draw_obj(&t, &objs[k]);
