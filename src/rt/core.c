@@ -339,6 +339,11 @@ static const RtFunc *find_func(uint32_t addr)
     return f;
 }
 
+const RtModuleDef *rt_current_module(void)
+{
+    return g_proc != NULL ? g_proc->def : NULL;
+}
+
 void rt_call_ind(uint32_t addr)
 {
     const RtFunc *f;
@@ -877,6 +882,7 @@ int rt_run_module(const RtModuleDef *def, const char *dos_path, const char *args
     if (rc != 0) rt_fatal("%s: unsupported LE image (%d)", host, rc);
     g_heap_top_hint = top;
     g_proc = &proc;
+    game_hooks_install(def);
 
     memset(&R, 0, sizeof R);
     rt_sel_reset();
@@ -903,6 +909,7 @@ int rt_run_module(const RtModuleDef *def, const char *dos_path, const char *args
     mouse_used_swap(parent_mouse);
 
     g_proc = parent;
+    if (parent != NULL) game_hooks_install(parent->def);
     if (parent != NULL) {
         /* DOS memory, the BIOS data and the vectors go back to the parent; its environment and PSP stay */
         memcpy(parent->mem, proc.mem, LOW_ENV);

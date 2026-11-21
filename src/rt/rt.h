@@ -54,6 +54,10 @@ int rt_run_module(const RtModuleDef *def, const char *dos_path, const char *args
 /* the game layer maps a DOS program path ("D:\SYNDICAT\MAIN.EXE") to its recompiled module */
 const RtModuleDef *game_find_module(const char *dos_path);
 void rt_register_reloc_module(const RtModuleDef *def);
+/* the game layer sets the hooks of the program that runs now (src/game/hooks.c; again when a child ends) */
+void game_hooks_install(const RtModuleDef *def);
+/* the running program */
+const RtModuleDef *rt_current_module(void);
 RT_NORETURN void rt_exit_process(int code);
 extern int rt_exit_code;
 

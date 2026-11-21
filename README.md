@@ -96,6 +96,14 @@ its own, the file plays instead (`src/rt/music.c` follows the calls into the AIL
 game pauses and picks up again, like the city song around a fight, goes on from where it stopped, with a short
 fade in.  Songs without a file play as before.
 
+### Auto saves
+
+When the world map comes up after a mission, the game saves itself in line 1 of the Load/Save screen, named
+`AUTO <day>/<month> <hour>:<minute>`; the auto saves before it move down to lines 2 and 3, the oldest is dropped.
+They load like any save.  Lines 4 to 10 are the player's: a save made in one of the first three lines goes to the
+first empty line from 4 on, and a save from before (in lines 1 to 3) moves to an empty line when the first auto
+save is made.  This works in both games and every language (`src/game/additions.c`).
+
 ### Videos and screenshots
 
 F12 records the game with its sound as an MP4 (1280x960, sharp pixels) in a `Videos` folder beside
@@ -129,9 +137,9 @@ They need the game files in `_references/dos`.
 
 | Path | What it holds |
 |------|---------------|
-| `tools/` | `le.py` (LE/LX loader), `discover.py` (code discovery), `recomp.py` (x86 to C translator), `gen_all.py` (writes `gen/`), `pack_game.py` (the built-in game files), icon and notarization helpers |
+| `tools/` | `find_equiv.py` (a function of one program in the others, for the hooks), `le.py` (LE/LX loader), `discover.py` (code discovery), `recomp.py` (x86 to C translator), `gen_all.py` (writes `gen/`), `pack_game.py` (the built-in game files), icon and notarization helpers |
 | `src/rt/` | the portable runtime: CPU state, DOS/DPMI/BIOS, VGA, timer, keyboard, mouse, Sound Blaster and OPL2 |
-| `src/game/` | which recompiled DOS programs make up the game and how it starts |
+| `src/game/` | which recompiled DOS programs make up the game and how it starts; the hooks on the game's functions (`hooks.c`) and what they add (`additions.c`) |
 | `src/video/` | the CRT scanline filter, the video recorder and screenshots |
 | `src/platform/` | the front ends: `win32/`, `macos/`, `posix/` (shared POSIX services), `headless/` (tests) |
 | `src/third_party/` | dr_mp3, dr_flac, dr_wav, stb_vorbis and stb_image_write (public domain / MIT-0) |

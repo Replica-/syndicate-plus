@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "../rt/music.h"
+#include "hooks.h"
 #include "../rt/rt.h"
 #include "../rt/vfs.h"
 
@@ -53,6 +54,17 @@ const RtModuleDef *game_find_module(const char *dos_path)
     for (i = 0; i < sizeof MODULES / sizeof MODULES[0]; i++)
         if (strcmp(MODULES[i].dos_path, dos_path) == 0) return MODULES[i].def;
     return NULL;
+}
+
+int game_of_module(const RtModuleDef *def)
+{
+    if (def == &syn_main_module) return GAME_SYN;
+    if (def == &syn_smain_module) return GAME_SYN_S;
+    if (def == &syn_gmain_module) return GAME_SYN_G;
+    if (def == &ar_main_module) return GAME_AR;
+    if (def == &ar_smain_module) return GAME_AR_S;
+    if (def == &ar_gmain_module) return GAME_AR_G;
+    return GAME_NONE;
 }
 
 const char *game_check_dir(const char *dir)
@@ -134,6 +146,7 @@ int game_main(const GameOptions *opt)
     } else {
         rc = rt_run_module(&synd_module, "D:\\SYND.EXE", "");
     }
+    game_hooks_end();
     music_shutdown();
     return rc;
 }

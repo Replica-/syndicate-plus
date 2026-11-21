@@ -87,13 +87,23 @@ void vga_write8(uint32_t a, uint8_t v);
 extern int32_t rt_poll_budget;
 extern const uint8_t rt_parity[256];
 
+/* hooks on the functions of the running program (src/game/hooks.c): one bit per guest address of its image.
+ * A hooked function calls rt_hook() on entry; when that returns 1 the hook has done the function's work
+ * (including its ret: the return address popped) and the function returns at once.  The address is a constant,
+ * so a function without a hook pays one byte test. */
+#define RT_HOOK_BASE 0x00400000u
+#define RT_HOOK_SPAN 0x00100000u
+extern uint8_t rt_hook_bits[RT_HOOK_SPAN / 8u];
+int rt_hook(uint32_t addr);
+#define RT_HOOKED(a)     ((uint32_t)((a) - RT_HOOK_BASE) < RT_HOOK_SPAN && ((rt_hook_bits[((a) - RT_HOOK_BASE) >> 3] >> ((a) & 7u)) & 1u))
+
 #ifdef RT_TRACE_CALLS
 void rt_trace_enter(uint32_t addr);
 void rt_trace_leave(uint32_t addr);
-#define RT_ENTER(a) rt_trace_enter(a)
+#define RT_ENTER(a)                                  do {                                                 rt_trace_enter(a);                               if (RT_HOOKED(a) && rt_hook(a)) return;     } while (0)
 #define RT_LEAVE(a) rt_trace_leave(a)
 #else
-#define RT_ENTER(a) ((void)0)
+#define RT_ENTER(a)                                  do {                                                 if (RT_HOOKED(a) && rt_hook(a)) return;     } while (0)
 #define RT_LEAVE(a) ((void)0)
 #endif
 

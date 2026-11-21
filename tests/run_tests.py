@@ -29,6 +29,7 @@ PACK = os.path.join(frames.ROOT, 'build', 'syndgame.pak')
 
 SYN = r'SYNDICAT\MAIN.EXE /c0 /s'
 SKIP_INTRO = ['3000:esc', '7000:esc']                    # the intro, then the title screen
+LINE4 = 29800                                            # line 4 of the Load/Save screen (lines are 12 pixels apart)
 
 # Syndicate, from the main menu to a mission with agent 3 selected (about 27 s in)
 TO_MISSION = SKIP_INTRO + [
@@ -246,14 +247,15 @@ def combat(ctx):
 
 @test()
 def save_load(ctx):
-    """save a game named ABC, then load it in a new run: the funds stored in the save show up"""
+    """save a game named ABC in line 4 (1-3 hold the auto saves), then load it in a new run: the funds stored in the
+    save show up"""
     save = ctx.run('first', 19, start=SYN, inputs=SKIP_INTRO + [
-        '10000:f3', '12000:click@19600;18000',                 # load/save, slot 1
+        '10000:f3', '12000:click@19600;%d' % LINE4,              # load/save, line 4
         '13000:del', '13300:del', '13600:del', '13900:del', '14200:del',   # "EMPTY"
         '14500:a', '14800:b', '15100:c', '15500:enter',
         '16500:click@19600;58700'])                             # SAVE
-    path = os.path.join(ctx.user, 'Syndicate', '00.GAM')                   # the game's C:\SYND\SAVE
-    check(os.path.exists(path), 'no save file Syndicate/00.GAM')
+    path = os.path.join(ctx.user, 'Syndicate', '03.GAM')                   # the game's C:\SYND\SAVE
+    check(os.path.exists(path), 'no save file Syndicate/03.GAM')
     data = bytearray(open(path, 'rb').read())
     check(data[:4] == b'ABC\0', 'the save is named %r' % bytes(data[:8]))
     check(struct.unpack_from('<I', data, 0x14)[0] == 30000, 'the funds in the save are not 30000')
@@ -264,7 +266,7 @@ def save_load(ctx):
     fresh = ctx.run('fresh', 24, start=SYN, user=os.path.join(ctx.dir, 'fresh_user'),
                     inputs=SKIP_INTRO + ['%d:%s' % (t, e) for t, e in zip((10000, 14000, 17000), team)])
     loaded = ctx.run('loaded', 30, start=SYN, inputs=SKIP_INTRO + [
-        '10000:f3', '12000:click@19600;18000', '13000:click@8500;58700'] +   # slot 1, LOAD
+        '10000:f3', '12000:click@19600;%d' % LINE4, '13000:click@8500;58700'] +   # line 4, LOAD
         ['%d:%s' % (t, e) for t, e in zip((16000, 20000, 23000), team)])
     a, b = fresh.last(), loaded.last()
     funds = (0.76, 0.19, 0.97, 0.26)
@@ -275,11 +277,31 @@ def save_load(ctx):
 
 
 @test()
+def auto_save(ctx):
+    """after a mission the world map saves the game in line 1 ("AUTO ..."); a save of the player found there moves
+    to line 4, and a save the player makes in line 1 goes to line 4 too"""
+    ctx.run('player', 19, start=SYN, inputs=SKIP_INTRO + [
+        '10000:f3', '12000:click@19600;18000', '13000:x', '15500:enter', '16500:click@19600;58700'])  # line 1
+    folder = os.path.join(ctx.user, 'Syndicate')
+    check(sorted(os.listdir(folder)) == ['03.GAM'], 'the save in line 1 is not in line 4: %s' % os.listdir(folder))
+    os.rename(os.path.join(folder, '03.GAM'), os.path.join(folder, '00.GAM'))   # as saved before auto saves
+    ctx.run('mission', 40, start=SYN, inputs=TO_MISSION + ['27000:click@36000;42000', '31000:esc', '35000:enter'])
+    check(sorted(os.listdir(folder)) == ['00.GAM', '03.GAM'], 'the saves are %s' % os.listdir(folder))
+    with open(os.path.join(folder, '00.GAM'), 'rb') as f:
+        auto = f.read()
+    with open(os.path.join(folder, '03.GAM'), 'rb') as f:
+        moved = f.read()
+    check(auto[:5] == b'AUTO ' and len(auto) == 28247, 'line 1 is not an auto save: %r' % auto[:20])
+    check(moved[:1] == b'X', 'line 4 is not the save of the player: %r' % moved[:20])
+
+
+@test()
 def save_revolt(ctx):
-    """American Revolt saves into a folder of its own, apart from Syndicate's (both name their saves 00.GAM...)"""
+    """American Revolt saves into a folder of its own, apart from Syndicate's (both name their saves 00.GAM...);
+    a save in line 1 goes to line 4, as line 1 holds an auto save"""
     ctx.run('first', 19, start=r'DATADISK\MAIN.EXE /c0 /s', inputs=SKIP_INTRO + [
         '10000:f3', '12000:click@19600;18000', '13000:a', '15500:enter', '16500:click@19600;58700'])
-    check(os.path.exists(os.path.join(ctx.user, 'American Revolt', '00.GAM')), 'no save file American Revolt/00.GAM')
+    check(os.path.exists(os.path.join(ctx.user, 'American Revolt', '03.GAM')), 'no save file American Revolt/03.GAM')
     check(not os.path.exists(os.path.join(ctx.user, 'Syndicate')), 'American Revolt wrote into Syndicate/')
 
 
