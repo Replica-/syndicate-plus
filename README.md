@@ -109,6 +109,11 @@ save is made.  This works in both games and every language (`src/game/additions.
 W, A, S and D scroll the view as the arrow keys do (only in missions: in the menus they are letters).  1 to 4
 select an agent, as in the original; pressed twice within 0.4 s they also bring the view to that agent.
 
+### The scanner
+
+The scanner (the map at the bottom left of a mission) shows more of the city around the leader: 6 pixels a tile
+instead of 8, and 2 instead of 4 when an agent of the squad carries a scanner.
+
 ### MINIGUN SQUAD
 
 Besides the game's own cheats (the company or player name in Configure Company), `MINIGUN SQUAD`: every weapon

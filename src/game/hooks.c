@@ -4,7 +4,8 @@
  *
  * With the environment variable SYND_CENSUS=FILE every function is hooked and, when the program ends, FILE gets
  * one line per function called: its address, the time of its first call (ms from the start) and how often it was
- * called.  This finds the functions behind a screen or an event (development only). */
+ * called.  This finds the functions behind a screen or an event.  SYND_SKIP=ADDR,ADDR,... (hex) makes those functions
+ * of the game programs return at once, to see what each one does (development only). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +42,13 @@ static void census_dump(void)
     }
     memset(g_census_first, 0, sizeof(uint32_t) * RT_HOOK_SPAN);
     memset(g_census_count, 0, sizeof(uint32_t) * RT_HOOK_SPAN);
+}
+
+static int skip(uint32_t addr)
+{
+    (void)addr;
+    R.esp += 4u; /* ret */
+    return 1;
 }
 
 static int census(uint32_t addr)
@@ -83,6 +91,16 @@ void game_hooks_install(const RtModuleDef *def)
         return;
     }
     additions_install(g_game);
+    if (g_game != GAME_NONE && getenv("SYND_SKIP") != NULL) {
+        const char *p = getenv("SYND_SKIP");
+        while (*p) {
+            char *end;
+            unsigned long a = strtoul(p, &end, 16);
+            if (end == p) break;
+            hook_add((uint32_t)a, skip);
+            p = *end ? end + 1 : end;
+        }
+    }
 }
 
 void game_hooks_end(void)

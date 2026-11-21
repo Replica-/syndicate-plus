@@ -9,6 +9,9 @@
  * Keys in missions: W, A, S and D scroll the view as the arrow keys do; 1 to 4 select an agent (the game's own)
  * and pressed twice within 0.4 s centre the view on it.
  *
+ * The scanner (the map at the bottom left of a mission) shows more around the leader: 6 pixels a tile instead of
+ * 8, and with a scanner (the weapon) 2 instead of 4.
+ *
  * The MINIGUN SQUAD cheat, as the company or player name (Configure Company), like the game's own cheats: every
  * weapon and mod researched, and the 18 agents of the company with every mod at version 3 and a minigun in each
  * of their 8 weapon slots.  The research is completed as the game's COOPER TEAM cheat does it. */
@@ -42,27 +45,28 @@ typedef struct GameAddrs {
     uint32_t mission_tick; /* called on every tick of a mission */
     uint32_t set_view;     /* set_view(x, y): the view's position (clamped to the map) */
     uint32_t peds;         /* the people of the mission, PED_SIZE bytes each */
+    uint32_t draw_scanner; /* draw_scanner(leader ped, pixels a tile: 8, or 4 with a scanner) */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
-     0x41d380u, 0x40e300u, 0x478110u},
+     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
-     0x41e9c0u, 0x40e270u, 0x488110u},
+     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
-     0x41e940u, 0x40e280u, 0x488110u},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
-     0x41e940u, 0x40e280u, 0x488110u},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -361,6 +365,16 @@ static int on_mission_tick(uint32_t addr)
     return 0;
 }
 
+/* ==== the scanner =========================================================================================== */
+static int on_draw_scanner(uint32_t addr)
+{
+    uint32_t scale = RD32(R.esp + 8u) & 0xFFFFu;
+    (void)addr;
+    if (scale == 8u) WR32(R.esp + 8u, 6u);
+    else if (scale == 4u) WR32(R.esp + 8u, 2u);
+    return 0;
+}
+
 /* ==== the hooks ============================================================================================= */
 void additions_install(int game)
 {
@@ -374,4 +388,5 @@ void additions_install(int game)
     hook_add(g_addrs->save_game, on_save_game);
     hook_add(g_addrs->cheat_check, on_cheat_check);
     hook_add(g_addrs->mission_tick, on_mission_tick);
+    hook_add(g_addrs->draw_scanner, on_draw_scanner);
 }
