@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "music.h"
 #include "rt.h"
 #include "sha1.h"
 #include "vfs.h"
@@ -344,6 +345,14 @@ void rt_call_ind(uint32_t addr)
     if (g_proc == NULL) rt_fatal("indirect call without a process");
     f = find_func(addr);
     if (f == NULL) rt_fatal("%s: indirect call/jump to unknown address %08x", g_proc->def->exe_name, addr);
+    if (g_nreloc > 0 && f->addr >= MUSIC_DRV_FIRST && f->addr < MUSIC_DRV_END && music_is_fm_driver(f)) {
+        /* the FM driver's sequence calls: the songs played from files follow them (music.c) */
+        uint32_t fn = f->addr;
+        music_driver_call(fn, g_proc->def->exe_name, 0);
+        f->fn();
+        music_driver_call(fn, g_proc->def->exe_name, 1);
+        return;
+    }
     f->fn();
 }
 

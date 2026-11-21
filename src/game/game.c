@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "../rt/music.h"
 #include "../rt/rt.h"
 #include "../rt/vfs.h"
 
@@ -88,6 +89,13 @@ int game_main(const GameOptions *opt)
         snprintf(rt_game_dir, sizeof rt_game_dir, "%s", opt->game_dir);
     }
     snprintf(rt_user_dir, sizeof rt_user_dir, "%s", opt->user_dir);
+    if (opt->music_dir != NULL) {
+        music_set_dir(opt->music_dir);
+    } else if (opt->game_dir != NULL && opt->game_dir[0]) {
+        char dir[1100];
+        snprintf(dir, sizeof dir, "%s/music", opt->game_dir);
+        music_set_dir(dir);
+    }
     host_mkdir(rt_user_dir);
     dos_init();
     vga_init();
@@ -126,5 +134,6 @@ int game_main(const GameOptions *opt)
     } else {
         rc = rt_run_module(&synd_module, "D:\\SYND.EXE", "");
     }
+    music_shutdown();
     return rc;
 }

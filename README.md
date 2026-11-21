@@ -74,6 +74,9 @@ written to, both go to `%LOCALAPPDATA%\Syndicate64` (Windows) or `~/Library/Appl
 |---|---|---|
 | Full screen (on the display the window is on) | Alt+Enter, or the window menu | Ctrl+Cmd+F, the green button, or View > Full Screen |
 | CRT scanlines (off at first, remembered) | Alt+S, or the window menu | Cmd+Shift+S, or View > CRT Scanlines |
+| Music and sound volumes (remembered) | the window menu | |
+| Record a video (again to stop) | F12, or the window menu | |
+| Screenshot | F11, or the window menu | |
 | About | the window menu (Alt+Space) | the app menu |
 | The game's Alt key | Alt | Option |
 | Right button | right click | right click or Ctrl+click |
@@ -82,6 +85,35 @@ In full screen the pointer stays on the picture while the game has the focus (fr
 you switch to another program).  The game pauses while a dialog is open or the window is minimized.  The
 window, the menus and the About box follow the system's dark or light mode.  On a Mac laptop the function keys
 need Fn unless they are set to act as standard function keys.
+
+### Music from files
+
+The songs can play from files instead of the FM music: `assassinate` (the city), `danger` (rival agents near
+yours), `intro`, `mission_completed`, `mission_failed` and `game_completed`, as `.mp3`, `.ogg`, `.flac` or
+`.wav`, in a `music` folder inside the game folder (or the folder given by `--music-dir`, or by `dir` in the
+`[music]` section of `Syndicate64.ini`).  The game still decides when each song plays: when it starts a song of
+its own, the file plays instead (`src/rt/music.c` follows the calls into the AIL/32 music driver).  A song the
+game pauses and picks up again, like the city song around a fight, goes on from where it stopped, with a short
+fade in.  Songs without a file play as before.
+
+### Videos and screenshots
+
+F12 records the game with its sound as an MP4 (1280x960, sharp pixels) in a `Videos` folder beside
+`Syndicate64.ini`; it needs [ffmpeg](https://ffmpeg.org) in the PATH (`winget install ffmpeg`).  While it records,
+the title bar says so; F12 again stops, and the video is finished in the background.  F11 saves a PNG screenshot
+in `Screenshots`.  The headless program records with `--record DIR`.
+
+## Development (Windows)
+
+`dev\build.cmd [RelWithDebInfo|Release|Debug]` builds with Ninja into `build-dev\<config>`, without the game
+files built in: the programs find them in `_references\dos`.  `_references\dos` can be a junction to an
+installed copy (`mklink /J _references\dos <game folder>`).  VS Code has build tasks, a task for the tests and
+launch configurations (the launcher, Syndicate or American Revolt directly, and a headless run into a mission
+recorded as a video); `.vscode/`.  The tests run on that build with
+`SYND_HEADLESS=build-dev\RelWithDebInfo\synd_headless.exe`.
+
+Started directly, the games need the sound card's arguments the launcher gives them, as in `SYND\SYND.INF`:
+`--start "SYNDICAT\MAIN.EXE /c0 /iirq7 /idma1 /iio220"` (the tests' `/s` plays without sound).
 
 ## Tests
 
@@ -100,8 +132,10 @@ They need the game files in `_references/dos`.
 | `tools/` | `le.py` (LE/LX loader), `discover.py` (code discovery), `recomp.py` (x86 to C translator), `gen_all.py` (writes `gen/`), `pack_game.py` (the built-in game files), icon and notarization helpers |
 | `src/rt/` | the portable runtime: CPU state, DOS/DPMI/BIOS, VGA, timer, keyboard, mouse, Sound Blaster and OPL2 |
 | `src/game/` | which recompiled DOS programs make up the game and how it starts |
-| `src/video/` | the CRT scanline filter |
+| `src/video/` | the CRT scanline filter, the video recorder and screenshots |
 | `src/platform/` | the front ends: `win32/`, `macos/`, `posix/` (shared POSIX services), `headless/` (tests) |
+| `src/third_party/` | dr_mp3, dr_flac, dr_wav, stb_vorbis and stb_image_write (public domain / MIT-0) |
+| `dev/`, `.vscode/` | the development build and the VS Code setup (Windows) |
 | `res/` | icons, the Windows resources, the macOS `Info.plist` |
 | `tests/` | the automated tests |
 

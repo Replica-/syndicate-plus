@@ -1,0 +1,60 @@
+{
+    // Launch configurations for Windows (MSVC debugger), on the development build (dev\build.cmd).
+    // The program finds the game in _references\dos and keeps its saves in Save\ and its settings in
+    // Syndicate64.ini beside it (build-dev\RelWithDebInfo); videos and screenshots go to Videos\ and Screenshots\.
+    // The songs play from _references\dos\music when it has files (assassinate.mp3, danger.mp3, ...).
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // The original launcher first: Syndicate or American Revolt
+            "name": "Syndicate64",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-dev/RelWithDebInfo/Syndicate64.exe",
+            "args": ["--log", "${workspaceFolder}/out/syndicate64.log"],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "preLaunchTask": "Build"
+        },
+        {
+            // Syndicate directly, with the sound card SYND\SYND.INF sets up
+            "name": "Syndicate64 - Syndicate",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-dev/RelWithDebInfo/Syndicate64.exe",
+            "args": ["--start", "SYNDICAT\\MAIN.EXE /c0 /iirq7 /idma1 /iio220", "--log", "${workspaceFolder}/out/syndicate64.log"],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "preLaunchTask": "Build"
+        },
+        {
+            "name": "Syndicate64 - American Revolt",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-dev/RelWithDebInfo/Syndicate64.exe",
+            "args": ["--start", "DATADISK\\MAIN.EXE /c0 /iirq7 /idma1 /iio220", "--log", "${workspaceFolder}/out/syndicate64.log"],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "preLaunchTask": "Build"
+        },
+        {
+            // Headless into the first mission on the virtual clock (as the tests), recorded as a video in out\video
+            // with the songs from the music folder
+            "name": "Headless - mission, recorded",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-dev/RelWithDebInfo/synd_headless.exe",
+            "args": [
+                "--user-dir", "out/headless-user",
+                "--start", "SYNDICAT\\MAIN.EXE /c0 /iirq7 /idma1 /iio220",
+                "--seconds", "45", "--virtual-time", "50",
+                "--music-dir", "_references/dos/music",
+                "--record", "out/video",
+                "--input", "3000:esc,7000:esc,10000:move@29500;28800,11000:click@29500;28800,14000:click@8500;58500,17000:click@8500;58700,20000:click@8500;58700,26000:click@6550;18000,27000:click@36000;42000"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "preLaunchTask": "Build"
+        }
+    ]
+}

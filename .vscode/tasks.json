@@ -1,0 +1,51 @@
+{
+    // Build tasks run dev\build.cmd, which sets up the MSVC developer environment itself, so they work even when
+    // VS Code was started from a plain prompt. The development build goes to build-dev\<config> and finds the
+    // game in _references\dos (run "python tools/gen_all.py" once first, see README.md).
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build",
+            "type": "shell",
+            "command": "dev\\build.cmd RelWithDebInfo",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "shell": { "executable": "cmd.exe", "args": ["/d", "/c"] }
+            },
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": ["$msCompile"]
+        },
+        {
+            "label": "Build Release",
+            "type": "shell",
+            "command": "dev\\build.cmd Release",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "shell": { "executable": "cmd.exe", "args": ["/d", "/c"] }
+            },
+            "group": "build",
+            "problemMatcher": ["$msCompile"]
+        },
+        {
+            "label": "Generate code",
+            "detail": "tools/gen_all.py: the C code of the recompiled programs, from _references/dos (needs capstone)",
+            "type": "shell",
+            "command": "python tools/gen_all.py",
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Tests",
+            "detail": "tests/run_tests.py --quick on the development build",
+            "type": "shell",
+            "command": "python tests/run_tests.py --quick",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": { "SYND_HEADLESS": "${workspaceFolder}\\build-dev\\RelWithDebInfo\\synd_headless.exe" }
+            },
+            "dependsOn": "Build",
+            "group": "test",
+            "problemMatcher": []
+        }
+    ]
+}

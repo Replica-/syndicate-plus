@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "host.h"
+#include "music.h"
 #include "rt.h"
 
 #define SB_BASE 0x220u
@@ -664,6 +665,7 @@ int audio_irq_take(void)
 #define MIX_MAX 2048
 static uint64_t g_mix_start, g_mix_done;
 static int16_t g_mix[MIX_MAX * 2];
+static int32_t g_mix32[MIX_MAX * 2];
 static int g_inited;
 
 void audio_init(void)
@@ -730,12 +732,16 @@ void audio_poll(void)
                 dg = (g_sb.playing || g_sb.cmd == 0x10) ? g_sb.cur : 0;
             }
             if (!g_sb.speaker) dg = 0;
+            /* the volumes; the FM music is silent while a song plays from a file */
+            fm = music_playing() ? 0 : fm * music_volume() / 100;
+            dg = dg * sound_volume() / 100;
             v = (fm + dg) * 3 / 4; /* headroom: nine FM voices plus full-scale samples */
-            if (v > 32767) v = 32767;
-            if (v < -32768) v = -32768;
-            g_mix[i * 2] = (int16_t)v;
-            g_mix[i * 2 + 1] = (int16_t)v;
+            g_mix32[i * 2] = v;
+            g_mix32[i * 2 + 1] = v;
         }
+        music_mix(g_mix32, n, rate);
+        for (i = 0; i < n * 2; i++)
+            g_mix[i] = (int16_t)(g_mix32[i] > 32767 ? 32767 : g_mix32[i] < -32768 ? -32768 : g_mix32[i]);
         if (sb_step == 0 && g_sb.rate > 0) sb_step = g_sb.rate / rate;
         host_audio_push(g_mix, (size_t)n);
         g_mix_done += (uint64_t)n;

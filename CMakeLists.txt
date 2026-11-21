@@ -34,6 +34,7 @@ add_library(syncore STATIC
   src/rt/vga.c
   src/rt/strings.c
   src/rt/audio.c
+  src/rt/music.c
   src/rt/sha1.c
   src/rt/vfs.c
   src/game/game.c
@@ -60,7 +61,7 @@ else()
 endif()
 
 # ---- the portable presentation code the front ends share (no OS calls) -----------------------------------
-add_library(synvideo STATIC src/video/crt.c)
+add_library(synvideo STATIC src/video/crt.c src/video/record.c)
 target_include_directories(synvideo PUBLIC src)
 if(MSVC)
   target_compile_options(synvideo PRIVATE /W3 /O2 /utf-8)

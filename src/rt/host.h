@@ -77,6 +77,8 @@ void rt_mouse_motion(int dx, int dy);
 int rt_mouse_used(void);
 /* pause/resume the game thread at its next poll (e.g. while a modal dialog is open) */
 void rt_set_paused(int paused);
+/* the volumes of the music and of the other sounds, 0..100 (100 at first) */
+void rt_set_volumes(int music, int sound);
 
 #ifdef __cplusplus
 }

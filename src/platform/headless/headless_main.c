@@ -4,7 +4,7 @@
  *
  *   synd_headless --game-dir DIR [--user-dir DIR] [--start "SYNDICAT\MAIN.EXE /args"] [--seconds N]
  *                 [--dump DIR] [--dump-every MS] [--input "ms:key[:up],..."] [--verbose N] [--log FILE]
- *                 [--wav FILE] [--virtual-time STEP_US]
+ *                 [--wav FILE] [--virtual-time STEP_US] [--record DIR] [--music-dir DIR]
  *
  * --virtual-time runs on a virtual clock (each clock reading advances it by STEP_US microseconds, a sleep by
  * its length): runs repeat exactly and go as fast as the machine allows; times in --seconds/--input are then
@@ -13,7 +13,11 @@
  * events in --input ("ms:event", comma separated, ms from the start): a key, held for 100 ms, as a scancode in
  * hex (1c = Enter) or a name (enter, esc, space, up, down, left, right, f1..f10, some letters and digits);
  * "key:down" / "key:up" to press or release only; "click@x;y" / "rclick@x;y" (held 150 ms) and "move@x;y"
- * with x, y fractions 0..65535 of the picture. */
+ * with x, y fractions 0..65535 of the picture.
+ *
+ * --record DIR records the run as an MP4 video into DIR (src/video/record.c, needs ffmpeg).  --music-dir plays
+ * the songs from the files of DIR (src/rt/music.c); without it the FM music plays, so test runs do not depend on
+ * the music folder of the game. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +28,7 @@
 
 #include "../../game/game.h"
 #include "../../rt/host.h"
+#include "../../video/record.h"
 
 extern FILE *g_logfile;
 extern uint32_t g_virtual_step; /* win32_sys.c / posix_sys.c */
@@ -73,6 +78,7 @@ static void wav_header(FILE *f, uint32_t frames)
 
 void host_audio_push(const int16_t *frames, size_t count)
 {
+    record_audio(frames, count);
     if (g_wav == NULL) return;
     fwrite(frames, 4, count, g_wav);
     g_wav_frames += (uint32_t)count;
@@ -115,6 +121,12 @@ static void write_bmp(const char *path, const uint8_t *pix, int w, int h, const 
 void host_present(const uint8_t *pixels, int w, int h, const uint32_t *palette)
 {
     uint64_t now = host_time_us();
+    if (record_active()) {
+        static uint32_t rgb[640 * 480];
+        int i;
+        for (i = 0; i < w * h && i < 640 * 480; i++) rgb[i] = palette[pixels[i]];
+        record_frame(rgb, w, h, now);
+    }
     if (g_dump_dir != NULL && now >= g_next_dump) {
         char path[1024];
         snprintf(path, sizeof path, "%s/frame_%05u.bmp", g_dump_dir, (unsigned)((now - g_start_us) / 1000u));
@@ -274,6 +286,7 @@ int main(int argc, char **argv)
     memset(&opt, 0, sizeof opt);
     opt.game_dir = "_references/dos";
     opt.user_dir = "out/user";
+    opt.music_dir = "";
     g_logfile = stdout;
     for (i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : "";
@@ -300,6 +313,14 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--virtual-time")) g_virtual_step = (uint32_t)atoi(v), i++;
         else if (!strcmp(a, "--verbose")) opt.verbose = atoi(v), i++;
         else if (!strcmp(a, "--log")) g_logfile = fopen(v, "w"), i++;
+        else if (!strcmp(a, "--music-dir")) opt.music_dir = v, i++;
+        else if (!strcmp(a, "--record")) {
+            if (!record_start(v, 44100)) {
+                fprintf(stderr, "cannot record (is ffmpeg in the PATH?)\n");
+                return 2;
+            }
+            i++;
+        }
         else {
             fprintf(stderr, "unknown option %s\n", a);
             return 2;
@@ -312,6 +333,11 @@ int main(int argc, char **argv)
     if (g_wav != NULL) {
         wav_header(g_wav, g_wav_frames);
         fclose(g_wav);
+    }
+    if (record_active()) {
+        record_stop();
+        record_wait();
+        fprintf(stderr, "video: %s\n", record_file());
     }
     fprintf(stderr, "exit %d after %u ms, %d frames dumped\n", rc,
             (unsigned)((host_time_us() - g_start_us) / 1000u), g_dump_n);

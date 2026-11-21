@@ -4,11 +4,17 @@
  *
  * The window follows the system's colour preference (dark or light title bar and menus, changing at once when
  * the preference changes); its system menu has "Full screen" (also Alt+Enter), "CRT scanlines" (also Alt+S;
- * off at first, remembered in Syndicate64.ini) and the About box, which has the same layout and behaviour as Civ64's
+ * off at first, remembered in Syndicate64.ini), the music and sound volumes (remembered), "Record video" (also
+ * F12; an MP4 with the sound, made by ffmpeg, in the Videos folder beside the settings), "Screenshot" (also F11;
+ * a PNG in Screenshots) and the About box, which has the same layout and behaviour as Civ64's
  * (platform/win32/host_win32.c of that project).
  *
  *   Syndicate64.exe [--game-dir DIR] [--user-dir DIR] [--start "SYNDICAT\MAIN.EXE /args"] [--log FILE]
- *                   [--verbose N] [--fullscreen]
+ *                   [--verbose N] [--fullscreen] [--music-dir DIR]
+ *
+ * The songs can be played from files (mp3, ogg, flac or wav) instead of the FM music: assassinate, danger,
+ * intro, mission_completed, mission_failed and game_completed in the "music" folder of the game folder, in
+ * --music-dir, or in the folder named by "dir" in the [music] section of Syndicate64.ini.
  *
  * The original game files are built into a private build (SYN_EMBED_GAME, the resource GAMEPAK) and used
  * unless --game-dir names a folder.  Without them the folder of the original game is looked for next to the
@@ -37,6 +43,7 @@
 #include "../../game/game.h"
 #include "../../rt/host.h"
 #include "../../video/crt.h"
+#include "../../video/record.h"
 
 #define APP_CAPTIONW L"Syndicate Plus 64bit"
 #define APP_VERSIONW L"1.0.0"
@@ -44,6 +51,10 @@
 #define SC_APP_ABOUT 0x1080u
 #define SC_APP_FULLSCREEN 0x1090u
 #define SC_APP_CRT 0x10A0u
+#define SC_APP_RECORD 0x10B0u
+#define SC_APP_SCREENSHOT 0x10C0u
+#define SC_APP_MUSIC_VOL 0x1100u /* + 0x10 * step (0..4): off, 25%, 50%, 75%, 100% */
+#define SC_APP_SOUND_VOL 0x1200u
 #define WM_APP_GAME_DONE (WM_APP + 1)
 #define WM_APP_FATAL (WM_APP + 2)
 
@@ -76,6 +87,7 @@ void host_present(const uint8_t *pixels, int w, int h, const uint32_t *palette)
     for (i = 0; i < w * h; i++) g_frame[i] = palette[pixels[i]];
     g_fw = w;
     g_fh = h;
+    record_frame(g_frame, w, h, host_time_us());
     ReleaseSRWLockExclusive(&g_frame_lock);
     if (g_hwnd != NULL) InvalidateRect(g_hwnd, NULL, FALSE);
 }
@@ -247,6 +259,7 @@ void host_audio_push(const int16_t *frames, size_t count)
     }
     if (g_ring_w - g_ring_r > AUD_RING) g_ring_r = g_ring_w - AUD_RING;
     ReleaseSRWLockExclusive(&g_aud_lock);
+    record_audio(frames, count);
 }
 
 static void audio_fill(int16_t *out)
@@ -804,6 +817,91 @@ static void toggle_crt(HWND h)
     InvalidateRect(h, NULL, FALSE);
 }
 
+/* ==== volumes, video recording and screenshots ========================================================== */
+static int g_music_vol = 100, g_sound_vol = 100;
+
+static void check_volume_items(HMENU sm)
+{
+    int k;
+    for (k = 0; k <= 4; k++) {
+        CheckMenuItem(sm, SC_APP_MUSIC_VOL + 0x10u * (UINT)k, k * 25 == g_music_vol ? MF_CHECKED : MF_UNCHECKED);
+        CheckMenuItem(sm, SC_APP_SOUND_VOL + 0x10u * (UINT)k, k * 25 == g_sound_vol ? MF_CHECKED : MF_UNCHECKED);
+    }
+}
+
+static void set_volumes(int music, int sound)
+{
+    wchar_t v[16];
+    g_music_vol = music;
+    g_sound_vol = sound;
+    rt_set_volumes(music, sound);
+    if (g_hwnd != NULL) check_volume_items(GetSystemMenu(g_hwnd, FALSE));
+    if (g_ini[0]) {
+        _snwprintf(v, 16, L"%d", music);
+        WritePrivateProfileStringW(L"sound", L"music_volume", v, g_ini);
+        _snwprintf(v, 16, L"%d", sound);
+        WritePrivateProfileStringW(L"sound", L"sound_volume", v, g_ini);
+    }
+}
+
+/* a folder beside the settings (Syndicate64.ini), made if need be, as UTF-8 */
+static void media_dir(const wchar_t *name, char *out, int n)
+{
+    wchar_t dir[MAX_PATH * 2], *s;
+    _snwprintf(dir, sizeof dir / sizeof dir[0], L"%s", g_ini);
+    s = wcsrchr(dir, L'\\');
+    if (s != NULL) *s = 0;
+    wcsncat(dir, L"\\", sizeof dir / sizeof dir[0] - wcslen(dir) - 1);
+    wcsncat(dir, name, sizeof dir / sizeof dir[0] - wcslen(dir) - 1);
+    CreateDirectoryW(dir, NULL);
+    if (WideCharToMultiByte(CP_UTF8, 0, dir, -1, out, n, NULL, NULL) == 0) out[0] = 0;
+}
+
+static void update_title(void)
+{
+    SetWindowTextW(g_hwnd, record_active() ? APP_CAPTIONW L" \x2014 recording (F12 stops)" : APP_CAPTIONW);
+    CheckMenuItem(GetSystemMenu(g_hwnd, FALSE), SC_APP_RECORD, record_active() ? MF_CHECKED : MF_UNCHECKED);
+}
+
+static void toggle_record(void)
+{
+    if (record_active()) {
+        record_stop();
+    } else {
+        char dir[MAX_PATH * 3];
+        media_dir(L"Videos", dir, (int)sizeof dir);
+        if (!record_start(dir, AUD_RATE)) {
+            g_modal++;
+            update_pause();
+            MessageBoxW(g_hwnd, L"Videos are recorded with ffmpeg, which was not found. Install it (for example "
+                                L"\"winget install ffmpeg\") so that ffmpeg.exe is in the PATH.",
+                        APP_CAPTIONW, MB_OK | MB_ICONINFORMATION);
+            g_modal--;
+            update_pause();
+        }
+    }
+    update_title();
+}
+
+static void screenshot(void)
+{
+    static uint32_t copy[FRAME_MAX_W * FRAME_MAX_H];
+    char dir[MAX_PATH * 3], path[MAX_PATH * 3 + 64];
+    SYSTEMTIME t;
+    int w, h;
+    AcquireSRWLockShared(&g_frame_lock);
+    w = g_fw;
+    h = g_fh;
+    if (w > 0) memcpy(copy, g_frame, sizeof(uint32_t) * (size_t)(w * h));
+    ReleaseSRWLockShared(&g_frame_lock);
+    if (w <= 0) return;
+    media_dir(L"Screenshots", dir, (int)sizeof dir);
+    GetLocalTime(&t);
+    snprintf(path, sizeof path, "%s/syndicate_%04u%02u%02u_%02u%02u%02u_%03u.png", dir, t.wYear, t.wMonth, t.wDay,
+             t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+    if (record_screenshot(path, copy, w, h)) MessageBeep(MB_OK);
+}
+
 /* ==== the window ========================================================================================= */
 static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
 {
@@ -815,6 +913,20 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         AppendMenuW(sm, MF_SEPARATOR, 0, NULL);
         AppendMenuW(sm, MF_STRING, SC_APP_FULLSCREEN, L"&Full screen\tAlt+Enter");
         AppendMenuW(sm, MF_STRING | (g_crt_on ? MF_CHECKED : MF_UNCHECKED), SC_APP_CRT, L"&CRT scanlines\tAlt+S");
+        {
+            static const wchar_t *const steps[5] = {L"Off", L"25%", L"50%", L"75%", L"100%"};
+            HMENU music = CreatePopupMenu(), sound = CreatePopupMenu();
+            int k;
+            for (k = 0; k <= 4; k++) {
+                AppendMenuW(music, MF_STRING, SC_APP_MUSIC_VOL + 0x10u * (UINT)k, steps[k]);
+                AppendMenuW(sound, MF_STRING, SC_APP_SOUND_VOL + 0x10u * (UINT)k, steps[k]);
+            }
+            AppendMenuW(sm, MF_POPUP, (UINT_PTR)music, L"&Music volume");
+            AppendMenuW(sm, MF_POPUP, (UINT_PTR)sound, L"S&ound volume");
+            check_volume_items(sm);
+        }
+        AppendMenuW(sm, MF_STRING, SC_APP_RECORD, L"&Record video\tF12");
+        AppendMenuW(sm, MF_STRING, SC_APP_SCREENSHOT, L"Scree&nshot\tF11");
         AppendMenuW(sm, MF_STRING, SC_APP_ABOUT, L"&About " APP_CAPTIONW L"\x2026");
         return 0;
     }
@@ -862,6 +974,20 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             return 0;
         case SC_APP_CRT:
             toggle_crt(h);
+            return 0;
+        case SC_APP_RECORD:
+            toggle_record();
+            return 0;
+        case SC_APP_SCREENSHOT:
+            screenshot();
+            return 0;
+        case SC_APP_MUSIC_VOL: case SC_APP_MUSIC_VOL + 0x10u: case SC_APP_MUSIC_VOL + 0x20u:
+        case SC_APP_MUSIC_VOL + 0x30u: case SC_APP_MUSIC_VOL + 0x40u:
+            set_volumes((int)(((w & 0xFFF0u) - SC_APP_MUSIC_VOL) / 0x10u) * 25, g_sound_vol);
+            return 0;
+        case SC_APP_SOUND_VOL: case SC_APP_SOUND_VOL + 0x10u: case SC_APP_SOUND_VOL + 0x20u:
+        case SC_APP_SOUND_VOL + 0x30u: case SC_APP_SOUND_VOL + 0x40u:
+            set_volumes(g_music_vol, (int)(((w & 0xFFF0u) - SC_APP_SOUND_VOL) / 0x10u) * 25);
             return 0;
         case SC_KEYMENU:
             if (l != ' ') return 0; /* F10 and Alt alone go to the game; Alt+Space opens the system menu */
@@ -918,6 +1044,16 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         if (msg == WM_SYSKEYUP && (w == VK_SPACE || w == VK_F4)) break;
         return 0;
     case WM_KEYDOWN:
+        if (w == VK_F12 || w == VK_F11) { /* recording and screenshots: not for the game */
+            if (!(l & (1 << 30))) {
+                if (w == VK_F12)
+                    toggle_record();
+                else
+                    screenshot();
+            }
+            g_swallow[w & 0xFF] = 1;
+            return 0;
+        }
         alt_release_held();
         key((UINT)w, l, 1);
         return 0;
@@ -1152,7 +1288,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     int argc = 0, i, full = 0;
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     wchar_t game_dir[MAX_PATH * 2] = L"", user_dir[MAX_PATH * 2] = L"";
-    static char start_u8[512];
+    static char start_u8[512], music_u8[MAX_PATH * 3];
+    wchar_t music_dir[MAX_PATH * 2] = L"";
     WNDCLASSEXW wc;
     RECT wr;
     MSG m;
@@ -1187,6 +1324,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
             i++;
         } else if (!wcscmp(a, L"--fullscreen")) {
             full = 1;
+        } else if (!wcscmp(a, L"--music-dir")) {
+            _snwprintf(music_dir, sizeof music_dir / sizeof music_dir[0], L"%s", v);
+            i++;
         }
     }
     {
@@ -1201,6 +1341,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     }
     if (user_dir[0] == 0) save_dir(user_dir, sizeof user_dir / sizeof user_dir[0]);
     g_crt_on = GetPrivateProfileIntW(L"video", L"crt", 0, g_ini) != 0;
+    g_music_vol = (int)GetPrivateProfileIntW(L"sound", L"music_volume", 100, g_ini);
+    g_sound_vol = (int)GetPrivateProfileIntW(L"sound", L"sound_volume", 100, g_ini);
+    rt_set_volumes(g_music_vol, g_sound_vol);
+    if (music_dir[0] == 0)
+        GetPrivateProfileStringW(L"music", L"dir", L"", music_dir, (DWORD)(sizeof music_dir / sizeof music_dir[0]), g_ini);
+    if (music_dir[0] != 0) {
+        to_utf8(music_dir, music_u8, (int)sizeof music_u8);
+        g_opt.music_dir = music_u8;
+    }
     CreateDirectoryW(user_dir, NULL);
     to_utf8(game_dir, g_game_dir_u8, (int)sizeof g_game_dir_u8);
     to_utf8(user_dir, g_user_dir_u8, (int)sizeof g_user_dir_u8);
@@ -1253,6 +1402,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     rt_set_paused(0);
     if (g_game_thread != NULL) WaitForSingleObject(g_game_thread, 2000);
     audio_stop();
+    record_stop();
+    record_wait(); /* the video being finished */
     if (g_logfile != NULL) fclose(g_logfile);
     LocalFree(argv);
     CoUninitialize();

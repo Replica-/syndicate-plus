@@ -11,6 +11,8 @@ typedef struct GameOptions {
     const char *start;     /* NULL: the original launcher (SYND.EXE); else a DOS command line to run first */
     int verbose;
     int fixed_clock;       /* the guest's date and time start at a fixed point (repeatable test runs) */
+    const char *music_dir; /* songs played from files instead of the FM music (src/rt/music.c); NULL: the
+                            * "music" folder of the game folder, when there is one */
 } GameOptions;
 
 /* run the game on the calling thread until it exits or the host asks to quit; returns the exit code */

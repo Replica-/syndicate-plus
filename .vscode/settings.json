@@ -1,0 +1,25 @@
+{
+    // gen/ (38 MB of generated C) and the game files are not for searching or watching
+    "search.exclude": { "gen/**": true, "_references/**": true, "build*/**": true, "out/**": true },
+    "files.watcherExclude": { "gen/**": true, "_references/**": true, "build*/**": true, "out/**": true },
+    "C_Cpp.default.includePath": ["${workspaceFolder}/src"],
+    "C_Cpp.default.cStandard": "c11",
+
+    // Syndicate amber, as the freesynd-enhanced window, so the two are easy to tell apart from other projects
+    "window.title": "syndicate-plus — ${activeEditorShort}${separator}${rootName}",
+    "workbench.colorCustomizations": {
+        "titleBar.activeBackground": "#8a3d00",
+        "titleBar.activeForeground": "#ffe0b8",
+        "titleBar.inactiveBackground": "#5a2800",
+        "titleBar.inactiveForeground": "#d8b48c",
+        "titleBar.border": "#ff9a1f",
+        "activityBar.background": "#3a1a00",
+        "activityBar.foreground": "#ffb347",
+        "activityBar.inactiveForeground": "#b3804d",
+        "activityBar.activeBorder": "#ff9a1f",
+        "statusBar.background": "#8a3d00",
+        "statusBar.foreground": "#ffe0b8",
+        "statusBar.debuggingBackground": "#b30000",
+        "statusBar.debuggingForeground": "#ffffff"
+    }
+}

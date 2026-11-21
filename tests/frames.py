@@ -9,7 +9,9 @@ import subprocess
 import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HEADLESS = os.path.join(ROOT, 'build', 'synd_headless.exe' if os.name == 'nt' else 'synd_headless')
+# SYND_HEADLESS names another build of it (the development build: build-dev/RelWithDebInfo/synd_headless.exe)
+HEADLESS = os.environ.get('SYND_HEADLESS') or os.path.join(ROOT, 'build', 'synd_headless.exe' if os.name == 'nt'
+                                                           else 'synd_headless')
 GAME_DIR = os.path.join(ROOT, '_references', 'dos')
 ARCH = os.environ.get('SYND_ARCH', '')  # macOS: arm64 or x86_64 to pick one half of the universal build
 
