@@ -75,8 +75,8 @@ American Revolt `0x408700`): it waits until the game's timer interrupt (handler 
 (`0x445304`, 7; the game's keys change it 3..12) interrupts in `wait_count` (`0x450b50`), but skips the wait when
 the count is still 0, so on a fast CPU the ticks came in pairs. Timers: Syndicate ~72 Hz (10 ticks/s as designed,
 ~20 with the pairs), American Revolt 120 Hz (17/s). `on_frame_wait` (additions.c) now starts each tick on a steady
-clock, `speed` PACE_HZ-ths of a second apart (PACE_HZ 99: 14.1 ticks/s, 20% slower than FreeSynd's 256 units/s at 120,
-which the user found too fast; Syndicate's designed rate is 10.4/s, PACE_HZ 73), waiting with `rt_poll()` so frames and sound go on, then sets
+clock, `speed` PACE_HZ-ths of a second apart (PACE_HZ 84: 12 ticks/s, the user's choice; FreeSynd's 256 units/s would be
+120, which the user found too fast; Syndicate's designed rate is 10.4/s, PACE_HZ 73), waiting with `rt_poll()` so frames and sound go on, then sets
 the count so the game's own wait passes. Snapshots are stamped with the slot time; the playback runs 2 ticks behind.
 Measured: 100% of frames within 10% of the same speed, 0 stalls (was 66%, 7). `SYND_PACE=off` gives the game's own
 pace. Addresses for all six programs are in the GameAddrs table (frame_wait, speed, wait_count).
