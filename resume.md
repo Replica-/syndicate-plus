@@ -75,7 +75,9 @@ city as it is now; the hats are coloured in the renderer. Measured: ~46 differen
 walk, gaps 22 ms on average. All six programs (99.7% match in Syndicate, 99.6% in American Revolt; vehicles are
 on the map with +0xa = 4 or 0x0c); `SYND_RENDER=off` turns it off.
 
-To do next: check it in the window; the animation frames still change
+The core makes a frame for each refresh of the display (`rt_set_frame_rate`, the window reads the refresh rate).
+
+To do next: hear back from the user on how it feels in the window; the animation frames still change
 only at the game's ticks (walk cycles); then widescreen and zoom (the renderer can draw any rectangle at any
 view), lighting, see-inside-buildings.
 
