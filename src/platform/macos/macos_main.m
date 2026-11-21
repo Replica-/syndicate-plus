@@ -183,12 +183,11 @@ static atomic_int g_present_pending;
 @end
 static SynView *g_view;
 
-void host_present(const uint8_t *pixels, int w, int h, const uint32_t *palette)
+void host_present(const uint32_t *pixels, int w, int h)
 {
-    int i;
     if (w <= 0 || h <= 0 || w > FRAME_MAX_W || h > FRAME_MAX_H) return;
     os_unfair_lock_lock(&g_frame_lock);
-    for (i = 0; i < w * h; i++) g_frame[i] = palette[pixels[i]];
+    memcpy(g_frame, pixels, sizeof(uint32_t) * (size_t)(w * h));
     g_fw = w;
     g_fh = h;
     os_unfair_lock_unlock(&g_frame_lock);

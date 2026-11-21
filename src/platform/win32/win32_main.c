@@ -79,12 +79,11 @@ static SRWLOCK g_frame_lock = SRWLOCK_INIT;
 static uint32_t g_frame[FRAME_MAX_W * FRAME_MAX_H];
 static int g_fw, g_fh;
 
-void host_present(const uint8_t *pixels, int w, int h, const uint32_t *palette)
+void host_present(const uint32_t *pixels, int w, int h)
 {
-    int i;
     if (w <= 0 || h <= 0 || w > FRAME_MAX_W || h > FRAME_MAX_H) return;
     AcquireSRWLockExclusive(&g_frame_lock);
-    for (i = 0; i < w * h; i++) g_frame[i] = palette[pixels[i]];
+    memcpy(g_frame, pixels, sizeof(uint32_t) * (size_t)(w * h));
     g_fw = w;
     g_fh = h;
     record_frame(g_frame, w, h, host_time_us());

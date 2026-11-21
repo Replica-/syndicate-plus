@@ -60,8 +60,9 @@ void game_hooks_install(const RtModuleDef *def);
 const RtModuleDef *rt_current_module(void);
 /* the game layer sees every key event first (any thread) and may change it: returns the scancode to queue */
 uint32_t game_key_filter(uint32_t scancode, int down);
-/* the game layer may draw over a finished frame (palette indices, w x h) before it is shown */
-void game_overlay(uint8_t *pixels, int w, int h, const uint32_t *palette);
+/* the game layer may draw over a finished frame before it is shown: `rgb` (0x00RRGGBB, w x h) is the frame in
+ * true colour, made from the game's palette indices `index` and `palette` (which it may read) */
+void game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h);
 RT_NORETURN void rt_exit_process(int code);
 extern int rt_exit_code;
 

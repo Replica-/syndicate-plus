@@ -104,7 +104,7 @@ def colour_mean(f, x0=0.0, y0=0.0, x1=1.0, y1=1.0):
     for y in range(c, d):
         row = f.pix[y * f.w + a:y * f.w + b]
         for p in row:
-            r, g, bl = f.pal[p]
+            r, g, bl = (p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF
             tot[0] += r
             tot[1] += g
             tot[2] += bl
@@ -122,14 +122,14 @@ def is_world_map(f):
     """the world map: countries in orange, blue, white and so on over the green screen"""
     n = 0
     for p in f.pix:
-        r, g, b = f.pal[p]
+        r, g, b = (p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF
         if r > g + 30 or b > g + 30:
             n += 1
     return n > 0.08 * len(f.pix)
 
 
 def same_pixels(f1, f2):
-    return f1.w == f2.w and f1.h == f2.h and f1.pix == f2.pix and f1.pal == f2.pal
+    return f1.w == f2.w and f1.h == f2.h and f1.pix == f2.pix
 
 
 def name(f):

@@ -1,8 +1,9 @@
 """Helpers for the automated tests: run synd_headless(.exe) and look at the frames it dumps.
 
-The headless build writes 8-bit BMP frames (tests read them with read_bmp) and can save them as PNG for a
-person to look at (write_png).  No third-party modules are needed.
+The headless build writes 32-bit BMP frames in true colour (tests read them with read_bmp; 8-bit ones too) and
+can save them as PNG for a person to look at (write_png).  No third-party modules are needed.
 """
+import array
 import os
 import struct
 import subprocess
@@ -17,17 +18,18 @@ ARCH = os.environ.get('SYND_ARCH', '')  # macOS: arm64 or x86_64 to pick one hal
 
 
 class Frame:
-    def __init__(self, w, h, pix, pal):
-        self.w, self.h, self.pix, self.pal = w, h, pix, pal  # pix: bytes, row-major, top row first
+    def __init__(self, w, h, pix):
+        self.w, self.h, self.pix = w, h, pix  # pix: 0xRRGGBB values, row-major, top row first
 
     def rgb(self, x, y):
-        return self.pal[self.pix[y * self.w + x]]
+        p = self.pix[y * self.w + x]
+        return (p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF
 
     def region_signature(self, x0, y0, x1, y1):
         """a hash of a rectangle (fractions 0..1 of the picture), to tell screens apart"""
         a, b = int(x0 * self.w), int(x1 * self.w)
         c, d = int(y0 * self.h), int(y1 * self.h)
-        rows = b''.join(self.pix[y * self.w + a:y * self.w + b] for y in range(c, d))
+        rows = b''.join(self.pix[y * self.w + a:y * self.w + b].tobytes() for y in range(c, d))
         return zlib.crc32(rows)
 
     def colour_count(self):
@@ -36,8 +38,7 @@ class Frame:
     def mean_brightness(self):
         tot = 0
         for p in self.pix:
-            r, g, b = self.pal[p]
-            tot += r + g + b
+            tot += ((p >> 16) & 0xFF) + ((p >> 8) & 0xFF) + (p & 0xFF)
         return tot / (3 * len(self.pix))
 
 
@@ -46,10 +47,22 @@ def read_bmp(path):
         d = f.read()
     off = struct.unpack_from('<I', d, 10)[0]
     w, h = struct.unpack_from('<ii', d, 18)
-    pal = [(d[54 + 4 * i + 2], d[54 + 4 * i + 1], d[54 + 4 * i]) for i in range(256)]
-    row = (w + 3) & ~3
-    rows = [d[off + y * row: off + y * row + w] for y in range(h)]
-    return Frame(w, h, b''.join(reversed(rows)), pal)
+    bits = struct.unpack_from('<H', d, 28)[0]
+    pix = array.array('I')
+    if bits == 32:
+        rows = [d[off + y * w * 4: off + (y + 1) * w * 4] for y in range(h)]
+        for r in reversed(rows):
+            line = array.array('I')
+            line.frombytes(r)
+            pix.extend(line)
+        for i in range(len(pix)):
+            pix[i] &= 0xFFFFFF
+    else:
+        pal = [struct.unpack_from('<I', d, 54 + 4 * i)[0] & 0xFFFFFF for i in range(256)]
+        row = (w + 3) & ~3
+        for y in reversed(range(h)):
+            pix.extend(pal[c] for c in d[off + y * row: off + y * row + w])
+    return Frame(w, h, pix)
 
 
 def write_png(frame, path, scale=1):
@@ -57,7 +70,7 @@ def write_png(frame, path, scale=1):
     for y in range(frame.h):
         line = bytearray()
         for x in range(frame.w):
-            line += bytes(frame.pal[frame.pix[y * frame.w + x]]) * scale
+            line += bytes(frame.rgb(x, y)) * scale
         for _ in range(scale):
             raw += b'\0' + line
 

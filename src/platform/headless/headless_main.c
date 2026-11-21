@@ -7,6 +7,8 @@
  *                 [--wav FILE] [--virtual-time STEP_US] [--record DIR] [--music-dir DIR]
  *                 [--mem-dump MS:FILE]...
  *
+ * The frames are 32-bit BMP files (true colour, with what this version draws over the game).
+ *
  * --virtual-time runs on a virtual clock (each clock reading advances it by STEP_US microseconds, a sleep by
  * its length): runs repeat exactly and go as fast as the machine allows; times in --seconds/--input are then
  * virtual.
@@ -91,53 +93,39 @@ void host_audio_push(const int16_t *frames, size_t count)
     g_wav_frames += (uint32_t)count;
 }
 
-static void write_bmp(const char *path, const uint8_t *pix, int w, int h, const uint32_t *pal)
+/* a 32-bit BMP (bottom-up, 0x00RRGGBB as B, G, R, 0) */
+static void write_bmp(const char *path, const uint32_t *pix, int w, int h)
 {
     FILE *f = fopen(path, "wb");
-    int y, i;
-    uint32_t row = (uint32_t)((w + 3) & ~3), size = 54 + 1024 + row * (uint32_t)h;
+    int y;
+    uint32_t size = 54u + (uint32_t)(w * h) * 4u;
     uint8_t hdr[54] = {'B', 'M'};
     if (f == NULL) return;
     hdr[2] = (uint8_t)size;
     hdr[3] = (uint8_t)(size >> 8);
     hdr[4] = (uint8_t)(size >> 16);
+    hdr[5] = (uint8_t)(size >> 24);
     hdr[10] = 54;
-    hdr[11] = 4; /* 54 + 1024 = 0x436 */
     hdr[14] = 40;
     hdr[18] = (uint8_t)w;
     hdr[19] = (uint8_t)(w >> 8);
     hdr[22] = (uint8_t)h;
     hdr[23] = (uint8_t)(h >> 8);
     hdr[26] = 1;
-    hdr[28] = 8;
-    hdr[46] = 0; /* 256 colours */
-    hdr[47] = 1;
+    hdr[28] = 32;
     fwrite(hdr, 1, 54, f);
-    for (i = 0; i < 256; i++) {
-        uint8_t q[4] = {(uint8_t)pal[i], (uint8_t)(pal[i] >> 8), (uint8_t)(pal[i] >> 16), 0};
-        fwrite(q, 1, 4, f);
-    }
-    for (y = h - 1; y >= 0; y--) {
-        static const uint8_t pad[4];
-        fwrite(pix + y * w, 1, (size_t)w, f);
-        fwrite(pad, 1, row - (uint32_t)w, f);
-    }
+    for (y = h - 1; y >= 0; y--) fwrite(pix + y * w, 4, (size_t)w, f); /* little-endian: B, G, R, 0 */
     fclose(f);
 }
 
-void host_present(const uint8_t *pixels, int w, int h, const uint32_t *palette)
+void host_present(const uint32_t *pixels, int w, int h)
 {
     uint64_t now = host_time_us();
-    if (record_active()) {
-        static uint32_t rgb[640 * 480];
-        int i;
-        for (i = 0; i < w * h && i < 640 * 480; i++) rgb[i] = palette[pixels[i]];
-        record_frame(rgb, w, h, now);
-    }
+    record_frame(pixels, w, h, now);
     if (g_dump_dir != NULL && now >= g_next_dump) {
         char path[1024];
         snprintf(path, sizeof path, "%s/frame_%05u.bmp", g_dump_dir, (unsigned)((now - g_start_us) / 1000u));
-        write_bmp(path, pixels, w, h, palette);
+        write_bmp(path, pixels, w, h);
         g_next_dump = now + (uint64_t)g_dump_every * 1000u;
         g_dump_n++;
     }

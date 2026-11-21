@@ -20,10 +20,10 @@ uint64_t host_time_us(void);
 /* sleep the game thread for about `us` microseconds */
 void host_sleep_us(uint32_t us);
 
-/* a finished frame: `w` x `h` palette indices (row stride `w`) and 256 RGB colours (0x00RRGGBB). Every VGA
- * mode the games use fills a 4:3 screen (320x200 has tall pixels). Called on the game thread; the platform
- * copies what it needs before returning. */
-void host_present(const uint8_t *pixels, int w, int h, const uint32_t *palette);
+/* a finished frame: `w` x `h` pixels 0x00RRGGBB (row stride `w`), in true colour (the game's 256 colours with
+ * what this version draws over them). Every VGA mode the games use fills a 4:3 screen (320x200 has tall
+ * pixels). Called on the game thread; the platform copies what it needs before returning. */
+void host_present(const uint32_t *pixels, int w, int h);
 
 /* audio: the core produces signed 16-bit stereo at host_audio_rate() and pushes it here */
 int host_audio_rate(void);

@@ -613,10 +613,13 @@ void pic_eoi(int master)
 
 static void present(void)
 {
-    int w = 0, h = 0;
+    static uint32_t rgb[640 * 480];
+    int w = 0, h = 0, i;
     if (vga_render(g_frame, &w, &h, g_pal)) {
-        game_overlay(g_frame, w, h, g_pal);
-        host_present(g_frame, w, h, g_pal);
+        /* true colour from here on */
+        for (i = 0; i < w * h; i++) rgb[i] = g_pal[g_frame[i]];
+        game_overlay(g_frame, g_pal, rgb, w, h);
+        host_present(rgb, w, h);
     }
 }
 

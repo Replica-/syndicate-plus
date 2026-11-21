@@ -18,6 +18,8 @@
  *
  * A move order shows a green diamond on the floor where the agents go, shrinking and fading out in 0.6 s.
  *
+ * All of this is drawn over the frames in true colour (game_overlay), with any colour and transparency.
+ *
  * The scanner (the map at the bottom left of a mission) shows more around the leader: 6 pixels a tile instead of
  * 8, and with a scanner (the weapon) 2 instead of 4.  With a scanner it also shows doors (cyan), criminals (orange)
  * and armed people (red).
@@ -387,38 +389,30 @@ static void world_to_frame(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
     *fy = ((((dx + dy) / 2) - z) >> 3) + 16 + VIEW_TOP;
 }
 
-static uint8_t nearest_colour(const uint32_t *pal, int r, int g, int b)
+/* blends colour c (0x00RRGGBB) into a pixel of the map's part of the frame, `alpha` 0..255 */
+static void plot(uint32_t *rgb, int w, int x, int y, uint32_t c, int alpha)
 {
-    int i, best = 0;
-    long bd = -1;
-    for (i = 0; i < 256; i++) {
-        long dr = (long)((pal[i] >> 16) & 0xFF) - r, dg = (long)((pal[i] >> 8) & 0xFF) - g, db = (long)(pal[i] & 0xFF) - b;
-        long d = dr * dr * 3 + dg * dg * 4 + db * db * 2;
-        if (bd < 0 || d < bd) {
-            bd = d;
-            best = i;
-        }
+    uint32_t *p, o, a = (uint32_t)alpha;
+    if (x < VIEW_LEFT || x >= w || y < VIEW_TOP || y >= VIEW_BOTTOM || alpha <= 0) return;
+    p = &rgb[y * w + x];
+    if (alpha >= 255) {
+        *p = c;
+        return;
     }
-    return (uint8_t)best;
-}
-
-/* `density` 0..4: the share of the pixels drawn (a checker pattern stands for transparency) */
-static void plot(uint8_t *pix, int w, int x, int y, uint8_t c, int density)
-{
-    static const uint8_t k_bayer[4] = {0, 2, 3, 1};
-    if (x < VIEW_LEFT || x >= w || y < VIEW_TOP || y >= VIEW_BOTTOM) return;
-    if (density < 4 && k_bayer[((y & 1) << 1) | (x & 1)] >= density) return;
-    pix[y * w + x] = c;
+    o = *p;
+    *p = ((((c >> 16) & 0xFF) * a + ((o >> 16) & 0xFF) * (255u - a)) / 255u) << 16 |
+         ((((c >> 8) & 0xFF) * a + ((o >> 8) & 0xFF) * (255u - a)) / 255u) << 8 |
+         (((c & 0xFF) * a + (o & 0xFF) * (255u - a)) / 255u);
 }
 
 /* a diamond lying on the floor, half width hw (half height hw / 2): filled, or only its outer `edge` */
-static void diamond(uint8_t *pix, int w, int cx, int cy, int hw, int edge, uint8_t c, int density)
+static void diamond(uint32_t *rgb, int w, int cx, int cy, int hw, int edge, uint32_t c, int alpha)
 {
     int x, y;
     for (y = -hw / 2; y <= hw / 2; y++) {
         for (x = -hw; x <= hw; x++) {
             int d = (x < 0 ? -x : x) + 2 * (y < 0 ? -y : y);
-            if (d <= hw && (edge == 0 || d > hw - edge)) plot(pix, w, cx + x, cy + y, c, density);
+            if (d <= hw && (edge == 0 || d > hw - edge)) plot(rgb, w, cx + x, cy + y, c, alpha);
         }
     }
 }
@@ -442,7 +436,7 @@ static uint32_t g_scanner_leader; /* the ped the scanner is centred on */
 static int g_scanner_scale;       /* its pixels a tile */
 static int g_scanner_on;          /* an agent carries a scanner */
 
-static void scanner_dot(uint8_t *pix, int w, int32_t x, int32_t y, int size, uint8_t c)
+static void scanner_dot(uint32_t *rgb, int w, int32_t x, int32_t y, int size, uint32_t c)
 {
     int32_t lx = (int16_t)RD16(g_scanner_leader + PED_X), ly = (int16_t)RD16(g_scanner_leader + PED_Y);
     int px = SCANNER_X + SCANNER_SIZE / 2 + (int)((x - lx) * g_scanner_scale / 256);
@@ -452,21 +446,23 @@ static void scanner_dot(uint8_t *pix, int w, int32_t x, int32_t y, int size, uin
         for (i = 0; i < size; i++) {
             int qx = px + i - size / 2, qy = py + j - size / 2;
             if (qx >= SCANNER_X && qx < SCANNER_X + SCANNER_SIZE && qy >= SCANNER_Y && qy < SCANNER_Y + SCANNER_SIZE)
-                pix[qy * w + qx] = c;
+                rgb[qy * w + qx] = c;
         }
 }
 
-static void draw_scanner_extras(uint8_t *pix, int w, const uint32_t *pal)
+#define SCANNER_DOOR 0x3cdcffu
+#define SCANNER_CRIMINAL 0xff961eu
+#define SCANNER_ARMED 0xff3c28u
+
+static void draw_scanner_extras(uint32_t *rgb, int w)
 {
-    uint8_t door = nearest_colour(pal, 60, 220, 255), criminal = nearest_colour(pal, 255, 150, 30);
-    uint8_t armed = nearest_colour(pal, 255, 60, 40);
     int i;
     if (!g_scanner_on || g_scanner_leader == 0) return;
     for (i = 0; i < NB_STATICS; i++) {
         uint32_t o = g_addrs->statics + (uint32_t)i * STATIC_SIZE;
         uint8_t sub = M[o + STATIC_SUBTYPE], desc = M[o + STATIC_DESC];
         if ((desc == 4 || desc == 6 || desc == 7) && ((sub >= 0x0c && sub <= 0x0f) || sub == 0x26))
-            scanner_dot(pix, w, (int16_t)RD16(o + PED_X), (int16_t)RD16(o + PED_Y), 2, door);
+            scanner_dot(rgb, w, (int16_t)RD16(o + PED_X), (int16_t)RD16(o + PED_Y), 2, SCANNER_DOOR);
     }
     for (i = 0; i < NB_PEDS; i++) {
         uint32_t p = g_addrs->peds + (uint32_t)i * PED_SIZE;
@@ -474,9 +470,9 @@ static void draw_scanner_extras(uint8_t *pix, int w, const uint32_t *pal)
         if (M[p + PED_LOCATION] != 4 || M[p + PED_STATE] == 0x11 || RD16(p + PED_PERSUADER) != 0) continue;
         if (type != 1 && type != 16) continue;
         if (RD16(p + PED_WEAPON) != 0)
-            scanner_dot(pix, w, (int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), 3, armed);
+            scanner_dot(rgb, w, (int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), 3, SCANNER_ARMED);
         else if (type == 16)
-            scanner_dot(pix, w, (int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), 2, criminal);
+            scanner_dot(rgb, w, (int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), 2, SCANNER_CRIMINAL);
     }
 }
 
@@ -494,12 +490,13 @@ static int reddish(uint32_t c)
 
 /* as FreeSynd does it: a pixel of a checkerboard has no neighbour of its colour and 3 or 4 of one other colour;
  * lines drawn over it (the digits) are 2 pixels thick, so they stay */
-static void solid_selected_boxes(uint8_t *pix, int w, const uint32_t *pal)
+#define SELECTED_COLOUR 0xd7460fu
+
+static void solid_selected_boxes(const uint8_t *pix, const uint32_t *pal, uint32_t *rgb, int w)
 {
     static uint8_t mask[(PANEL_Y1 - PANEL_Y0) * (PANEL_X1 - PANEL_X0)];
     static uint16_t pairs[256][256];
     int x, y, a = -1, b = -1, best = 0;
-    uint8_t fill;
 #define PX(x, y) pix[(y) * w + (x)]
 #define MK(x, y) mask[((y) - PANEL_Y0) * (PANEL_X1 - PANEL_X0) + (x) - PANEL_X0]
     memset(mask, 0, sizeof mask);
@@ -538,10 +535,9 @@ static void solid_selected_boxes(uint8_t *pix, int w, const uint32_t *pal)
             masked = MK(x - 1, y) + MK(x + 1, y) + MK(x, y - 1) + MK(x, y + 1);
             if (same <= 1 && masked >= 3) MK(x, y) = 2;
         }
-    fill = nearest_colour(pal, 215, 70, 15);
     for (y = PANEL_Y0; y < PANEL_Y1; y++)
         for (x = PANEL_X0; x < PANEL_X1; x++)
-            if (MK(x, y)) PX(x, y) = fill;
+            if (MK(x, y)) rgb[y * w + x] = SELECTED_COLOUR;
 #undef PX
 #undef MK
 }
@@ -626,11 +622,12 @@ static void watch_hits(int first)
     }
 }
 
-static void draw_drops(uint8_t *pix, int w, const uint32_t *pal)
+#define BLOOD_COLOUR 0x960a0au
+
+static void draw_drops(uint32_t *rgb, int w)
 {
     uint64_t now = host_time_us();
     int elapsed = g_drops_us ? (int)((now - g_drops_us) / 1000u) : 0, i;
-    uint8_t c = nearest_colour(pal, 150, 10, 10);
     if (elapsed > 100) elapsed = 100;
     g_drops_us = now;
     for (i = 0; i < NB_DROPS; i++) {
@@ -648,11 +645,11 @@ static void draw_drops(uint8_t *pix, int w, const uint32_t *pal)
         }
         world_to_frame((int32_t)d->x, (int32_t)d->y, (int32_t)d->z, &fx, &fy);
         {
-            int density = 1 + 3 * d->life / d->max_life;
-            plot(pix, w, fx, fy, c, density);
-            plot(pix, w, fx + 1, fy, c, density);
-            plot(pix, w, fx, fy + 1, c, density);
-            plot(pix, w, fx + 1, fy + 1, c, density);
+            int alpha = 255 * d->life / d->max_life; /* it fades out */
+            plot(rgb, w, fx, fy, BLOOD_COLOUR, alpha);
+            plot(rgb, w, fx + 1, fy, BLOOD_COLOUR, alpha);
+            plot(rgb, w, fx, fy + 1, BLOOD_COLOUR, alpha);
+            plot(rgb, w, fx + 1, fy + 1, BLOOD_COLOUR, alpha);
         }
     }
 }
@@ -662,34 +659,41 @@ static void draw_drops(uint8_t *pix, int w, const uint32_t *pal)
 #define AGENTS_A_COMPANY 8    /* company c has the people 8c to 8c + 7 */
 #define COMPANY_COLOUR 0xfu
 
-static void company_hats(uint8_t *pix, int w)
+/* a company's colour in true colour: the game's (in the palette of the mission) */
+static uint32_t company_rgb(uint32_t company, const uint32_t *pal)
+{
+    return pal[M[g_addrs->colours + M[company + COMPANY_COLOUR]]];
+}
+
+static void company_hats(const uint8_t *pix, const uint32_t *pal, uint32_t *rgb, int w)
 {
     int i;
     for (i = 0; i < 8 * AGENTS_A_COMPANY; i++) {
         uint32_t p = g_addrs->peds + (uint32_t)i * PED_SIZE;
         uint32_t company = g_addrs->companies + (uint32_t)(i / AGENTS_A_COMPANY) * g_addrs->company_size;
-        uint8_t colour = M[g_addrs->colours + M[company + COMPANY_COLOUR]];
+        uint32_t colour = company_rgb(company, pal);
         int fx, fy, x, y;
-        if (M[p + PED_TYPE] != 2 || M[p + PED_LOCATION] != 4 || colour == HAT_COLOUR) continue;
+        if (M[p + PED_TYPE] != 2 || M[p + PED_LOCATION] != 4 || colour == pal[HAT_COLOUR]) continue;
         world_to_frame((int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), (int16_t)RD16(p + PED_Z), &fx, &fy);
         /* the head, below the number of an agent of the squad */
         for (y = fy - 31; y <= fy - 14; y++)
             for (x = fx - 8; x <= fx + 8; x++)
                 if (x >= VIEW_LEFT && x < w && y >= VIEW_TOP && y < VIEW_BOTTOM && pix[y * w + x] == HAT_COLOUR)
-                    pix[y * w + x] = colour;
+                    rgb[y * w + x] = colour;
     }
 }
 
-void game_overlay(uint8_t *pixels, int w, int h, const uint32_t *palette)
+#define MARKER_COLOUR 0x5aff5au
+
+void game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h)
 {
     uint64_t age;
-    int fx, fy, hw, density;
-    uint8_t c;
+    int fx, fy, hw, alpha;
     if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return;
-    company_hats(pixels, w);
-    draw_drops(pixels, w, palette);
-    solid_selected_boxes(pixels, w, palette);
-    draw_scanner_extras(pixels, w, palette);
+    company_hats(index, palette, rgb, w);
+    draw_drops(rgb, w);
+    solid_selected_boxes(index, palette, rgb, w);
+    draw_scanner_extras(rgb, w);
     if (g_marker_us == 0) return;
     age = host_time_us() - g_marker_us;
     if (age >= MARKER_US) {
@@ -698,10 +702,9 @@ void game_overlay(uint8_t *pixels, int w, int h, const uint32_t *palette)
     }
     world_to_frame(g_marker[0], g_marker[1], g_marker[2], &fx, &fy);
     hw = 6 + (int)(22 * (MARKER_US - age) / MARKER_US);
-    density = 4 - (int)(4 * age / MARKER_US);
-    c = nearest_colour(palette, 90, 255, 90);
-    diamond(pixels, w, fx, fy, hw, 4, c, density);
-    diamond(pixels, w, fx, fy, 4, 0, c, density);
+    alpha = (int)(255 * (MARKER_US - age) / MARKER_US); /* it fades out */
+    diamond(rgb, w, fx, fy, hw, 4, MARKER_COLOUR, alpha);
+    diamond(rgb, w, fx, fy, 4, 0, MARKER_COLOUR, alpha);
 }
 
 /* a new move order of an agent of the squad: the marker goes there */
