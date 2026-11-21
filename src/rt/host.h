@@ -79,6 +79,13 @@ int rt_mouse_used(void);
 void rt_set_paused(int paused);
 /* the volumes of the music and of the other sounds, 0..100 (100 at first) */
 void rt_set_volumes(int music, int sound);
+/* the speed of the emulated CPU in instructions a millisecond, as DOSBox's "cycles" (GOG's Syndicate Plus: 8000):
+ * the game paces itself on its timer and draws when its work is done, so on a CPU without limit it does a few
+ * updates at once and then waits, and the motion jumps.  0: as fast as the host goes (at first) */
+void rt_set_cpu_speed(int instructions_per_ms);
+/* the number of different frames the game showed in the last second, at the top right of the picture (off at
+ * first) */
+void rt_set_show_fps(int on);
 
 #ifdef __cplusplus
 }

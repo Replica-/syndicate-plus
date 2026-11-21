@@ -55,6 +55,7 @@
 #define SC_APP_CRT 0x10A0u
 #define SC_APP_RECORD 0x10B0u
 #define SC_APP_SCREENSHOT 0x10C0u
+#define SC_APP_FPS 0x10D0u
 #define SC_APP_MUSIC_VOL 0x1100u /* + 0x10 * step (0..4): off, 25%, 50%, 75%, 100% */
 #define SC_APP_SOUND_VOL 0x1200u
 #define WM_APP_GAME_DONE (WM_APP + 1)
@@ -842,6 +843,15 @@ static void toggle_crt(HWND h)
 
 /* ==== volumes, video recording and screenshots ========================================================== */
 static int g_music_vol = 100, g_sound_vol = 100;
+static int g_fps_on;
+
+static void toggle_fps(void)
+{
+    g_fps_on = !g_fps_on;
+    rt_set_show_fps(g_fps_on);
+    CheckMenuItem(GetSystemMenu(g_hwnd, FALSE), SC_APP_FPS, g_fps_on ? MF_CHECKED : MF_UNCHECKED);
+    if (g_ini[0]) WritePrivateProfileStringW(L"video", L"fps", g_fps_on ? L"1" : L"0", g_ini);
+}
 
 static void check_volume_items(HMENU sm)
 {
@@ -950,6 +960,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         }
         AppendMenuW(sm, MF_STRING, SC_APP_RECORD, L"&Record video\tF12");
         AppendMenuW(sm, MF_STRING, SC_APP_SCREENSHOT, L"Scree&nshot\tF11");
+        AppendMenuW(sm, MF_STRING | (g_fps_on ? MF_CHECKED : MF_UNCHECKED), SC_APP_FPS, L"Show &frames a second");
         AppendMenuW(sm, MF_STRING, SC_APP_ABOUT, L"&About " APP_CAPTIONW L"\x2026");
         return 0;
     }
@@ -1004,6 +1015,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             return 0;
         case SC_APP_SCREENSHOT:
             screenshot();
+            return 0;
+        case SC_APP_FPS:
+            toggle_fps();
             return 0;
         case SC_APP_MUSIC_VOL: case SC_APP_MUSIC_VOL + 0x10u: case SC_APP_MUSIC_VOL + 0x20u:
         case SC_APP_MUSIC_VOL + 0x30u: case SC_APP_MUSIC_VOL + 0x40u:
@@ -1374,6 +1388,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     g_music_vol = (int)GetPrivateProfileIntW(L"sound", L"music_volume", 100, g_ini);
     g_sound_vol = (int)GetPrivateProfileIntW(L"sound", L"sound_volume", 100, g_ini);
     rt_set_volumes(g_music_vol, g_sound_vol);
+    /* the speed of GOG's DOSBox (cycles=8000): the game's motion as it was */
+    rt_set_cpu_speed((int)GetPrivateProfileIntW(L"game", L"cycles", 8000, g_ini));
+    g_fps_on = GetPrivateProfileIntW(L"video", L"fps", 1, g_ini) != 0;
+    rt_set_show_fps(g_fps_on);
     if (music_dir[0] == 0)
         GetPrivateProfileStringW(L"music", L"dir", L"", music_dir, (DWORD)(sizeof music_dir / sizeof music_dir[0]), g_ini);
     if (music_dir[0] != 0) {

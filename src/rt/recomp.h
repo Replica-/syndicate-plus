@@ -117,6 +117,11 @@ void rt_trace_leave(uint32_t addr);
 /* ---- memory --------------------------------------------------------------------------------------------- */
 #define RT_IS_VGA(a) ((uint32_t)((a) - 0xA0000u) < 0x20000u)
 
+/* the instructions run (RT_CYC at the start of each run of them, tools/recomp.py): rt_poll keeps the program at the
+ * speed of a CPU of its time */
+extern uint64_t rt_cycles;
+#define RT_CYC(n) (rt_cycles += (n))
+
 RT_INLINE uint8_t RD8(uint32_t a)
 {
     if (RT_IS_VGA(a)) return vga_read8(a);

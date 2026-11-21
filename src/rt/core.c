@@ -14,6 +14,7 @@
 Cpu R;
 uint8_t *M;
 int32_t rt_poll_budget = 1;
+uint64_t rt_cycles;
 int rt_verbose = 0;
 int rt_exit_code;
 int rt_in_irq;
@@ -597,6 +598,83 @@ void rt_set_paused(int paused)
     g_paused = paused;
 }
 
+/* ---- the speed of the emulated CPU ---- */
+static volatile int g_cpu_speed;    /* instructions a ms; 0: no limit */
+static uint64_t g_cyc_base_us, g_cyc_base;
+
+void rt_set_cpu_speed(int instructions_per_ms)
+{
+    g_cpu_speed = instructions_per_ms > 0 ? instructions_per_ms : 0;
+    g_cyc_base_us = 0;
+}
+
+/* the program may run g_cpu_speed instructions a ms: when it is more than 1 ms ahead, wait (in steps of at most
+ * 2 ms, so that the interrupts and the frames keep their time); after a stall it does not race to catch up */
+static void cpu_speed_limit(uint64_t *now)
+{
+    uint64_t speed = (uint64_t)g_cpu_speed, allowed, done;
+    if (speed == 0) return;
+    if (g_cyc_base_us == 0 || *now < g_cyc_base_us) {
+        g_cyc_base_us = *now;
+        g_cyc_base = rt_cycles;
+        return;
+    }
+    allowed = (*now - g_cyc_base_us) * speed / 1000u;
+    done = rt_cycles - g_cyc_base;
+    if (done + speed * 50u < allowed) {
+        g_cyc_base_us = *now;
+        g_cyc_base = rt_cycles;
+        return;
+    }
+    if (done > allowed + speed) {
+        uint64_t ahead_us = (done - allowed) * 1000u / speed;
+        host_sleep_us(ahead_us > 2000u ? 2000u : (uint32_t)ahead_us);
+        *now = host_time_us();
+    }
+}
+
+/* ---- frames a second ---- */
+static volatile int g_show_fps;
+static int g_fps, g_fps_count;
+static uint64_t g_fps_next;
+
+void rt_set_show_fps(int on)
+{
+    g_show_fps = on;
+}
+
+/* 3 x 5 pixels: 0-9, F, P, S */
+static const uint8_t k_font[13][5] = {
+    {7, 5, 5, 5, 7}, {2, 6, 2, 2, 7}, {7, 1, 7, 4, 7}, {7, 1, 3, 1, 7}, {5, 5, 7, 1, 1}, {7, 4, 7, 1, 7},
+    {7, 4, 7, 5, 7}, {7, 1, 1, 2, 2}, {7, 5, 7, 5, 7}, {7, 5, 7, 1, 7}, {7, 4, 6, 4, 4}, {7, 5, 7, 4, 4},
+    {7, 4, 7, 1, 7}};
+
+/* "NN FPS" at the top right: light green on a dark box */
+static void draw_fps(uint32_t *rgb, int w, int h)
+{
+    char text[16];
+    int glyphs[16], n = 0, i, s = w >= 640 ? 2 : 1, x0, y0, gx, gy, k;
+    snprintf(text, sizeof text, "%d FPS", g_fps);
+    for (i = 0; text[i]; i++)
+        glyphs[n++] = text[i] >= '0' && text[i] <= '9' ? text[i] - '0' : text[i] == 'F' ? 10 : text[i] == 'P' ? 11
+                    : text[i] == 'S' ? 12 : -1;
+    x0 = w - (n * 4 + 1) * s - 2;
+    y0 = 2;
+    if (x0 < 0 || h < 7 * s + 4) return;
+    for (gy = y0 - s; gy < y0 + 6 * s; gy++)
+        for (gx = x0 - s; gx < w - 1; gx++) rgb[gy * w + gx] = 0x101010u;
+    for (k = 0; k < n; k++) {
+        if (glyphs[k] < 0) continue;
+        for (gy = 0; gy < 5; gy++)
+            for (gx = 0; gx < 3; gx++)
+                if (k_font[glyphs[k]][gy] & (4 >> gx)) {
+                    int px = x0 + (k * 4 + gx) * s, py = y0 + gy * s, a, b;
+                    for (b = 0; b < s; b++)
+                        for (a = 0; a < s; a++) rgb[(py + b) * w + px + a] = 0x8cff8cu;
+                }
+    }
+}
+
 void rt_irq_init(void)
 {
     uint64_t now = host_time_us();
@@ -614,11 +692,26 @@ void pic_eoi(int master)
 static void present(void)
 {
     static uint32_t rgb[640 * 480];
+    static uint8_t prev[640 * 480];
+    static int prev_n;
+    uint64_t now = host_time_us();
     int w = 0, h = 0, i;
     if (vga_render(g_frame, &w, &h, g_pal)) {
+        /* the frames that differ from the one before: the game's frames a second */
+        if (w * h != prev_n || memcmp(prev, g_frame, (size_t)(w * h)) != 0) {
+            g_fps_count++;
+            memcpy(prev, g_frame, (size_t)(w * h));
+            prev_n = w * h;
+        }
+        if (now >= g_fps_next) {
+            g_fps = g_fps_count;
+            g_fps_count = 0;
+            g_fps_next = now + 1000000u;
+        }
         /* true colour from here on */
         for (i = 0; i < w * h; i++) rgb[i] = g_pal[g_frame[i]];
         game_overlay(g_frame, g_pal, rgb, w, h);
+        if (g_show_fps) draw_fps(rgb, w, h);
         host_present(rgb, w, h);
     }
 }
@@ -627,9 +720,10 @@ void rt_poll(void)
 {
     uint64_t now;
     int delivered = 0;
-    rt_poll_budget = 4000;
+    rt_poll_budget = g_cpu_speed ? 500 : 4000; /* finer steps when the speed is limited */
     if (rt_in_irq) return;
     now = host_time_us();
+    cpu_speed_limit(&now);
     while (g_paused && !host_should_quit()) {
         host_sleep_us(10000);
         now = host_time_us();

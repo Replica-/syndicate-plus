@@ -5,7 +5,7 @@
  *   synd_headless --game-dir DIR [--user-dir DIR] [--start "SYNDICAT\MAIN.EXE /args"] [--seconds N]
  *                 [--dump DIR] [--dump-every MS] [--input "ms:key[:up],..."] [--verbose N] [--log FILE]
  *                 [--wav FILE] [--virtual-time STEP_US] [--record DIR] [--music-dir DIR]
- *                 [--mem-dump MS:FILE]... [--cheats "COMPANY:PLAYER"]
+ *                 [--mem-dump MS:FILE]... [--cheats "COMPANY:PLAYER"] [--cycles N] [--fps]
  *
  * The frames are 32-bit BMP files (true colour, with what this version draws over the game).
  *
@@ -17,6 +17,9 @@
  * hex (1c = Enter) or a name (enter, esc, space, up, down, left, right, f1..f10, some letters and digits);
  * "key:down" / "key:up" to press or release only; "click@x;y" / "rclick@x;y" (held 150 ms) and "move@x;y"
  * with x, y fractions 0..65535 of the picture.
+ *
+ * --cycles N limits the emulated CPU to N instructions a ms, as the window does (8000; without it the game runs as
+ * fast as it can, as the tests want); --fps shows the frames a second at the top right.
  *
  * --record DIR records the run as an MP4 video into DIR (src/video/record.c, needs ffmpeg).  --music-dir plays
  * the songs from the files of DIR (src/rt/music.c); without it the FM music plays, so test runs do not depend on
@@ -324,6 +327,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--log")) g_logfile = fopen(v, "w"), i++;
         else if (!strcmp(a, "--music-dir")) opt.music_dir = v, i++;
         else if (!strcmp(a, "--cheats")) opt.cheats = v, i++;
+        else if (!strcmp(a, "--cycles")) rt_set_cpu_speed(atoi(v)), i++;
+        else if (!strcmp(a, "--fps")) rt_set_show_fps(1);
         else if (!strcmp(a, "--mem-dump") && g_ndumps < 16 && strchr(v, ':')) {
             g_dumps[g_ndumps].ms = (uint32_t)atoi(v);
             g_dumps[g_ndumps].file = strchr(v, ':') + 1;

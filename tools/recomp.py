@@ -581,7 +581,27 @@ class Recompiler:
                 if a is not None and a in f.labels and (not res or res[-1] != f"L_{a:06x}:;"):
                     res.append(f"L_{a:06x}:;")
             res.append(ln)
-        return res
+        return self.count_cycles(res)
+
+    @staticmethod
+    def count_cycles(lines: list[str]) -> list[str]:
+        """RT_CYC(n) at the start of each run of instructions (the entry, then every label): the runtime counts the
+        instructions run, to give the program the speed of a CPU of its time (rt_poll)"""
+        out: list[str] = []
+        i = 0
+        while i < len(lines):
+            ln = lines[i]
+            out.append(ln)
+            if ln.startswith("    RT_ENTER(") or (ln.startswith("L_") and ln.endswith(":;")):
+                n, k = 0, i + 1
+                while k < len(lines) and not (lines[k].startswith("L_") and lines[k].endswith(":;")):
+                    if lines[k].startswith("    /* ") and ": " in lines[k][:16]:
+                        n += 1
+                    k += 1
+                if n:
+                    out.append(f"    RT_CYC({n});")
+            i += 1
+        return out
 
     # ---- operands -------------------------------------------------------------------
     def reg_read(self, name: str) -> str:

@@ -1,0 +1,69 @@
+# Resume: porting the freesynd-enhanced features to syndicate-plus
+
+Where the work stands, for the next session. Everything is committed locally on `main`; nothing is pushed
+(the remote is Onur BUYUKCAGLAR's repo; never push).
+
+## Ground rules from the user
+
+- Never change the AI, mission triggers or gameplay (combat stays as the original). Close-range friendly fire was dropped.
+- Licence: syndicate-plus stays **MIT**. Never copy or port FreeSynd (GPL v3) code; carry over ideas, behaviour and
+  file-format knowledge only, and write fresh code.
+- The game is played only in **true colour on the GPU** (no 256-colour limits for anything new).
+- Test headless, without sound (when the window must be checked: mute both volumes in `Syndicate64.ini`, then
+  delete that ini afterwards).
+- Group 1 (FreeSynd bug fixes the original never had) is skipped.
+
+## Build, run, test
+
+- `_references/dos` is a junction to `D:\development\syndicate\game_data` (GOG install). `gen/` is generated:
+  `python tools/gen_all.py` (needs `pip install capstone`), about 40 s.
+- `dev\build.cmd` builds into `build-dev\RelWithDebInfo` (Ninja; a change to `src/rt/recomp.h` or `gen/` rebuilds
+  everything, about 8 min).
+- Tests: `SYND_HEADLESS=build-dev\RelWithDebInfo\synd_headless.exe python tests/run_tests.py --quick` (17 tests).
+- Start the games with the launcher's sound arguments: `--start "SYNDICAT\MAIN.EXE /c0 /iirq7 /idma1 /iio220"`
+  (`DATADISK\...` for American Revolt). `/s` means no sound.
+- VS Code: `.vscode/launch.json` has the launcher, both games, both games with `--cheats "MINIGUN SQUAD:TO THE TOP"`
+  (all missions, $100M, v3 mods, miniguns) and a headless recorded mission.
+
+## Done (groups 2 and 3, and the start of 4)
+
+Music from files (`src/rt/music.c`, follows the AIL/32 driver's sequence calls), volumes, video recording (F12,
+ffmpeg), screenshots (F11), auto saves (lines 1-3), MINIGUN SQUAD, `--cheats`, WASD scrolling, double-press 1-4 to
+centre, scanner range and extra marks, move-order marker, solid selected-agent box, hats in company colours, blood
+sprays, true-colour frames (`host_present` takes 0x00RRGGBB; `game_overlay` in `src/game/additions.c` draws over
+them), Direct3D 11 presentation on Windows (`src/platform/win32/win32_gpu.c`).
+
+How additions hook the game: `RT_ENTER` in every recompiled function checks a bitmap (`src/game/hooks.c`);
+`additions_install()` in `src/game/additions.c` adds the hooks of each program from one address table per program
+(English/Spanish/German Syndicate and American Revolt). `tools/find_equiv.py` finds a function and its data addresses
+in the other programs. Dev aids: `SYND_CENSUS=FILE`, `SYND_SKIP=addr,...`, headless `--mem-dump MS:FILE`.
+
+## In progress when the session ended: frame pacing and FPS
+
+The user saw the game "frame skipping, as if double". Measured: the recompiled game runs on an unlimited CPU, so in
+each ~100 ms it does 2-3 updates and 2 frames within a few ms (the first frame is never seen), then waits.
+Fix: the emulated CPU gets the speed of GOG's DOSBox (`cycles=8000`):
+
+- `tools/recomp.py` emits `RT_CYC(n)` (instructions of each run) and `gen/` was regenerated; `rt_cycles` in
+  `src/rt/recomp.h`; `cpu_speed_limit()` in `rt_poll` (`src/rt/core.c`); `rt_set_cpu_speed()` in `host.h`.
+- The window sets 8000 (`[game] cycles` in `Syndicate64.ini`); headless is unlimited unless `--cycles N`.
+- Measured after: frames evenly spaced, about 55 ms apart (was pairs 5 ms apart then ~90 ms gaps).
+- FPS counter at the top right (`rt_set_show_fps`, the game's different frames a second), on in the window
+  (system menu "Show frames a second", `[video] fps`), headless `--fps`.
+
+To finish: run the tests, check the window (FPS readable, motion smooth), compare the feel with DOSBox and tune the
+cycles if needed, update README.md (pacing and FPS), commit.
+
+## Next: group 4, the new renderer (fresh MIT code)
+
+Plan: (1) read the game's decompressed data from memory: in English Syndicate the pointers are at `0x44535c` (map,
+MAPxx.DAT), `0x445360` (tiles, HBLK01.DAT), `0x445330` (sprites, HSPR-0.DAT); level data at `0x470108` (people
+`0x478110`, 0x5c each; statics `0x47e790`, 30 bytes each; layout as FreeSynd's `leveldata.h`); camera words at
+`0x470000`; world-to-frame: `dx = x - camx*128, dy = y - camy*128, fx = (dx - dy)/8 + 128,
+fy = ((dx + dy)/2 - z)/8 + 56`. (2) A reference renderer checked pixel for pixel against the game's frame.
+(3) Widescreen and zoom on the GPU, with clicks mapped back into the game. (4) Lighting, time of day,
+see-inside-buildings (hold B), traffic-light glow, light editor.
+
+Also open: the 16 extra company colours and a colour/logo picker (now possible in true colour); the blood spray's
+hit detection was not checked on a real hit; the macOS front end has no menu items for the new features and was not
+built here.
