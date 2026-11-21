@@ -136,6 +136,22 @@ at the zoomed place at their own size. Recordings letterbox wide frames. Test: `
   MLOGOS in memory, 254 = the colour); the extra colour in `company_colour.txt` (user folder); Accept stores the
   game's nearest colour (+0x0F) and logo (+0x10). The window menu's company colour item was removed.
 
+## Done: FreeSynd parity pass (B view, lighting, shadows, full height, true colour)
+
+- B: tiles from the squad's level up drawn at alpha 60/255 (quad glow bit 7), green outline of walkable cells
+  (`path_walkable`, edges where no walkable cell on the level or one above/below) — as the fork's.
+- Lighting rebuilt on the fork's model (its maplighting/maprenderer read for ideas): times mission/day/dusk/night/dawn
+  with its grades; light map = ambient + lights*strength + per-pixel shine (glow none/bright ramp 0.62..0.80/full,
+  roads' white pixels 0.6), capped at 1; city * map + city * add; glows (muzzle flash) added by day too. Lamps:
+  luminance >= 0.78, 2..48 on ground, none on roads/slopes, circle 24+6*sqrt(n); light=on: tile centre, radius 80,
+  ellipse. Statics by kind (+0x19): 5-8 traffic lights, 0x0A neon, 0x20-0x26 lit windows, 0x12/13/15 glass.
+- Shadows per pixel: surface tiles shaded by solid tiles towards the sun up to 8 away; 4 corner shades per tile
+  (HostCityQuad.shade) blended in the shader.
+- The city fills the whole height (VIEW_TOP 0, VIEW_BOTTOM 480; GAME_TOP 40 for the game's own window); the mouse
+  over the picture's 480 lines (tests' clicks converted).
+- True colour: hats by the frame's top 6 rows (any element); the agents' boxes and the menus repaint the company's
+  palette entry in the chosen colour; the pointer over the Escape menu and Configure Company's grids.
+
 ## Still to do
 
 Check routes on stairs in a city mission (with the user); tune the night look and shadow strength from the user's
