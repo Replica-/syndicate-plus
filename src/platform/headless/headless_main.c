@@ -163,14 +163,16 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels)
 }
 
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale)
+                     float scale, const HostCityLight *lights, int nlights)
 {
 #ifdef _WIN32
     if (g_gpu_on) {
-        gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale);
+        gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale, lights, nlights);
         g_frame_city = 1;
     }
 #else
+    (void)lights;
+    (void)nlights;
     (void)scale;
     (void)quads;
     (void)n;
@@ -440,6 +442,9 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--cheats")) opt.cheats = v, i++;
         else if (!strcmp(a, "--cycles")) rt_set_cpu_speed(atoi(v)), i++;
         else if (!strcmp(a, "--gpu") && sscanf(v, "%dx%d", &g_gpu_w, &g_gpu_h) == 2) i++;
+#ifdef _WIN32
+        else if (!strcmp(a, "--time")) gpu_set_time(!strcmp(v, "night") ? 2 : !strcmp(v, "dusk") ? 1 : 0), i++;
+#endif
         else if (!strcmp(a, "--wide")) g_canvas_w = atoi(v) < 640 ? 640 : atoi(v) > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : atoi(v) & ~1, i++;
         else if (!strcmp(a, "--fps")) rt_set_show_fps(1);
         else if (!strcmp(a, "--mem-dump") && g_ndumps < 16 && strchr(v, ':')) {

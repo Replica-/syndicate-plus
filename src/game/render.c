@@ -87,6 +87,8 @@ static void decode_bits(const uint8_t *mask, const uint8_t *planes, int stride, 
     }
 }
 
+static void lights_forget(void);
+
 static const uint8_t *tile(int id)
 {
     uint32_t data = rd32(P_TILES);
@@ -95,6 +97,7 @@ static const uint8_t *tile(int id)
         memset(g_tile_seen, 0, sizeof g_tile_seen);
         g_tiles_at = data;
         memset(g_defined, 0, sizeof g_defined);
+        lights_forget();
         host_city_reset();
     }
     if (!g_tile_seen[id]) {
@@ -174,7 +177,7 @@ typedef struct Target {
 static HostCityQuad *g_quads;
 static int g_nquads, g_quads_cap;
 
-static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat)
+static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat, int glow)
 {
     HostCityQuad *q;
     if (!g_defined[image]) {
@@ -193,7 +196,7 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->y = y;
     q->image = (uint16_t)image;
     q->flip = (uint8_t)(flipped != 0);
-    q->unused = 0;
+    q->glow = (uint8_t)glow;
     q->hat = hat != 0 ? (hat | 0xFF000000u) : 0;
 }
 
@@ -247,11 +250,14 @@ static void blit_scaled(const Target *t, const uint8_t *src, int sw, int sh, flo
 }
 
 /* a tile or a sprite (image number): on the GPU at its exact place, else as blit (both zoomed) */
+static int tile_glow(int image);
+
 static void put(const Target *t, int image, const uint8_t *src, int sw, int sh, int dx, int dy, float fx, float fy,
                 int flipped, uint32_t hat)
 {
     if (t->gpu)
-        emit(image, src, sw, sh, g_zoom == 1.0 ? fx : zoom_x(fx), g_zoom == 1.0 ? fy : zoom_y(fy), flipped, hat);
+        emit(image, src, sw, sh, g_zoom == 1.0 ? fx : zoom_x(fx), g_zoom == 1.0 ? fy : zoom_y(fy), flipped, hat,
+             tile_glow(image));
     else if (g_zoom == 1.0)
         blit(t, src, sw, sh, dx, dy, flipped, hat);
     else
@@ -492,6 +498,116 @@ static void project_f(int32_t x, int32_t y, int32_t z, float *fx, float *fy)
     *fy = ((dx + dy) / 2.0f - (float)z) / 8.0f;
 }
 
+/* ---- what shines at dusk and at night (the GPU's lighting): lamps in the tiles, found from their pixels in the
+ * mission's palette, and the tiles set below ---- */
+enum { GLOW_NONE, GLOW_BRIGHT, GLOW_FULL };
+enum { LIGHT_AUTO, LIGHT_NONE, LIGHT_ON };
+static const struct {
+    uint8_t tile, glow, light, radius; /* radius 0: from the tile */
+} k_tile_lights[] = {
+    {33, GLOW_NONE, LIGHT_ON, 0},   {92, GLOW_NONE, LIGHT_ON, 0},     {95, GLOW_NONE, LIGHT_ON, 0},
+    {119, GLOW_FULL, LIGHT_ON, 0},  {121, GLOW_BRIGHT, LIGHT_ON, 0},  {170, GLOW_NONE, LIGHT_ON, 0},
+    {187, GLOW_NONE, LIGHT_NONE, 0}, {201, GLOW_NONE, LIGHT_ON, 130}, {207, GLOW_FULL, LIGHT_ON, 80},
+    {226, GLOW_NONE, LIGHT_ON, 0},
+};
+#define LAMP_MAX_PIXELS 30  /* more bright pixels than this: a painted surface, not a lamp */
+#define NB_LIGHTS 1024
+
+typedef struct TileLight {
+    uint8_t known, glow, light;
+    float ox, oy, radius;   /* the light's centre in the tile, its radius */
+    uint32_t colour;
+} TileLight;
+static TileLight g_tile_light[NB_TILES];
+static uint32_t g_light_pal;          /* the palette they were found with (a hash) */
+static const uint32_t *g_light_palette;
+static HostCityLight g_lights[NB_LIGHTS];
+static int g_nlights;
+
+static void lights_forget(void)
+{
+    memset(g_tile_light, 0, sizeof g_tile_light);
+}
+
+static int bright(uint32_t c)
+{
+    int r = (int)((c >> 16) & 0xFF), g = (int)((c >> 8) & 0xFF), b = (int)(c & 0xFF), mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    return mx >= 230 && r * 3 + g * 6 + b >= 1800;
+}
+
+static const TileLight *tile_light(int id)
+{
+    TileLight *l = &g_tile_light[id];
+    if (!l->known) {
+        const uint8_t *px = tile(id);
+        int x, y, n = 0, k, opaque = 0;
+        double sx = 0, sy = 0, ox = 0, oy = 0, cr = 0, cg = 0, cb = 0, mx;
+        memset(l, 0, sizeof *l);
+        l->known = 1;
+        l->light = LIGHT_AUTO;
+        for (k = 0; k < (int)(sizeof k_tile_lights / sizeof k_tile_lights[0]); k++)
+            if (k_tile_lights[k].tile == id) {
+                l->glow = k_tile_lights[k].glow;
+                l->light = k_tile_lights[k].light;
+                l->radius = (float)k_tile_lights[k].radius;
+            }
+        if (px == NULL || g_light_palette == NULL) {
+            l->light = LIGHT_NONE;
+            return l;
+        }
+        for (y = 0; y < TILE_H; y++)
+            for (x = 0; x < TILE_W; x++) {
+                uint8_t c = px[y * TILE_W + x];
+                if (c == 255) continue;
+                opaque++;
+                ox += x;
+                oy += y;
+                if (bright(g_light_palette[c])) {
+                    uint32_t v = g_light_palette[c];
+                    n++;
+                    sx += x;
+                    sy += y;
+                    cr += (v >> 16) & 0xFF;
+                    cg += (v >> 8) & 0xFF;
+                    cb += v & 0xFF;
+                }
+            }
+        if (l->light == LIGHT_AUTO) l->light = n > 0 && n <= LAMP_MAX_PIXELS ? LIGHT_ON : LIGHT_NONE;
+        if (l->light != LIGHT_ON) return l;
+        if (n > 0) {
+            l->ox = (float)(sx / n);
+            l->oy = (float)(sy / n);
+            mx = cr > cg ? (cr > cb ? cr : cb) : (cg > cb ? cg : cb);
+            l->colour = (uint32_t)(cr / mx * 255.0) << 16 | (uint32_t)(cg / mx * 255.0) << 8 | (uint32_t)(cb / mx * 255.0);
+        } else {
+            l->ox = opaque ? (float)(ox / opaque) : TILE_W / 2.0f;
+            l->oy = opaque ? (float)(oy / opaque) : TILE_H / 2.0f;
+            l->colour = 0xFFE6B4u; /* a warm lamp */
+        }
+        if (l->radius == 0) l->radius = (float)(48 + (n < 20 ? n : 20) * 2);
+    }
+    return l;
+}
+
+static int tile_glow(int image)
+{
+    return image < IMAGE_SPRITES ? tile_light(image)->glow : GLOW_NONE;
+}
+
+/* a tile drawn with its top left at fx, fy (unzoomed): its light */
+static void tile_lights_at(int id, float fx, float fy)
+{
+    const TileLight *l = tile_light(id);
+    HostCityLight *h;
+    if (l->light != LIGHT_ON || g_nlights == NB_LIGHTS) return;
+    h = &g_lights[g_nlights++];
+    h->x = zoom_x(fx + l->ox);
+    h->y = zoom_y(fy + l->oy);
+    h->rx = l->radius * (float)g_zoom;
+    h->ry = h->rx * 0.6f; /* lying on the ground, seen from above at an angle */
+    h->colour = l->colour;
+}
+
 void render_project(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
 {
     float ffx, ffy;
@@ -586,6 +702,18 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     int ly0 = (int)floorf(g_zcy + ((float)y0 - g_zcy) / (float)g_zoom), ly1 = (int)ceilf(g_zcy + ((float)y1 - g_zcy) / (float)g_zoom);
     if (mx <= 0 || my <= 0 || mz <= 0 || mx > 256 || my > 256 || mz > 16) return;
     g_nquads = 0;
+    g_nlights = 0;
+    if (t.gpu) {
+        /* a new palette: the lamps are found again */
+        uint32_t hash = 2166136261u;
+        int i;
+        for (i = 0; i < 256; i++) hash = (hash ^ pal[i]) * 16777619u;
+        if (hash != g_light_pal || g_light_palette != pal) {
+            g_light_pal = hash;
+            memset(g_tile_light, 0, sizeof g_tile_light);
+        }
+        g_light_palette = pal;
+    }
     /* on the playback clock (now_us 0: as the game is now) */
     if (now_us != 0 && playback(now_us, &sa, &sb, &t256)) {
         g_vx = g_own_view ? g_own_vx : lerp(sa->vx, sb->vx, t256);
@@ -662,6 +790,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
                         put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
                             ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
+                        if (t.gpu) tile_lights_at(tid, ffx + (float)render_tile_dx, ffy + (float)render_tile_dy);
                     }
                 }
                 for (; k < nobj && objs[k].key == key && objs[k].z <= tz; k++) draw_obj(&t, &objs[k]);
@@ -678,6 +807,6 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         for (i = 0; i < n; i++) hash = (hash ^ b[i]) * 16777619u;
         render_gpu_changed = hash != prev_hash;
         prev_hash = hash;
-        host_city_frame(g_quads, g_nquads, pal, x0, y0, x1, y1, (float)g_zoom);
+        host_city_frame(g_quads, g_nquads, pal, x0, y0, x1, y1, (float)g_zoom, g_lights, g_nlights);
     }
 }

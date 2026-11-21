@@ -24,6 +24,8 @@ void gpu_present(const uint32_t *pixels, int w, int h, RECT dst, int sharp);
 void gpu_city_reset(void);
 void gpu_city_image(int id, int w, int h, const uint8_t *pixels);
 void gpu_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                    float scale);
+                    float scale, const HostCityLight *lights, int nlights);
+/* the time of day the city is lit for: 0 day (as the game draws it), 1 dusk, 2 night */
+void gpu_set_time(int time);
 /* no city (a frame without one) */
 void gpu_city_off(void);

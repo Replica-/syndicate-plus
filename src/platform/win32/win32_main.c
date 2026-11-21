@@ -56,6 +56,7 @@
 #define SC_APP_RECORD 0x10B0u
 #define SC_APP_SCREENSHOT 0x10C0u
 #define SC_APP_FPS 0x10D0u
+#define SC_APP_TIME 0x1300u /* + 0x10 * time (0 day, 1 dusk, 2 night) */
 #define SC_APP_MUSIC_VOL 0x1100u /* + 0x10 * step (0..4): off, 25%, 50%, 75%, 100% */
 #define SC_APP_SOUND_VOL 0x1200u
 #define WM_APP_GAME_DONE (WM_APP + 1)
@@ -106,9 +107,9 @@ void host_city_image(int image, int w, int h, const uint8_t *pixels)
 }
 
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale)
+                     float scale, const HostCityLight *lights, int nlights)
 {
-    gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale);
+    gpu_city_frame(quads, n, palette, x0, y0, x1, y1, scale, lights, nlights);
     g_frame_city = 1;
 }
 
@@ -905,6 +906,20 @@ static void toggle_crt(HWND h)
 static int g_music_vol = 100, g_sound_vol = 100;
 static int g_fps_on;
 
+/* the time of day the city is lit for (with Direct3D) */
+static int g_time;
+static const wchar_t *const k_time_names[3] = {L"day", L"dusk", L"night"};
+
+static void set_time(int t)
+{
+    int k;
+    g_time = t;
+    gpu_set_time(t);
+    for (k = 0; k < 3; k++)
+        CheckMenuItem(GetSystemMenu(g_hwnd, FALSE), SC_APP_TIME + 0x10u * (UINT)k, k == t ? MF_CHECKED : MF_UNCHECKED);
+    if (g_ini[0]) WritePrivateProfileStringW(L"video", L"time", k_time_names[t], g_ini);
+}
+
 static void toggle_fps(void)
 {
     g_fps_on = !g_fps_on;
@@ -1041,6 +1056,13 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             AppendMenuW(sm, MF_POPUP, (UINT_PTR)sound, L"S&ound volume");
             check_volume_items(sm);
         }
+        {
+            HMENU times = CreatePopupMenu();
+            AppendMenuW(times, MF_STRING | (g_time == 0 ? MF_CHECKED : 0), SC_APP_TIME, L"&Day (as the game draws it)");
+            AppendMenuW(times, MF_STRING | (g_time == 1 ? MF_CHECKED : 0), SC_APP_TIME + 0x10u, L"D&usk");
+            AppendMenuW(times, MF_STRING | (g_time == 2 ? MF_CHECKED : 0), SC_APP_TIME + 0x20u, L"&Night");
+            AppendMenuW(sm, MF_POPUP, (UINT_PTR)times, L"&Time of day (missions)");
+        }
         AppendMenuW(sm, MF_STRING, SC_APP_RECORD, L"&Record video\tF12");
         AppendMenuW(sm, MF_STRING, SC_APP_SCREENSHOT, L"Scree&nshot\tF11");
         AppendMenuW(sm, MF_STRING | (g_fps_on ? MF_CHECKED : MF_UNCHECKED), SC_APP_FPS, L"Show &frames a second");
@@ -1105,6 +1127,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             return 0;
         case SC_APP_FPS:
             toggle_fps();
+            return 0;
+        case SC_APP_TIME: case SC_APP_TIME + 0x10u: case SC_APP_TIME + 0x20u:
+            set_time((int)(((w & 0xFFF0u) - SC_APP_TIME) / 0x10u));
             return 0;
         case SC_APP_MUSIC_VOL: case SC_APP_MUSIC_VOL + 0x10u: case SC_APP_MUSIC_VOL + 0x20u:
         case SC_APP_MUSIC_VOL + 0x30u: case SC_APP_MUSIC_VOL + 0x40u:
@@ -1485,6 +1510,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
      * speed, 8000, gives it only 10, and the game feels slow) */
     rt_set_cpu_speed((int)GetPrivateProfileIntW(L"game", L"cycles", 60000, g_ini));
     g_fps_on = GetPrivateProfileIntW(L"video", L"fps", 1, g_ini) != 0;
+    {
+        wchar_t t[16];
+        int k;
+        GetPrivateProfileStringW(L"video", L"time", L"day", t, 16, g_ini);
+        for (k = 0; k < 3; k++)
+            if (!_wcsicmp(t, k_time_names[k])) g_time = k;
+        gpu_set_time(g_time);
+    }
     rt_set_show_fps(g_fps_on);
     if (music_dir[0] == 0)
         GetPrivateProfileStringW(L"music", L"dir", L"", music_dir, (DWORD)(sizeof music_dir / sizeof music_dir[0]), g_ini);

@@ -53,18 +53,24 @@ typedef struct HostCityQuad {
     float x, y;       /* the image's top left corner in the frame */
     uint16_t image;
     uint8_t flip;     /* drawn mirrored */
-    uint8_t unused;
+    uint8_t glow;     /* in the dark: 0 nothing shines, 1 its brightest pixels, 2 all of it */
     uint32_t hat;     /* a colour for the pixels of colour 6 (0x00RRGGBB with 0xFF000000 set), or 0 */
 } HostCityQuad;
+/* a light in the city (a lamp): a soft ellipse of light, centre x, y, radii rx, ry (frame pixels) */
+typedef struct HostCityLight {
+    float x, y, rx, ry;
+    uint32_t colour;  /* 0x00RRGGBB */
+} HostCityLight;
 /* 1 when the platform draws the city now (it may decline, e.g. while it records a video) */
 int host_city_gpu(void);
 /* forget every image (new data); then define image `image` (w x h palette indices, row stride w) */
 void host_city_reset(void);
 void host_city_image(int image, int w, int h, const uint8_t *pixels);
 /* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, with the
- * frame's palette, each image `scale` times its size (the zoom) */
+ * frame's palette, each image `scale` times its size (the zoom); the lights shine when the platform shows the city
+ * at dusk or at night */
 void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale);
+                     float scale, const HostCityLight *lights, int nlights);
 
 /* the original game files built into the program (a pack written by tools/pack_game.py), used when no game
  * folder is given; NULL when the program has none */

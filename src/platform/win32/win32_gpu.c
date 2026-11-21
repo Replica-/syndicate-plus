@@ -7,7 +7,12 @@
  * In missions the city may come as a list of images instead (host_city_frame): the tiles and sprites, palette
  * indices, are packed in one atlas texture; each image is drawn at its exact place (between pixels) at the window's
  * resolution, through the frame's palette, with the same sharp filtering; the frame is drawn over it, see-through
- * where its pixels say so (their top byte: 255 the city shows).  Shown with vsync. */
+ * where its pixels say so (their top byte: 255 the city shows).  Shown with vsync.
+ *
+ * At dusk and at night (gpu_set_time) the city is drawn into a texture of its own, and its glowing pixels (the tiles
+ * that glow: their brightest pixels or all of them) into another; a light map is cleared to the time's ambient
+ * light and the lights (lamps) are added to it as soft ellipses; the city is then drawn multiplied by the light map,
+ * plus what glows. */
 #define COBJMACROS
 #include "win32_gpu.h"
 
@@ -24,9 +29,18 @@ static ID3D11Device *g_dev;
 static ID3D11DeviceContext *g_ctx;
 static IDXGISwapChain1 *g_swap;
 static ID3D11RenderTargetView *g_rtv;
-static ID3D11VertexShader *g_vs, *g_city_vs;
-static ID3D11PixelShader *g_ps, *g_city_ps;
-static ID3D11InputLayout *g_city_layout;
+static ID3D11VertexShader *g_vs, *g_city_vs, *g_light_vs;
+static ID3D11PixelShader *g_ps, *g_city_ps, *g_city_lit_ps, *g_light_ps, *g_comp_ps;
+static ID3D11InputLayout *g_city_layout, *g_light_layout;
+static ID3D11BlendState *g_add;
+static ID3D11Buffer *g_light_vb, *g_comp_cb;
+static int g_light_vb_cap;
+/* the lit city: its picture, what glows in it, the light map (as big as the picture's rectangle) */
+static ID3D11Texture2D *g_lit_tex[3];
+static ID3D11RenderTargetView *g_lit_rtv[3];
+static ID3D11ShaderResourceView *g_lit_srv[3];
+static int g_lit_w, g_lit_h;
+static volatile LONG g_time; /* 0 day (the game's own look), 1 dusk, 2 night */
 static ID3D11SamplerState *g_linear;
 static ID3D11BlendState *g_blend;
 static ID3D11RasterizerState *g_scissor;
@@ -70,13 +84,14 @@ static const char k_city_shader[] =
     "cbuffer C : register(b0) { float2 frame_size; float scale; float pad; };\n"
     "Texture2D<uint> atlas : register(t0);\n"
     "Texture2D<float4> pal : register(t1);\n"
-    "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2; };\n"
+    "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2;"
+    " uint glow : TEXCOORD3; };\n"
     "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1;"
-    " nointerpolation uint hat : TEXCOORD2; };\n"
+    " nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3; };\n"
     "V vs(VI i) {\n"
     "    V o;\n"
     "    o.pos = float4(i.pos.x / frame_size.x * 2 - 1, 1 - i.pos.y / frame_size.y * 2, 0, 1);\n"
-    "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat;\n"
+    "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat; o.glow = i.glow;\n"
     "    return o;\n"
     "}\n"
     "float4 texel(int2 p, V i) {\n"
@@ -88,6 +103,11 @@ static const char k_city_shader[] =
     "        return float4(((i.hat >> 16) & 255) / 255.0, ((i.hat >> 8) & 255) / 255.0, (i.hat & 255) / 255.0, 1);\n"
     "    return float4(pal.Load(int3(c, 0, 0)).rgb, 1);\n"
     "}\n"
+    /* what of a texel glows: all of it (glow 2), or its colour if bright (1) */
+    "float4 glowing(float4 c, uint glow) {\n"
+    "    if (glow == 2 || (glow == 1 && dot(c.rgb, float3(0.3, 0.6, 0.1)) > 0.7)) return c;\n"
+    "    return float4(0, 0, 0, c.a);\n"
+    "}\n"
     "float4 ps(V i) : SV_Target {\n"
     "    float2 p = i.tex - 0.5;\n"
     "    float2 b = floor(p);\n"
@@ -96,6 +116,45 @@ static const char k_city_shader[] =
     "    float4 c = lerp(lerp(texel(q, i), texel(q + int2(1, 0), i), f.x),\n"
     "                    lerp(texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f.x), f.y);\n"
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
+    "}\n"
+    /* lit: the picture, and what glows in it (covering what glowed under it) */
+    "struct O { float4 c : SV_Target0; float4 e : SV_Target1; };\n"
+    "O ps_lit(V i) {\n"
+    "    O o;\n"
+    "    float2 p = i.tex - 0.5;\n"
+    "    float2 b = floor(p);\n"
+    "    float2 f = saturate((p - b - 0.5) * scale + 0.5);\n"
+    "    int2 q = (int2)b;\n"
+    "    float4 c00 = texel(q, i), c10 = texel(q + int2(1, 0), i), c01 = texel(q + int2(0, 1), i);\n"
+    "    float4 c11 = texel(q + int2(1, 1), i);\n"
+    "    o.c = lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);\n"
+    "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x),\n"
+    "               lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
+    "    return o;\n"
+    "}\n";
+
+/* the light map: soft ellipses added; then the city multiplied by it, plus what glows */
+static const char k_light_shader[] =
+    "cbuffer C : register(b0) { float2 frame_size; float strength; float glow; float2 origin; float2 pad; };\n"
+    "struct LI { float2 pos : POSITION; float2 uv : TEXCOORD0; float3 col : COLOR0; };\n"
+    "struct LV { float4 pos : SV_Position; float2 uv : TEXCOORD0; float3 col : COLOR0; };\n"
+    "LV vs_light(LI i) {\n"
+    "    LV o;\n"
+    "    o.pos = float4(i.pos.x / frame_size.x * 2 - 1, 1 - i.pos.y / frame_size.y * 2, 0, 1);\n"
+    "    o.uv = i.uv; o.col = i.col;\n"
+    "    return o;\n"
+    "}\n"
+    "float4 ps_light(LV i) : SV_Target {\n"
+    "    float f = saturate(1 - dot(i.uv, i.uv));\n"
+    "    return float4(i.col * (f * f * strength), 0);\n"
+    "}\n"
+    "Texture2D scene : register(t0);\n"
+    "Texture2D emis : register(t1);\n"
+    "Texture2D light : register(t2);\n"
+    "float4 ps_comp(float4 pos : SV_Position) : SV_Target {\n"
+    "    int3 p = int3(pos.xy - origin, 0);\n"
+    "    float4 c = scene.Load(p);\n"
+    "    return float4(c.rgb * light.Load(p).rgb + emis.Load(p).rgb * glow, c.a);\n"
     "}\n";
 
 typedef struct Consts {
@@ -109,8 +168,26 @@ typedef struct CityConsts {
 typedef struct CityVertex {
     float x, y, u, v;
     float rect[4];
-    uint32_t hat;
+    uint32_t hat, glow;
 } CityVertex;
+
+typedef struct LightVertex {
+    float x, y, u, v;
+    float col[3];
+} LightVertex;
+
+typedef struct LightConsts {
+    float frame_size[2], strength, glow, origin[2], pad[2];
+} LightConsts;
+
+/* the times of day: the ambient light, how strong the lights are, how much what glows adds */
+static const struct {
+    float ambient[3], strength, glow;
+} k_times[3] = {
+    {{1, 1, 1}, 0, 0},
+    {{0.80f, 0.60f, 0.52f}, 0.55f, 0.45f},
+    {{0.24f, 0.27f, 0.45f}, 1.0f, 1.0f},
+};
 
 /* ---- the city's images and list, set on the game thread, drawn on the UI thread ---- */
 #define ATLAS 2048
@@ -127,6 +204,8 @@ static int g_shelf_x, g_shelf_y, g_shelf_h; /* the atlas packer */
 static int g_atlas_reset;                    /* the atlas must be cleared */
 static HostCityQuad *g_city_quads;
 static int g_city_n, g_city_cap, g_city_on;
+static HostCityLight *g_city_lights;
+static int g_city_nl, g_city_lcap;
 static uint32_t g_city_pal[256];
 static int g_city_rect[4];
 static float g_city_scale = 1.0f;
@@ -183,10 +262,24 @@ void gpu_city_image(int id, int w, int h, const uint8_t *pixels)
     ReleaseSRWLockExclusive(&g_city_lock);
 }
 
+void gpu_set_time(int time)
+{
+    InterlockedExchange(&g_time, time < 0 ? 0 : time > 2 ? 2 : time);
+}
+
 void gpu_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                    float scale)
+                    float scale, const HostCityLight *lights, int nlights)
 {
     AcquireSRWLockExclusive(&g_city_lock);
+    if (nlights > g_city_lcap) {
+        HostCityLight *l = (HostCityLight *)realloc(g_city_lights, sizeof *l * (size_t)nlights);
+        if (l != NULL) {
+            g_city_lights = l;
+            g_city_lcap = nlights;
+        }
+    }
+    g_city_nl = nlights <= g_city_lcap ? nlights : 0;
+    if (g_city_nl > 0) memcpy(g_city_lights, lights, sizeof *lights * (size_t)g_city_nl);
     if (n > g_city_cap) {
         HostCityQuad *q = (HostCityQuad *)realloc(g_city_quads, sizeof *q * (size_t)n);
         if (q == NULL) {
@@ -268,7 +361,17 @@ static int make_city(void)
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 2, DXGI_FORMAT_R32_UINT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 3, DXGI_FORMAT_R32_UINT, 0, 36, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
+    static const D3D11_INPUT_ELEMENT_DESC light_layout[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    };
+    ID3DBlob *litb = compile(k_city_shader, sizeof k_city_shader - 1, "ps_lit", "ps_4_0");
+    ID3DBlob *lvb = compile(k_light_shader, sizeof k_light_shader - 1, "vs_light", "vs_4_0");
+    ID3DBlob *lpb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_light", "ps_4_0");
+    ID3DBlob *cpb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_comp", "ps_4_0");
     ID3DBlob *vsb = compile(k_city_shader, sizeof k_city_shader - 1, "vs", "vs_4_0");
     ID3DBlob *psb = compile(k_city_shader, sizeof k_city_shader - 1, "ps", "ps_4_0");
     D3D11_TEXTURE2D_DESC td;
@@ -280,10 +383,25 @@ static int make_city(void)
                                                        NULL, &g_city_vs)) &&
              SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(psb), ID3D10Blob_GetBufferSize(psb),
                                                       NULL, &g_city_ps)) &&
-             SUCCEEDED(ID3D11Device_CreateInputLayout(g_dev, layout, 4, ID3D10Blob_GetBufferPointer(vsb),
-                                                      ID3D10Blob_GetBufferSize(vsb), &g_city_layout));
+             SUCCEEDED(ID3D11Device_CreateInputLayout(g_dev, layout, 5, ID3D10Blob_GetBufferPointer(vsb),
+                                                      ID3D10Blob_GetBufferSize(vsb), &g_city_layout)) &&
+             litb != NULL && lvb != NULL && lpb != NULL && cpb != NULL &&
+             SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(litb), ID3D10Blob_GetBufferSize(litb),
+                                                      NULL, &g_city_lit_ps)) &&
+             SUCCEEDED(ID3D11Device_CreateVertexShader(g_dev, ID3D10Blob_GetBufferPointer(lvb), ID3D10Blob_GetBufferSize(lvb),
+                                                       NULL, &g_light_vs)) &&
+             SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(lpb), ID3D10Blob_GetBufferSize(lpb),
+                                                      NULL, &g_light_ps)) &&
+             SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(cpb), ID3D10Blob_GetBufferSize(cpb),
+                                                      NULL, &g_comp_ps)) &&
+             SUCCEEDED(ID3D11Device_CreateInputLayout(g_dev, light_layout, 3, ID3D10Blob_GetBufferPointer(lvb),
+                                                      ID3D10Blob_GetBufferSize(lvb), &g_light_layout));
     RELEASE(vsb);
     RELEASE(psb);
+    RELEASE(litb);
+    RELEASE(lvb);
+    RELEASE(lpb);
+    RELEASE(cpb);
     if (!ok) return 0;
     memset(&td, 0, sizeof td);
     td.Width = td.Height = ATLAS;
@@ -307,6 +425,8 @@ static int make_city(void)
     bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     if (FAILED(ID3D11Device_CreateBuffer(g_dev, &bd, NULL, &g_city_cb))) return 0;
+    bd.ByteWidth = sizeof(LightConsts);
+    if (FAILED(ID3D11Device_CreateBuffer(g_dev, &bd, NULL, &g_comp_cb))) return 0;
     /* premultiplied alpha: the city's transparent texels and the frame's see-through pixels */
     memset(&bl, 0, sizeof bl);
     bl.RenderTarget[0].BlendEnable = TRUE;
@@ -318,6 +438,9 @@ static int make_city(void)
     bl.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     bl.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
     if (FAILED(ID3D11Device_CreateBlendState(g_dev, &bl, &g_blend))) return 0;
+    /* the lights add up */
+    bl.RenderTarget[0].DestBlend = bl.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    if (FAILED(ID3D11Device_CreateBlendState(g_dev, &bl, &g_add))) return 0;
     memset(&rs, 0, sizeof rs);
     rs.FillMode = D3D11_FILL_SOLID;
     rs.CullMode = D3D11_CULL_NONE;
@@ -433,6 +556,24 @@ void gpu_shutdown(void)
     RELEASE(g_paltex);
     RELEASE(g_city_vb);
     RELEASE(g_city_cb);
+    RELEASE(g_light_vb);
+    RELEASE(g_comp_cb);
+    RELEASE(g_city_lit_ps);
+    RELEASE(g_light_vs);
+    RELEASE(g_light_ps);
+    RELEASE(g_comp_ps);
+    RELEASE(g_light_layout);
+    RELEASE(g_add);
+    {
+        int k;
+        for (k = 0; k < 3; k++) {
+            RELEASE(g_lit_srv[k]);
+            RELEASE(g_lit_rtv[k]);
+            RELEASE(g_lit_tex[k]);
+        }
+        g_lit_w = g_lit_h = 0;
+        g_light_vb_cap = 0;
+    }
     RELEASE(g_city_layout);
     RELEASE(g_city_vs);
     RELEASE(g_city_ps);
@@ -495,6 +636,38 @@ static int texture(int w, int h)
     return 1;
 }
 
+/* the textures of the lit city, w x h */
+static int lit_targets(int w, int h)
+{
+    static const DXGI_FORMAT formats[3] = {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                           DXGI_FORMAT_R16G16B16A16_FLOAT};
+    D3D11_TEXTURE2D_DESC td;
+    int k;
+    if (g_lit_tex[0] != NULL && w == g_lit_w && h == g_lit_h) return 1;
+    for (k = 0; k < 3; k++) {
+        RELEASE(g_lit_srv[k]);
+        RELEASE(g_lit_rtv[k]);
+        RELEASE(g_lit_tex[k]);
+    }
+    memset(&td, 0, sizeof td);
+    td.Width = (UINT)w;
+    td.Height = (UINT)h;
+    td.MipLevels = td.ArraySize = 1;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    for (k = 0; k < 3; k++) {
+        td.Format = formats[k];
+        if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_lit_tex[k])) ||
+            FAILED(ID3D11Device_CreateRenderTargetView(g_dev, (ID3D11Resource *)g_lit_tex[k], NULL, &g_lit_rtv[k])) ||
+            FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_lit_tex[k], NULL, &g_lit_srv[k])))
+            return 0;
+    }
+    g_lit_w = w;
+    g_lit_h = h;
+    return 1;
+}
+
 /* the city of the last frame from the game thread: images to upload, then its quads */
 static void draw_city(RECT dst, int fw, int fh)
 {
@@ -503,8 +676,10 @@ static void draw_city(RECT dst, int fw, int fh)
     D3D11_MAPPED_SUBRESOURCE map;
     D3D11_RECT sc;
     CityConsts cc;
+    static LightVertex *lverts;
+    static int lverts_cap;
     UINT stride = sizeof(CityVertex), offset = 0;
-    int i, n, nv = 0;
+    int i, n, nv = 0, nlv = 0, time = (int)g_time;
     float sx = (float)(dst.right - dst.left) / (float)fw, sy = (float)(dst.bottom - dst.top) / (float)fh, zoom;
     AcquireSRWLockExclusive(&g_city_lock);
     if (!g_city_on) {
@@ -565,6 +740,7 @@ static void draw_city(RECT dst, int fw, int fh)
             c[k].rect[2] = (float)(im->ax + im->w);
             c[k].rect[3] = (float)(im->ay + im->h);
             c[k].hat = q->hat;
+            c[k].glow = q->glow;
         }
         verts[nv++] = c[0];
         verts[nv++] = c[1];
@@ -577,6 +753,34 @@ static void draw_city(RECT dst, int fw, int fh)
     sc.top = dst.top + (LONG)((float)g_city_rect[1] * sy);
     sc.right = dst.left + (LONG)((float)g_city_rect[2] * sx);
     sc.bottom = dst.top + (LONG)((float)g_city_rect[3] * sy);
+    /* the lights: a quad around each ellipse */
+    if (time != 0 && g_city_nl * 6 > lverts_cap) {
+        LightVertex *v = (LightVertex *)realloc(lverts, sizeof *v * (size_t)g_city_nl * 6);
+        if (v != NULL) {
+            lverts = v;
+            lverts_cap = g_city_nl * 6;
+        }
+    }
+    for (i = 0; time != 0 && i < g_city_nl && (i + 1) * 6 <= lverts_cap; i++) {
+        const HostCityLight *l = &g_city_lights[i];
+        LightVertex c[4];
+        int k;
+        for (k = 0; k < 4; k++) {
+            c[k].x = l->x + ((k & 1) ? l->rx : -l->rx);
+            c[k].y = l->y + ((k & 2) ? l->ry : -l->ry);
+            c[k].u = (k & 1) ? 1.0f : -1.0f;
+            c[k].v = (k & 2) ? 1.0f : -1.0f;
+            c[k].col[0] = (float)((l->colour >> 16) & 0xFF) / 255.0f;
+            c[k].col[1] = (float)((l->colour >> 8) & 0xFF) / 255.0f;
+            c[k].col[2] = (float)(l->colour & 0xFF) / 255.0f;
+        }
+        lverts[nlv++] = c[0];
+        lverts[nlv++] = c[1];
+        lverts[nlv++] = c[2];
+        lverts[nlv++] = c[2];
+        lverts[nlv++] = c[1];
+        lverts[nlv++] = c[3];
+    }
     ReleaseSRWLockExclusive(&g_city_lock);
     if (nv == 0) return;
     if (nv > g_city_vb_cap) {
@@ -603,18 +807,88 @@ static void draw_city(RECT dst, int fw, int fh)
     }
     {
         ID3D11ShaderResourceView *srv[2] = {g_atlas_srv, g_pal_srv};
+        int lit = time != 0 && lit_targets(dst.right - dst.left, dst.bottom - dst.top);
         ID3D11DeviceContext_IASetInputLayout(g_ctx, g_city_layout);
         ID3D11DeviceContext_IASetVertexBuffers(g_ctx, 0, 1, &g_city_vb, &stride, &offset);
         ID3D11DeviceContext_IASetPrimitiveTopology(g_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         ID3D11DeviceContext_VSSetShader(g_ctx, g_city_vs, NULL, 0);
         ID3D11DeviceContext_VSSetConstantBuffers(g_ctx, 0, 1, &g_city_cb);
-        ID3D11DeviceContext_PSSetShader(g_ctx, g_city_ps, NULL, 0);
+        ID3D11DeviceContext_PSSetShader(g_ctx, lit ? g_city_lit_ps : g_city_ps, NULL, 0);
         ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_city_cb);
         ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 2, srv);
         ID3D11DeviceContext_RSSetState(g_ctx, g_scissor);
-        ID3D11DeviceContext_RSSetScissorRects(g_ctx, 1, &sc);
         ID3D11DeviceContext_OMSetBlendState(g_ctx, g_blend, NULL, 0xFFFFFFFFu);
-        ID3D11DeviceContext_Draw(g_ctx, (UINT)nv, 0);
+        if (!lit) {
+            ID3D11DeviceContext_RSSetScissorRects(g_ctx, 1, &sc);
+            ID3D11DeviceContext_Draw(g_ctx, (UINT)nv, 0);
+        } else {
+            static const float clear[4] = {0, 0, 0, 0};
+            ID3D11ShaderResourceView *none[3] = {NULL, NULL, NULL};
+            D3D11_VIEWPORT vp = {0, 0, (float)(dst.right - dst.left), (float)(dst.bottom - dst.top), 0, 1};
+            D3D11_VIEWPORT back = {(float)dst.left, (float)dst.top, vp.Width, vp.Height, 0, 1};
+            D3D11_RECT lsc = {sc.left - dst.left, sc.top - dst.top, sc.right - dst.left, sc.bottom - dst.top};
+            float ambient[4] = {k_times[time].ambient[0], k_times[time].ambient[1], k_times[time].ambient[2], 1};
+            LightConsts lc;
+            UINT lstride = sizeof(LightVertex);
+            /* the city and what glows in it, in their textures */
+            ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 2, g_lit_rtv, NULL);
+            ID3D11DeviceContext_ClearRenderTargetView(g_ctx, g_lit_rtv[0], clear);
+            ID3D11DeviceContext_ClearRenderTargetView(g_ctx, g_lit_rtv[1], clear);
+            ID3D11DeviceContext_RSSetViewports(g_ctx, 1, &vp);
+            ID3D11DeviceContext_RSSetScissorRects(g_ctx, 1, &lsc);
+            ID3D11DeviceContext_Draw(g_ctx, (UINT)nv, 0);
+            ID3D11DeviceContext_RSSetState(g_ctx, NULL);
+            /* the light map: the ambient light, the lights added */
+            memset(&lc, 0, sizeof lc);
+            lc.frame_size[0] = (float)fw;
+            lc.frame_size[1] = (float)fh;
+            lc.strength = k_times[time].strength;
+            lc.glow = k_times[time].glow;
+            lc.origin[0] = (float)dst.left;
+            lc.origin[1] = (float)dst.top;
+            if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_comp_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
+                memcpy(map.pData, &lc, sizeof lc);
+                ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_comp_cb, 0);
+            }
+            ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 1, &g_lit_rtv[2], NULL);
+            ID3D11DeviceContext_ClearRenderTargetView(g_ctx, g_lit_rtv[2], ambient);
+            if (nlv > 0) {
+                if (nlv > g_light_vb_cap) {
+                    D3D11_BUFFER_DESC bd;
+                    RELEASE(g_light_vb);
+                    memset(&bd, 0, sizeof bd);
+                    bd.ByteWidth = (UINT)(sizeof(LightVertex) * (size_t)nlv * 2);
+                    bd.Usage = D3D11_USAGE_DYNAMIC;
+                    bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+                    bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+                    g_light_vb_cap = SUCCEEDED(ID3D11Device_CreateBuffer(g_dev, &bd, NULL, &g_light_vb)) ? nlv * 2 : 0;
+                }
+                if (g_light_vb != NULL && nlv <= g_light_vb_cap &&
+                    SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_light_vb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
+                    memcpy(map.pData, lverts, sizeof(LightVertex) * (size_t)nlv);
+                    ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_light_vb, 0);
+                    ID3D11DeviceContext_IASetInputLayout(g_ctx, g_light_layout);
+                    ID3D11DeviceContext_IASetVertexBuffers(g_ctx, 0, 1, &g_light_vb, &lstride, &offset);
+                    ID3D11DeviceContext_VSSetShader(g_ctx, g_light_vs, NULL, 0);
+                    ID3D11DeviceContext_VSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
+                    ID3D11DeviceContext_PSSetShader(g_ctx, g_light_ps, NULL, 0);
+                    ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
+                    ID3D11DeviceContext_OMSetBlendState(g_ctx, g_add, NULL, 0xFFFFFFFFu);
+                    ID3D11DeviceContext_Draw(g_ctx, (UINT)nlv, 0);
+                }
+            }
+            /* the city, lit, into the picture */
+            ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 1, &g_rtv, NULL);
+            ID3D11DeviceContext_RSSetViewports(g_ctx, 1, &back);
+            ID3D11DeviceContext_IASetInputLayout(g_ctx, NULL);
+            ID3D11DeviceContext_VSSetShader(g_ctx, g_vs, NULL, 0);
+            ID3D11DeviceContext_PSSetShader(g_ctx, g_comp_ps, NULL, 0);
+            ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
+            ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 3, g_lit_srv);
+            ID3D11DeviceContext_OMSetBlendState(g_ctx, g_blend, NULL, 0xFFFFFFFFu);
+            ID3D11DeviceContext_Draw(g_ctx, 3, 0);
+            ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 3, none);
+        }
         ID3D11DeviceContext_RSSetState(g_ctx, NULL);
         ID3D11DeviceContext_IASetInputLayout(g_ctx, NULL);
     }
