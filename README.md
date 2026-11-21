@@ -124,6 +124,8 @@ doors (cyan), the criminals (orange) and the people holding a weapon (red).
 Besides the game's own cheats (the company or player name in Configure Company), `MINIGUN SQUAD`: every weapon
 and mod is researched, and the 18 agents get every mod at version 3 and a minigun in each of their 8 weapon slots.
 The funds and the missions stay as they are; it goes with `TO THE TOP` as the player name for both.
+`--cheats "MINIGUN SQUAD:TO THE TOP"` gives the two names when the world map first comes up (the VS Code launch
+configurations *all missions, miniguns, full mods*, for both games).
 
 ### Videos and screenshots
 

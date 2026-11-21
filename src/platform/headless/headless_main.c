@@ -5,7 +5,7 @@
  *   synd_headless --game-dir DIR [--user-dir DIR] [--start "SYNDICAT\MAIN.EXE /args"] [--seconds N]
  *                 [--dump DIR] [--dump-every MS] [--input "ms:key[:up],..."] [--verbose N] [--log FILE]
  *                 [--wav FILE] [--virtual-time STEP_US] [--record DIR] [--music-dir DIR]
- *                 [--mem-dump MS:FILE]...
+ *                 [--mem-dump MS:FILE]... [--cheats "COMPANY:PLAYER"]
  *
  * The frames are 32-bit BMP files (true colour, with what this version draws over the game).
  *
@@ -323,6 +323,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--verbose")) opt.verbose = atoi(v), i++;
         else if (!strcmp(a, "--log")) g_logfile = fopen(v, "w"), i++;
         else if (!strcmp(a, "--music-dir")) opt.music_dir = v, i++;
+        else if (!strcmp(a, "--cheats")) opt.cheats = v, i++;
         else if (!strcmp(a, "--mem-dump") && g_ndumps < 16 && strchr(v, ':')) {
             g_dumps[g_ndumps].ms = (uint32_t)atoi(v);
             g_dumps[g_ndumps].file = strchr(v, ':') + 1;

@@ -56,6 +56,13 @@ const RtModuleDef *game_find_module(const char *dos_path)
     return NULL;
 }
 
+static char g_cheats[64];
+
+const char *game_cheats(void)
+{
+    return g_cheats;
+}
+
 int game_of_module(const RtModuleDef *def)
 {
     if (def == &syn_main_module) return GAME_SYN;
@@ -101,6 +108,7 @@ int game_main(const GameOptions *opt)
         snprintf(rt_game_dir, sizeof rt_game_dir, "%s", opt->game_dir);
     }
     snprintf(rt_user_dir, sizeof rt_user_dir, "%s", opt->user_dir);
+    snprintf(g_cheats, sizeof g_cheats, "%s", opt->cheats != NULL ? opt->cheats : "");
     if (opt->music_dir != NULL) {
         music_set_dir(opt->music_dir);
     } else if (opt->game_dir != NULL && opt->game_dir[0]) {

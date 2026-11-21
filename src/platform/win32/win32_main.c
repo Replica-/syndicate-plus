@@ -11,7 +11,7 @@
  * (platform/win32/host_win32.c of that project).
  *
  *   Syndicate64.exe [--game-dir DIR] [--user-dir DIR] [--start "SYNDICAT\MAIN.EXE /args"] [--log FILE]
- *                   [--verbose N] [--fullscreen] [--music-dir DIR]
+ *                   [--verbose N] [--fullscreen] [--music-dir DIR] [--cheats "COMPANY:PLAYER"]
  *
  * The songs can be played from files (mp3, ogg, flac or wav) instead of the FM music: assassinate, danger,
  * intro, mission_completed, mission_failed and game_completed in the "music" folder of the game folder, in
@@ -1314,7 +1314,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     int argc = 0, i, full = 0;
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     wchar_t game_dir[MAX_PATH * 2] = L"", user_dir[MAX_PATH * 2] = L"";
-    static char start_u8[512], music_u8[MAX_PATH * 3];
+    static char start_u8[512], music_u8[MAX_PATH * 3], cheats_u8[64];
     wchar_t music_dir[MAX_PATH * 2] = L"";
     WNDCLASSEXW wc;
     RECT wr;
@@ -1350,6 +1350,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
             i++;
         } else if (!wcscmp(a, L"--fullscreen")) {
             full = 1;
+        } else if (!wcscmp(a, L"--cheats")) {
+            to_utf8(v, cheats_u8, (int)sizeof cheats_u8);
+            g_opt.cheats = cheats_u8;
+            i++;
         } else if (!wcscmp(a, L"--music-dir")) {
             _snwprintf(music_dir, sizeof music_dir / sizeof music_dir[0], L"%s", v);
             i++;

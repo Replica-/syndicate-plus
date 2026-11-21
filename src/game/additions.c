@@ -26,7 +26,11 @@
  *
  * The MINIGUN SQUAD cheat, as the company or player name (Configure Company), like the game's own cheats: every
  * weapon and mod researched, and the 18 agents of the company with every mod at version 3 and a minigun in each
- * of their 8 weapon slots.  The research is completed as the game's COOPER TEAM cheat does it. */
+ * of their 8 weapon slots.  The research is completed as the game's COOPER TEAM cheat does it.
+ *
+ * --cheats "COMPANY:PLAYER" names the player's company and the player when the world map first comes up and runs
+ * the game's cheat check, as Configure Company does: "MINIGUN SQUAD:TO THE TOP" gives every mod and miniguns,
+ * every mission and $100 000 000. */
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -203,9 +207,12 @@ static int on_mission_end(uint32_t addr)
     return 0;
 }
 
+static void cheat_names(void);
+
 static int on_world_map(uint32_t addr)
 {
     (void)addr;
+    cheat_names();
     if (g_mission_over) {
         g_mission_over = 0;
         auto_save();
@@ -301,6 +308,32 @@ static int on_cheat_check(uint32_t addr)
     if (name_is(company + COMPANY_NAME, "MINIGUN SQUAD") || name_is(company + PLAYER_NAME, "MINIGUN SQUAD"))
         minigun_squad(company);
     return 0;
+}
+
+/* names from --cheats, once in each run of a game program */
+static int g_cheats_done;
+
+static void cheat_names(void)
+{
+    const char *c = game_cheats(), *colon;
+    uint32_t company;
+    size_t n;
+    if (g_cheats_done || c[0] == '\0') return;
+    g_cheats_done = 1;
+    company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+    colon = strchr(c, ':');
+    n = colon != NULL ? (size_t)(colon - c) : strlen(c);
+    if (n > 16) n = 16;
+    memset(M + company + COMPANY_NAME, 0, 17);
+    memcpy(M + company + COMPANY_NAME, c, n);
+    if (colon != NULL) {
+        n = strlen(colon + 1);
+        if (n > 16) n = 16;
+        memset(M + company + PLAYER_NAME, 0, 17);
+        memcpy(M + company + PLAYER_NAME, colon + 1, n);
+    }
+    guest_call(g_addrs->cheat_check, NULL, 0);
+    rt_log("cheats: %s", c);
 }
 
 /* ==== keys in missions ====================================================================================== */

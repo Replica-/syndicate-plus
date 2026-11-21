@@ -32,6 +32,8 @@ void additions_install(int game);
 
 /* game.c */
 int game_of_module(const RtModuleDef *def);
+/* GameOptions.cheats ("" when none) */
+const char *game_cheats(void);
 /* the GAME_* of the running program */
 int game_current(void);
 /* the game ends (the census file is written) */

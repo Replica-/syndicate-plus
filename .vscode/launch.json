@@ -38,6 +38,31 @@
             "preLaunchTask": "Build"
         },
         {
+            // Syndicate with every mission open and $100 000 000 (TO THE TOP, as the player name), and every agent
+            // with every mod at version 3 and a minigun in each weapon slot (MINIGUN SQUAD, as the company name):
+            // the names are given when the world map first comes up (Begin Mission)
+            "name": "Syndicate64 - Syndicate, all missions, miniguns, full mods",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-dev/RelWithDebInfo/Syndicate64.exe",
+            "args": ["--start", "SYNDICAT\\MAIN.EXE /c0 /iirq7 /idma1 /iio220", "--cheats", "MINIGUN SQUAD:TO THE TOP",
+                     "--log", "${workspaceFolder}/out/syndicate64.log"],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "preLaunchTask": "Build"
+        },
+        {
+            "name": "Syndicate64 - American Revolt, all missions, miniguns, full mods",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-dev/RelWithDebInfo/Syndicate64.exe",
+            "args": ["--start", "DATADISK\\MAIN.EXE /c0 /iirq7 /idma1 /iio220", "--cheats", "MINIGUN SQUAD:TO THE TOP",
+                     "--log", "${workspaceFolder}/out/syndicate64.log"],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "preLaunchTask": "Build"
+        },
+        {
             // Headless into the first mission on the virtual clock (as the tests), recorded as a video in out\video
             // with the songs from the music folder
             "name": "Headless - mission, recorded",
