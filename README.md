@@ -127,6 +127,16 @@ the shots.  Ctrl+L in a mission opens the light editor: the tile under the point
 it glows in the dark, L whether it lights what is around it, [ and ] the size of its light, C its colour; the
 settings are saved in `tile_lights.ini` beside the saves.
 
+By day the window menu's *Sun shadows* darkens the tiles a building shades (the sun at the top left).  Traffic
+lights and other small coloured lights in the objects glow at dusk and night.  Held B also outlines in cyan the
+edges of the floor the squad walks on.
+
+*Company colour* in the window menu paints your agents' hats in one of 16 more colours (the game's own company
+colour and data are unchanged).  *Squad finds routes* (on by default): a move order the game's straight walk
+cannot do (another level, a gap or a wall between) is walked as a route over the map's floors and stairs (A* on
+the tiles, with the game's own tile types); an agent stuck on the way gets the order as the game had it.  Only the
+squad's orders: the other people and the enemies' AI are untouched.
+
 ### The scanner
 
 The scanner (the map at the bottom left of a mission) shows more of the city around the leader: 6 pixels a tile
@@ -193,7 +203,7 @@ at dusk and night through a light map.  The headless program does the same offsc
 The tests play the games headless on an emulated clock (runs repeat exactly) and check pictures, files and
 sound: the launcher in several installations, the main menus of both games in every language, a mission, shooting,
 saving and loading, the intro music and length, the built-in files, that two runs end on the same frame, a wide
-zoomed mission's clicks, and the GPU's picture at night.
+zoomed mission's clicks, the GPU's picture at night, a company colour and a route over a bridge.
 They need the game files in `_references/dos`.
 
 ## Layout

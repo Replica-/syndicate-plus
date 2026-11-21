@@ -107,11 +107,23 @@ at the zoomed place at their own size. Recordings letterbox wide frames. Test: `
 - Light editor: Ctrl+L in a mission; G/L/[/]/C on the tile under the pointer; saved at once.
 - Screenshots in GPU mode capture the presented picture (`gpu_capture`); PNGs keep their shape.
 
-## Still to do after that
+## Done: the rest of the list
 
-Traffic lights glowing (find their tiles with the light editor), a walkable outline when B is held, sun shadows by
-day; the 16 extra company
-colours with a colour/logo picker; instant click feedback (optional); improved path finding (the user asked for it
-to be on the list; it changes how agents move, so say what it would change and ask before doing it). Loose ends: blood spray on a real hit and the
-corpse fix on a real death are unchecked; the macOS front end has no menu items for the new features (wide view,
-time of day: stubs) and was not built here; video recordings use the CPU picture (not lit).
+- Sun shadows (render.c `sun_shade`, packed in the quad's flip byte bits 1-7; window menu, `[video] shadows`).
+- Signal lights: object frames with a few bright saturated pixels light a little at dusk/night (`frame_lights`).
+- B held: floor outline (`render_floor_outline`).
+- Company colour: window menu, 16 extra colours for the player's hats (`game_set_player_colour`, `[game]
+  company_colour`; headless `--colour`).
+- Videos with Direct3D record the presented picture (captured each paint).
+- Routes (`src/game/path.c`): tile types from COL01.DAT unpacked by the game's unpacker (GameAddrs.unpack) in DOS
+  memory; A* over (x, y, level), slopes' directions found from their neighbours; turning points sent one at a time
+  (`follow_routes`), stuck 40 ticks -> the original order. Only when the straight walk can't do it. Mission 1
+  facts: ground is level 1 (z 256), a trench at x 81-83 with a bridge at y 40; the towers' tops are z 768 (not
+  reachable). Window menu "Squad finds routes" (`[game] routes`; `SYND_ROUTES=off`). Not yet checked on stairs
+  inside buildings (no such map reachable in the headless tests).
+
+## Still to do
+
+Check routes on stairs in a city mission (with the user); tune the night look and shadow strength from the user's
+play; the macOS front end (not built here: no wide view, GPU city, lighting or the new menu items there). Loose
+ends: blood spray on a real hit and the corpse fix on a real death are unchecked.
