@@ -284,6 +284,31 @@ static int32_t lerp(int32_t a, int32_t b, int t) /* t 0..256 */
     return a + (b - a) * t / 256;
 }
 
+int render_sprite_ink(int id, int *x, int *y)
+{
+    int sw, sh, i, j, mx = 9999, my = 9999;
+    const uint8_t *s = sprite(id, &sw, &sh);
+    if (s == NULL) return 0;
+    for (j = 0; j < sh; j++)
+        for (i = 0; i < sw; i++)
+            if (s[j * sw + i] != 255 && s[j * sw + i] != 0) {
+                if (i < mx) mx = i;
+                if (j < my) my = j;
+            }
+    if (mx == 9999) return 0;
+    *x = mx;
+    *y = my;
+    return 1;
+}
+
+void render_sprite(uint32_t *rgb, int w, int h, const uint32_t *pal, int id, int x, int y, int x0, int y0, int x1, int y1)
+{
+    Target t = {rgb, w, h, x0, y0, x1, y1, pal};
+    int sw, sh;
+    const uint8_t *s = sprite(id, &sw, &sh);
+    if (s != NULL) blit(&t, s, sw, sh, x, y, 0, 0);
+}
+
 /* where a point of the world is in the frame (the game's sprite placement), from the view being drawn */
 static void project(int32_t x, int32_t y, int32_t z, int *fx, int *fy)
 {

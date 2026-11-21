@@ -24,6 +24,10 @@ void render_reset(void);
 /* where a point of the world is in the frame last drawn (its view) */
 void render_project(int32_t x, int32_t y, int32_t z, int *fx, int *fy);
 
+/* draws sprite `id` (HSPR) with its top left corner at x, y, inside x0..x1, y0..y1 */
+void render_sprite(uint32_t *rgb, int w, int h, const uint32_t *pal, int id, int x, int y, int x0, int y0, int x1, int y1);
+/* the top left of the coloured pixels of sprite `id` (not black, not transparent); 0 when it has none */
+int render_sprite_ink(int id, int *x, int *y);
 /* where person `ped` (its number in the level data) was drawn in the last frame; 0 when it was not */
 int render_ped_place(int ped, int *fx, int *fy);
 

@@ -792,9 +792,15 @@ static uint32_t hat_colour(int ped)
     return c == g_overlay_pal[HAT_COLOUR] ? 0 : c;
 }
 
-/* the city between the game's last two ticks; what the game draws over its city (the pointer, the numbers of
- * the agents) is taken from its frame: the pixels where its frame and the city as it is now differ */
-static void smooth_city(const uint32_t *pal, uint32_t *rgb)
+#define LABEL_SPRITE 1070  /* the numbers 1 to 4 of the squad: sprites 1070 + 2 x slot in yellow, + 1 in red */
+#define LABEL_DX (-2)      /* the top left of their coloured pixels from the agent's feet (as the game draws them) */
+#define LABEL_DY (-40)
+#define LABEL_RED 14       /* their colours in the game's palette: red, yellow (the selected agents) */
+#define LABEL_YELLOW 11
+
+/* the city between the game's last two ticks; the game's pointer is taken from its frame (the pixels where its
+ * frame and the city as it is now differ, around it) */
+static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb)
 {
     static uint32_t game[640 * 480], now_city[640 * 480];
     uint32_t company;
@@ -814,25 +820,34 @@ static void smooth_city(const uint32_t *pal, uint32_t *rgb)
         for (x = mx - 24; x < mx + 40; x++)
             if (x >= VIEW_LEFT && x < 640 && y >= VIEW_TOP && y < VIEW_BOTTOM && game[y * 640 + x] != now_city[y * 640 + x])
                 rgb[y * 640 + x] = game[y * 640 + x];
-    /* the numbers over the agents of the squad, moved with them */
+    /* the numbers over the agents of the squad: drawn again over each agent where the smooth city has it, with the
+     * game's own sprites; whether the game shows a number, and in yellow (the selected agents) or red, is read from
+     * its picture where it drew it */
     company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
     for (slot = 0; slot < 4; slot++) {
         uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
-        int ax, ay, bx, by, i, j;
+        int ax, ay, bx, by, i, j, red = 0, yellow = 0;
         int32_t vx = (int32_t)(int16_t)RD16(g_addrs->view) * 128, vy = (int32_t)(int16_t)RD16(g_addrs->view + 2u) * 128;
         int32_t px = (int16_t)RD16(ped + PED_X), py = (int16_t)RD16(ped + PED_Y), pz = (int16_t)RD16(ped + PED_Z);
         if (M[ped + PED_LOCATION] != 4) continue;
-        /* where the game drew the agent, and where the smooth city has it */
-        ax = ((px - vx - (py - vy)) >> 3) + render_obj_dx;
-        ay = (((px - vx + py - vy) / 2 - pz) >> 3) + render_obj_dy;
         if (!render_ped_place((int)M[company + COMPANY_SQUAD] + slot, &bx, &by)) continue;
-        for (j = -64; j < -34; j++)
-            for (i = -12; i <= 12; i++) {
-                int gx = ax + i, gy = ay + j, tx = bx + i, ty = by + j;
+        /* where the game drew the number (its frame may be a little behind its records: a margin) */
+        ax = ((px - vx - (py - vy)) >> 3) + render_obj_dx + LABEL_DX;
+        ay = (((px - vx + py - vy) / 2 - pz) >> 3) + render_obj_dy + LABEL_DY;
+        for (j = -3; j < 13; j++)
+            for (i = -4; i < 12; i++) {
+                int gx = ax + i, gy = ay + j;
                 if (gx < VIEW_LEFT || gx >= 640 || gy < VIEW_TOP || gy >= VIEW_BOTTOM) continue;
-                if (tx < VIEW_LEFT || tx >= 640 || ty < VIEW_TOP || ty >= VIEW_BOTTOM) continue;
-                if (game[gy * 640 + gx] != now_city[gy * 640 + gx]) rgb[ty * 640 + tx] = game[gy * 640 + gx];
+                red += index[gy * 640 + gx] == LABEL_RED;
+                yellow += index[gy * 640 + gx] == LABEL_YELLOW;
             }
+        if (red < 4 && yellow < 4) continue; /* not shown */
+        {
+            int id = LABEL_SPRITE + slot * 2 + (yellow >= red ? 0 : 1), ix, iy;
+            if (!render_sprite_ink(id, &ix, &iy)) continue;
+            render_sprite(rgb, 640, 480, pal, id, bx + LABEL_DX - ix, by + LABEL_DY - iy, VIEW_LEFT, VIEW_TOP, 640,
+                          VIEW_BOTTOM);
+        }
     }
 }
 
@@ -846,7 +861,7 @@ void game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, 
     if (getenv("SYND_RENDER_TEST") != NULL) {
         render_test(rgb, palette);
     } else if (renderer_on()) {
-        smooth_city(palette, rgb);
+        smooth_city(index, palette, rgb);
     } else {
         company_hats(index, palette, rgb, w);
     }
