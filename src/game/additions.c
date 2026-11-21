@@ -68,27 +68,30 @@ typedef struct GameAddrs {
     uint32_t view;         /* (16 bits x, y) the view's position (world / 128) */
     uint32_t statics;      /* the objects of the mission (doors, ...): NB_STATICS of STATIC_SIZE bytes */
     uint32_t colours;      /* (bytes, by company colour) the colours of the companies in a mission's palette */
+    uint32_t data;         /* the pointer to HSPR's table, followed by the pointers to HFRA, HELE, the map and HBLK
+                            * (render.c) at data_offsets */
+    int ar;                /* American Revolt: its pointers are further apart */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
-     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au},
+     0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u, 0},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu, 0},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
-     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u},
+     0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u, 0},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
-     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u},
+     0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu, 1},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
-     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu, 1},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
-     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u},
+     0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u, 1},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -777,7 +780,7 @@ static const uint32_t *g_overlay_pal;
 static int renderer_on(void)
 {
     const char *e = getenv("SYND_RENDER");
-    return g_addrs != NULL && g_addrs->game == GAME_SYN && (e == NULL || strcmp(e, "off") != 0);
+    return g_addrs != NULL && (e == NULL || strcmp(e, "off") != 0);
 }
 
 static uint32_t hat_colour(int ped)
@@ -840,7 +843,7 @@ void game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, 
     uint64_t age;
     int fx, fy, hw, alpha;
     if (g_addrs == NULL || w != 640 || h != 480 || !in_mission()) return;
-    if (g_addrs->game == GAME_SYN && getenv("SYND_RENDER_TEST") != NULL) {
+    if (getenv("SYND_RENDER_TEST") != NULL) {
         render_test(rgb, palette);
     } else if (renderer_on()) {
         smooth_city(palette, rgb);
@@ -934,6 +937,19 @@ void additions_install(int game)
     hook_add(g_addrs->world_map, on_world_map);
     hook_add(g_addrs->save_game, on_save_game);
     hook_add(g_addrs->cheat_check, on_cheat_check);
+    {
+        /* what the renderer reads: the pointers in the order HSPR's table ... HBLK */
+        RenderAddrs ra;
+        uint32_t d = g_addrs->data;
+        ra.sprite_tab = d;
+        ra.frames = d + (g_addrs->ar ? 0x2cu : 0x24u);
+        ra.elements = d + (g_addrs->ar ? 0x34u : 0x2cu);
+        ra.map = d + (g_addrs->ar ? 0x50u : 0x48u);
+        ra.tiles = d + (g_addrs->ar ? 0x54u : 0x4cu);
+        ra.level = g_addrs->peds - 0x8008u;
+        ra.view = g_addrs->view;
+        render_set_addrs(&ra);
+    }
     hook_add(g_addrs->mission_tick, on_mission_tick);
     hook_add(g_addrs->draw_scanner, on_draw_scanner);
 }

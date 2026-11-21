@@ -72,10 +72,10 @@ the game's updates (interpolate their positions from the level data between two 
 (`render_tick` at each tick of `on_mission_tick`), one tick behind; the game's pointer (a box of +-96 px around
 the mouse; the game's mouse y + 40) and the squad's numbers are copied from its frame where it differs from the
 city as it is now; the hats are coloured in the renderer. Measured: ~46 different frames a second while agents
-walk, gaps 22 ms on average. English Syndicate only (`renderer_on`); `SYND_RENDER=off` turns it off.
+walk, gaps 22 ms on average. All six programs (99.7% match in Syndicate, 99.6% in American Revolt; vehicles are
+on the map with +0xa = 4 or 0x0c); `SYND_RENDER=off` turns it off.
 
-To do next: the other programs' addresses (find_equiv for the pointers 0x44535c, 0x445360, 0x445314, 0x445330,
-0x445338, 0x445340, the level data and the view); check it in the window; the animation frames still change
+To do next: check it in the window; the animation frames still change
 only at the game's ticks (walk cycles); then widescreen and zoom (the renderer can draw any rectangle at any
 view), lighting, see-inside-buildings.
 

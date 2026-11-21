@@ -14,32 +14,41 @@
 
 #include "../rt/rt.h"
 
-/* ---- the game's data in memory (English Syndicate) ---- */
-#define P_MAP 0x44535cu      /* -> max x, max y, max z (32 bits each), then a pointer per column (x + y * max x) */
-#define P_TILES 0x445360u    /* -> HBLK: 256 x 6 offsets of 32 x 16 blocks */
-#define P_SPRITE_TAB 0x445314u /* -> 6 bytes a sprite: pointer to its pixels, width, height */
-#define P_FRAMES 0x445338u   /* -> HFRA: 8 bytes a frame: first element, width, height, flags, next frame */
-#define P_ELEMENTS 0x445340u /* -> HELE: 10 bytes: sprite * 6, x offset, y offset, flipped, next element */
-#define LEVEL 0x470108u      /* the level data (GAMExx.DAT) */
-#define VIEW 0x470000u       /* (16 bits x, y) the view, in world units / 128 */
+/* ---- the game's data in memory (the running program's addresses: render_set_addrs) ---- */
+static RenderAddrs g_ra;
+#define P_MAP g_ra.map            /* -> max x, max y, max z (32 bits each), then a pointer per column */
+#define P_TILES g_ra.tiles        /* -> HBLK: 256 x 6 offsets of 32 x 16 blocks */
+#define P_SPRITE_TAB g_ra.sprite_tab /* -> 6 bytes a sprite: pointer to its pixels, width, height */
+#define P_FRAMES g_ra.frames      /* -> HFRA: 8 bytes a frame: first element, width, height, flags, next */
+#define P_ELEMENTS g_ra.elements  /* -> HELE: 10 bytes: sprite * 6, x offset, y offset, flipped, next */
+#define LEVEL g_ra.level          /* the level data (GAMExx.DAT) */
+#define VIEW g_ra.view            /* (16 bits x, y) the view, in world units / 128 */
 
 #define TILE_W 64
 #define TILE_H 48
 #define NB_TILES 256
 
 typedef struct ObjList {
-    uint32_t base, size, count;
+    uint32_t offset, size, count; /* in the level data */
     uint8_t on_map[3]; /* values of the byte at +0xa that mean "on the map" (0: none) */
 } ObjList;
 
 /* people, cars, objects, weapons, effects (FreeSynd's leveldata.h: LevelDataAll) */
 static const ObjList k_lists[] = {
-    {LEVEL + 0x8008u, 0x5cu, 256, {4, 0, 0}},
-    {LEVEL + 0xdc08u, 0x2au, 64, {4, 0, 0}},
-    {LEVEL + 0xe688u, 0x1eu, 400, {4, 6, 7}},
-    {LEVEL + 0x11568u, 0x24u, 512, {4, 0, 0}},
-    {LEVEL + 0x15d68u, 0x1eu, 256, {4, 0, 0}},
+    {0x8008u, 0x5cu, 256, {4, 0, 0}},
+    {0xdc08u, 0x2au, 64, {4, 0x0c, 0}},
+    {0xe688u, 0x1eu, 400, {4, 6, 7}},
+    {0x11568u, 0x24u, 512, {4, 0, 0}},
+    {0x15d68u, 0x1eu, 256, {4, 0, 0}},
 };
+
+static void snaps_reset(void);
+
+void render_set_addrs(const RenderAddrs *a)
+{
+    g_ra = *a;
+    snaps_reset();
+}
 
 static uint32_t rd32(uint32_t a)
 {
@@ -216,7 +225,7 @@ void render_tick(uint64_t now_us)
         const ObjList *l = &k_lists[li];
         uint32_t i;
         for (i = 0; i < l->count; i++, n++) {
-            uint32_t a = l->base + i * l->size;
+            uint32_t a = LEVEL + l->offset + i * l->size;
             g_snap[1].pos[n][0] = (int16_t)rd16(a + 4u);
             g_snap[1].pos[n][1] = (int16_t)rd16(a + 6u);
             g_snap[1].pos[n][2] = (int16_t)rd16(a + 8u);
@@ -225,9 +234,14 @@ void render_tick(uint64_t now_us)
     if (g_nsnaps < 2) g_nsnaps++;
 }
 
-void render_reset(void)
+static void snaps_reset(void)
 {
     g_nsnaps = 0;
+}
+
+void render_reset(void)
+{
+    snaps_reset();
 }
 
 static int32_t lerp(int32_t a, int32_t b, int t) /* t 0..256 */
@@ -298,7 +312,10 @@ static void draw_obj(const Target *t, const Obj *o)
 void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1, uint64_t now_us)
 {
     static Obj objs[2048];
-    uint32_t map = rd32(P_MAP), cols = map + 12u;
+    uint32_t map, cols;
+    if (g_ra.map == 0) return;
+    map = rd32(P_MAP);
+    cols = map + 12u;
     int mx = (int)rd32(map), my = (int)rd32(map + 4u), mz = (int)rd32(map + 8u), nobj = 0, li, s, k = 0, n = 0, t256;
     Target t = {rgb, w, h, x0, y0, x1, y1, pal};
     if (mx <= 0 || my <= 0 || mz <= 0 || mx > 256 || my > 256 || mz > 16) return;
@@ -317,7 +334,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         const ObjList *l = &k_lists[li];
         uint32_t i;
         for (i = 0; i < l->count; i++, n++) {
-            uint32_t a = l->base + i * l->size;
+            uint32_t a = LEVEL + l->offset + i * l->size;
             uint8_t loc = M[a + 0xau];
             int x, y, z;
             if (nobj == 2048) break;

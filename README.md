@@ -160,7 +160,7 @@ the city itself (`src/game/render.c`, from the game's own data in memory) at eve
 the people, vehicles, objects and the view placed between the game's last two updates (one update behind), so
 they move smoothly; the game's pointer and the agents' numbers are taken from its picture.  The emulated CPU runs
 at the speed of GOG's DOSBox (`[game] cycles=8000` in `Syndicate64.ini`).  The frames a second shown are at the
-top right (window menu: *Show frames a second*).  English Syndicate so far; `SYND_RENDER=off` turns it off.
+top right (window menu: *Show frames a second*).  Both games, every language; `SYND_RENDER=off` turns it off.
 
 ## Tests
 

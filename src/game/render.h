@@ -3,6 +3,15 @@
 
 #include <stdint.h>
 
+/* where the running program keeps what the renderer reads */
+typedef struct RenderAddrs {
+    uint32_t map, tiles, sprite_tab, frames, elements; /* the pointers to the map, HBLK, HSPR's table, HFRA, HELE */
+    uint32_t level;                                    /* the level data */
+    uint32_t view;                                     /* the view (16 bits x, y) */
+} RenderAddrs;
+
+void render_set_addrs(const RenderAddrs *a);
+
 /* draws the city into the rectangle x0..x1, y0..y1 of `rgb` (w x h, 0x00RRGGBB), in the game's projection (a
  * 640 x 480 frame: the map from x 128, y 40), with the colours of `pal`.  now_us 0: as the game is now; else
  * between the two last ticks (render_tick), one tick behind, so that things move smoothly at any frame rate */
