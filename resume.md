@@ -54,6 +54,16 @@ Fix: the emulated CPU gets the speed of GOG's DOSBox (`cycles=8000`):
 To finish: run the tests, check the window (FPS readable, motion smooth), compare the feel with DOSBox and tune the
 cycles if needed, update README.md (pacing and FPS), commit.
 
+## Smoothness (the user's top complaint)
+
+The user finds the game not smooth, much less than FreeSynd ("very low frame rate"). Measured (headless, real
+clock, mission frames that differ from the one before): the original engine draws the map at about 10-18 frames a
+second whatever the CPU speed (unlimited: ~18 drawn but in pairs 5 ms apart, so ~10 seen; 8000: ~16, mostly even;
+16000: ~10, even; 30000: ~18 with pairs). The measurement is noisy (a still scene counts few frames). No CPU speed
+reaches FreeSynd's smoothness: FreeSynd draws at the display's rate with its own renderer. So the first goal of
+the new renderer is smoothness: draw at the display's rate (60+), placing people, vehicles and the view between
+the game's updates (interpolate their positions from the level data between two ticks of the mission).
+
 ## Next: group 4, the new renderer (fresh MIT code)
 
 Plan: (1) read the game's decompressed data from memory: in English Syndicate the pointers are at `0x44535c` (map,
