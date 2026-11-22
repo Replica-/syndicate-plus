@@ -695,7 +695,7 @@ void game_mouse_filter(int *x, int *y)
     if (sx < MAP_LEFT) {
         /* the side panel: where it is on this picture */
         *x = sx;
-        *y = sy - GAME_TOP < 0 ? 0 : sy - GAME_TOP > 399 ? 399 : sy - GAME_TOP;
+        *y = sy > 399 ? 399 : sy; /* the panel moved up GAME_TOP lines (panel_full_height) */
         return;
     }
     /* the point of the city under the pointer, where the game's camera has it */
@@ -839,6 +839,20 @@ static void diamond(uint32_t *rgb, int w, int cx, int cy, int hw, int edge, uint
 #define SCANNER_X 0           /* the scanner in a 640 x 480 frame */
 #define SCANNER_Y 312
 #define SCANNER_SIZE 128
+/* the side panel over the whole height of the picture: moved up GAME_TOP lines (the game leaves them black) and
+ * the scanner SCANNER_EXT lines longer, down to the bottom: the game draws it a second time, its leader that much
+ * further down the map, and those lines are kept (the first ones of that picture) */
+#define SCANNER_EXT (2 * GAME_TOP)
+/* Syndicate's: its picture in missions (the 400 lines of the city's window, 640 wide, its 4 planes of 1 bit a pixel
+ * SCREEN_PLANE bytes apart; drawn there, then shown), how it draws (bit 1: in planes), the radius of the scanner's
+ * sweep */
+#define SCREEN_PAGE 0x445368u
+#define SCREEN_PLANE 0x7d00u
+#define SCREEN_MODE 0x470105u
+#define SCANNER_SWEEP 0x443ef4u
+static uint8_t g_scanner_ext[SCANNER_EXT][SCANNER_SIZE];
+static int g_scanner_ext_ok, g_scanner_nested;
+static int g_scanner_top = SCANNER_Y, g_scanner_h = SCANNER_SIZE; /* where scanner_dot draws */
 
 static uint32_t g_scanner_leader; /* the ped the scanner is centred on */
 static int g_scanner_scale;       /* its pixels a tile */
@@ -848,12 +862,13 @@ static void scanner_dot(uint32_t *rgb, int w, int32_t x, int32_t y, int size, ui
 {
     int32_t lx = (int16_t)RD16(g_scanner_leader + PED_X), ly = (int16_t)RD16(g_scanner_leader + PED_Y);
     int px = SCANNER_X + SCANNER_SIZE / 2 + (int)((x - lx) * g_scanner_scale / 256);
-    int py = SCANNER_Y + SCANNER_SIZE / 2 + (int)((y - ly) * g_scanner_scale / 256);
+    int py = g_scanner_top + SCANNER_SIZE / 2 + (int)((y - ly) * g_scanner_scale / 256);
     int i, j;
     for (j = 0; j < size; j++)
         for (i = 0; i < size; i++) {
             int qx = px + i - size / 2, qy = py + j - size / 2;
-            if (qx >= SCANNER_X && qx < SCANNER_X + SCANNER_SIZE && qy >= SCANNER_Y && qy < SCANNER_Y + SCANNER_SIZE)
+            if (qx >= SCANNER_X && qx < SCANNER_X + SCANNER_SIZE && qy >= g_scanner_top &&
+                qy < g_scanner_top + g_scanner_h)
                 rgb[qy * w + qx] = c;
         }
 }
@@ -882,6 +897,18 @@ static void draw_scanner_extras(uint32_t *rgb, int w)
         else if (type == 16)
             scanner_dot(rgb, w, (int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), 2, SCANNER_CRIMINAL);
     }
+}
+
+static void panel_full_height(uint32_t *rgb, int w, const uint32_t *pal)
+{
+    int x, y;
+    for (y = 0; y < 480 - SCANNER_EXT; y++)
+        memmove(rgb + y * w, rgb + (y + GAME_TOP) * w, sizeof *rgb * MAP_LEFT);
+    for (y = 0; y < SCANNER_EXT; y++)
+        for (x = 0; x < MAP_LEFT; x++)
+            rgb[(480 - SCANNER_EXT + y) * w + x] = g_scanner_ext_ok && x < SCANNER_SIZE ? pal[g_scanner_ext[y][x]] : 0;
+    g_scanner_top = SCANNER_Y - GAME_TOP;
+    g_scanner_h = SCANNER_SIZE + SCANNER_EXT;
 }
 
 /* ---- the selected agents' boxes: solid ---- */
@@ -1903,6 +1930,7 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
         canvas_mouse(&g_menu_mx, &g_menu_my);
     }
     solid_selected_boxes(index, palette, rgb, w);
+    panel_full_height(rgb, w, palette);
     draw_scanner_extras(rgb, w);
     if (g_marker_us == 0 || host_time_us() - g_marker_us >= MARKER_US) {
         g_marker_us = 0;
@@ -2183,6 +2211,35 @@ static int on_draw_scanner(uint32_t addr)
 {
     uint32_t scale = RD32(R.esp + 8u) & 0xFFFFu;
     (void)addr;
+    if (!g_scanner_nested && g_addrs->game == GAME_SYN && (M[SCREEN_MODE] & 2u)) {
+        /* the lines under it (panel_full_height): drawn first, its leader SCANNER_SIZE lines further down (the
+         * sweep of the scanner as it was); the lines read from the game's picture (its 4 planes) */
+        uint32_t leader = RD32(R.esp + 4u), args[2], page;
+        int32_t y0 = (int16_t)RD16(leader + PED_Y);
+        int32_t y1 = y0 + SCANNER_SIZE * 256 / (scale == 8u ? 6 : scale == 4u ? 2 : (int)(scale ? scale : 1));
+        uint16_t sweep = RD16(SCANNER_SWEEP);
+        int x, y, c;
+        g_scanner_ext_ok = 0;
+        if (y1 < 32767) {
+            args[0] = leader;
+            args[1] = RD32(R.esp + 8u);
+            g_scanner_nested = 1;
+            WR16(leader + PED_Y, (uint32_t)y1);
+            guest_call(g_addrs->draw_scanner, args, 2);
+            WR16(leader + PED_Y, (uint32_t)y0);
+            WR16(SCANNER_SWEEP, sweep);
+            g_scanner_nested = 0;
+            page = RD32(SCREEN_PAGE);
+            for (y = 0; y < SCANNER_EXT; y++)
+                for (x = 0; x < SCANNER_SIZE; x++) {
+                    uint32_t a = page + (uint32_t)(SCANNER_Y - GAME_TOP + y) * 80u + (uint32_t)(SCANNER_X + x) / 8u;
+                    int bit = 7 - (x & 7), v = 0;
+                    for (c = 0; c < 4; c++) v |= ((M[a + (uint32_t)c * SCREEN_PLANE] >> bit) & 1) << c;
+                    g_scanner_ext[y][x] = vga_colour16(v);
+                }
+            g_scanner_ext_ok = 1;
+        }
+    }
     g_scanner_on = scale == 4u;
     if (scale == 8u) scale = 6u;
     else if (scale == 4u) scale = 2u;

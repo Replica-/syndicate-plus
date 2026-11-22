@@ -37,7 +37,7 @@ TO_MISSION = SKIP_INTRO + [
     '14000:click@8500;58500',                               # world map: brief
     '17000:click@8500;58700',                               # brief: accept -> team selection
     '20000:click@8500;58700',                               # team selection: accept -> the mission
-    '26000:click@6550;20461',                               # select agent 3 (y: of the 480 lines)
+    '26000:click@6550;15000',                               # select agent 3 (y: of the 480 lines)
 ]
 
 
@@ -241,7 +241,7 @@ def combat(ctx):
     """agent 3 draws the pistol and fires: the debriefing counts the shots ("0%" instead of "no bullets fired")"""
     calm = ctx.run('calm', 37, start=SYN, inputs=TO_MISSION + abort(31000))
     fire = ctx.run('fire', 37, start=SYN, inputs=TO_MISSION + [
-        '28000:click@1640;35044',                               # the pistol
+        '28000:click@1640;29583',                               # the pistol
         '29000:move@58368;40960', '29500:rclick@58368;40960', '30500:rclick@58368;40960',
         '31500:rclick@58368;40960'] + abort(34000))
     a, b = calm.last(), fire.last()

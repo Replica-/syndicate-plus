@@ -146,6 +146,10 @@ The scanner (the map at the bottom left of a mission) shows more of the city aro
 instead of 8, and 2 instead of 4 when an agent of the squad carries a scanner.  With a scanner it also shows the
 doors (cyan), the criminals (orange) and the people holding a weapon (red).
 
+The side panel goes over the whole height of the picture: moved up to its top, the scanner 80 lines longer
+down to its bottom (the game draws the scanner a second time, further down the map, for those lines; Syndicate,
+not its data disk or American Revolt, whose lines stay black).
+
 ### MINIGUN SQUAD
 
 Besides the game's own cheats (the company or player name in Configure Company), `MINIGUN SQUAD`: every weapon

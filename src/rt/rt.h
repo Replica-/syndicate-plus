@@ -121,6 +121,7 @@ uint8_t vga_port_in(uint16_t port);
 void vga_port_out(uint16_t port, uint8_t v);
 /* render the current screen as indices + palette; returns 0 when nothing is visible (text mode) */
 int vga_render(uint8_t *pixels, int *w, int *h, uint32_t *palette);
+uint8_t vga_colour16(int c);
 extern int vga_retrace_reads;
 
 void pit_init(void);
