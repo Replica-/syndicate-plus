@@ -827,7 +827,8 @@ static void diamond(uint32_t *rgb, int w, int cx, int cy, int hw, int edge, uint
 
 /* ---- what a scanner adds to the scanner ---- */
 #define NB_PEDS 256
-#define PED_LOCATION 0xau     /* 4: on the map; the game adds 8 while the person fires: PED_ON_MAP */
+#define PED_LOCATION 0xau     /* 4: on the map; the game adds 8 while the person fights or is hit (and keeps it
+                               * on a dead agent): PED_ON_MAP */
 #define PED_ON_MAP(p) ((M[(p) + PED_LOCATION] & ~8u) == 4u)
 #define PED_STATE 0xbu        /* 0x11: dead */
 #define PED_TYPE 0x1cu        /* 1 pedestrian, 2 agent, 4 police, 8 guard, 16 criminal; the game adds 0x40 once the
@@ -1457,7 +1458,8 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
             for (slot = 0; slot < 4; slot++) {
                 uint32_t ped = g_addrs->peds + (M[co + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
                 int l = (int16_t)RD16(ped + PED_Z) / 128 + SEE_INSIDE_LEVELS;
-                if (PED_ON_MAP(ped) && l > level) level = l;
+                /* not a dead agent's body (the game keeps it on the map, its health below 1) */
+                if (PED_ON_MAP(ped) && (int16_t)RD16(ped + PED_HEALTH) > 0 && l > level) level = l;
             }
             if (level < 0) level = 0;
         }
