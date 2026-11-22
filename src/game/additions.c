@@ -827,7 +827,8 @@ static void diamond(uint32_t *rgb, int w, int cx, int cy, int hw, int edge, uint
 
 /* ---- what a scanner adds to the scanner ---- */
 #define NB_PEDS 256
-#define PED_LOCATION 0xau     /* 4: on the map */
+#define PED_LOCATION 0xau     /* 4: on the map; the game adds 8 while the person fires: PED_ON_MAP */
+#define PED_ON_MAP(p) ((M[(p) + PED_LOCATION] & ~8u) == 4u)
 #define PED_STATE 0xbu        /* 0x11: dead */
 #define PED_TYPE 0x1cu        /* 1 pedestrian, 2 agent, 4 police, 8 guard, 16 criminal; the game adds 0x40 once the
                                * person has killed: PED_KIND */
@@ -877,7 +878,7 @@ static void draw_scanner_extras(uint32_t *rgb, int w)
     for (i = 0; i < NB_PEDS; i++) {
         uint32_t p = g_addrs->peds + (uint32_t)i * PED_SIZE;
         uint8_t type = (uint8_t)PED_KIND(p);
-        if (M[p + PED_LOCATION] != 4 || M[p + PED_STATE] == 0x11 || RD16(p + PED_PERSUADER) != 0) continue;
+        if (!PED_ON_MAP(p) || M[p + PED_STATE] == 0x11 || RD16(p + PED_PERSUADER) != 0) continue;
         if (type != 1 && type != 16) continue;
         if (RD16(p + PED_WEAPON) != 0)
             scanner_dot(rgb, w, (int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), 3, SCANNER_ARMED);
@@ -1040,7 +1041,7 @@ static void watch_hits(int first)
         uint32_t p = g_addrs->peds + (uint32_t)i * PED_SIZE;
         int16_t h = (int16_t)RD16(p + PED_HEALTH);
         uint8_t dead = M[p + PED_STATE] == 0x11;
-        if (!first && M[p + PED_TYPE] != 0 && M[p + PED_LOCATION] == 4 && (h < g_health[i] || (dead && !g_dead[i])))
+        if (!first && M[p + PED_TYPE] != 0 && PED_ON_MAP(p) && (h < g_health[i] || (dead && !g_dead[i])))
             spray(p);
         g_health[i] = h;
         g_dead[i] = dead;
@@ -1098,7 +1099,7 @@ static void company_hats(const uint8_t *pix, const uint32_t *pal, uint32_t *rgb,
         uint32_t company = g_addrs->companies + (uint32_t)(i / AGENTS_A_COMPANY) * g_addrs->company_size;
         uint32_t colour = company_rgb(company, pal);
         int fx, fy, x, y;
-        if (PED_KIND(p) != 2 || M[p + PED_LOCATION] != 4 || colour == pal[HAT_COLOUR]) continue;
+        if (PED_KIND(p) != 2 || !PED_ON_MAP(p) || colour == pal[HAT_COLOUR]) continue;
         world_to_frame((int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), (int16_t)RD16(p + PED_Z), &fx, &fy);
         /* the head, below the number of an agent of the squad */
         for (y = fy - 31; y <= fy - 14; y++)
@@ -1456,7 +1457,7 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
             for (slot = 0; slot < 4; slot++) {
                 uint32_t ped = g_addrs->peds + (M[co + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
                 int l = (int16_t)RD16(ped + PED_Z) / 128 + SEE_INSIDE_LEVELS;
-                if (M[ped + PED_LOCATION] == 4 && l > level) level = l;
+                if (PED_ON_MAP(ped) && l > level) level = l;
             }
             if (level < 0) level = 0;
         }
@@ -2013,7 +2014,7 @@ static void follow_routes(uint32_t company)
         int32_t dx, dy;
         if (g_route[slot].n == 0) continue;
         p = &g_route[slot].pt[g_route[slot].i];
-        if (M[ped + PED_LOCATION] != 4 || (int16_t)RD16(ped + PED_TARGET) != (int16_t)p->x ||
+        if (!PED_ON_MAP(ped) || (int16_t)RD16(ped + PED_TARGET) != (int16_t)p->x ||
             (int16_t)RD16(ped + PED_TARGET + 2u) != (int16_t)p->y) {
             g_route[slot].n = 0; /* another order, or gone */
             continue;
