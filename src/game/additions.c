@@ -1401,7 +1401,15 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
     gpu = host_city_gpu();
     for (y = VIEW_TOP; y < VIEW_BOTTOM; y++)
         for (x = VIEW_LEFT; x < g_cw; x++) rgb[y * g_cw + x] = gpu ? 0xFF000000u : 0;
-    render_city(gpu ? NULL : rgb, g_cw, 480, pal, VIEW_LEFT, VIEW_TOP, g_cw, VIEW_BOTTOM, rt_display_us);
+    /* the hats' colour (palette entry 6, the original draws every agent's hat in it) is the player's company's in
+     * the whole city: every head, whichever way it faces, wears it */
+    {
+        static uint32_t city_pal[256];
+        uint32_t hat = hat_colour((int16_t)RD16(g_addrs->player) * AGENTS_A_COMPANY);
+        memcpy(city_pal, pal, sizeof city_pal);
+        if (hat != 0) city_pal[HAT_COLOUR] = hat;
+        render_city(gpu ? NULL : rgb, g_cw, 480, city_pal, VIEW_LEFT, VIEW_TOP, g_cw, VIEW_BOTTOM, rt_display_us);
+    }
     /* B held: where the floor the squad walks on ends */
     if (g_cut_level >= 0)
         render_floor_outline(rgb, g_cw, 480, g_cut_level, FLOOR_OUTLINE, VIEW_LEFT, VIEW_TOP, g_cw, VIEW_BOTTOM, path_walkable);
