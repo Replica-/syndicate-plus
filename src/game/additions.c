@@ -43,6 +43,7 @@
 #include "../rt/rt.h"
 #include "../rt/vfs.h"
 #include "hooks.h"
+#include "menu_sides.h"
 #include "path.h"
 #include "rnc.h"
 #include "render.h"
@@ -409,6 +410,12 @@ static int renderer_on(void);
 
 int game_canvas_width(int w, int h)
 {
+    if (h == 200) {
+        /* a menu: as wide as the window shows it, the sides at most as wide as the photo's (menu_sides.h) */
+        int mw = host_menu_width();
+        if (g_addrs == NULL || w != 320) return w;
+        return mw < 320 ? 320 : mw > 320 + 2 * MENU_SIDE_W ? 320 + 2 * MENU_SIDE_W : mw;
+    }
     if (g_addrs == NULL || w != 640 || h != 480 || !in_mission() || !renderer_on() || getenv("SYND_RENDER_TEST") != NULL)
         return w;
     return host_canvas_width();
@@ -1279,6 +1286,64 @@ static int on_draw_logo(uint32_t addr)
 #define LOGO_SIZE 14
 #define LOGOS_Y (PICK_Y + 2 * (SWATCH + 1) + 3)
 
+/* ---- the menus as wide as the window: the game's 320 x 200 picture in the middle of a wider one; on the green menus
+ * (the desk photo and the frame round it, in all of them: its bright line, palette entry FRAME_INDEX, at columns 3
+ * and 317, rows 2 and 197) the photo goes on to the sides (menu_sides.h, outpainted), the frame round all of it ---- */
+#define FRAME_INDEX 252
+static int g_menu_w = 320, g_menu_off; /* the menu's picture, and where the game's is in it */
+
+/* the mouse on the game's 320 x 200 picture (left of it, right of it: past its edges) */
+static void menu_mouse(int *x, int *y)
+{
+    int fx, fy;
+    mouse_fraction(&fx, &fy);
+    *x = (int)((long long)fx * g_menu_w / 65536) - g_menu_off;
+    *y = (int)((long long)fy * 200 / 65536);
+}
+
+/* a green menu: the frame's bright line where it is in all of them */
+static int menu_framed(const uint8_t *index)
+{
+    int y, x, n = 0;
+    for (y = 4; y < 196; y++) n += index[y * 320 + 3] == FRAME_INDEX && index[y * 320 + 317] == FRAME_INDEX;
+    for (x = 4; x < 316; x++) n += index[2 * 320 + x] == FRAME_INDEX && index[197 * 320 + x] == FRAME_INDEX;
+    return n >= (192 + 312) * 9 / 10;
+}
+
+/* `game`, the game's picture (320 x 200, what this version draws on it included), into the menu's `rgb` (w wide) */
+static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t *game, uint32_t *rgb, int w)
+{
+    int off = (w - 320) / 2, x, y, framed = menu_framed(index);
+    for (y = 0; y < 200; y++) {
+        uint32_t *row = rgb + y * w;
+        const uint32_t *g = game + y * 320;
+        int line = (y >= 1 && y <= 3) || (y >= 196 && y <= 198); /* a row of the frame's top or bottom */
+        for (x = 0; x < w; x++) row[x] = 0;
+        memcpy(row + off, g, sizeof *g * 320);
+        if (!framed) continue;
+        for (x = 0; x < off; x++) {
+            row[x] = pal[k_menu_sides[0][y][MENU_SIDE_W - off + x]];
+            row[off + 320 + x] = pal[k_menu_sides[1][y][x]];
+        }
+        /* the game's frame at its sides: the photo beside it, the top and bottom lines going on */
+        for (x = 0; x < 6; x++) {
+            row[off + x] = line ? g[8] : g[6];
+            row[off + 314 + x] = line ? g[311] : g[313];
+        }
+        if (line)
+            for (x = 2; x < off + 6; x++) {
+                row[x] = g[8];
+                row[w - 1 - x] = g[311];
+            }
+        /* and its sides at the picture's */
+        if (y >= 1 && y <= 198)
+            for (x = 2; x < 5; x++) {
+                row[x] = g[x];
+                row[w - 320 + 314 + x] = g[314 + x];
+            }
+    }
+}
+
 static int config_shown(void)
 {
     return g_config_logos != 0 && (uint32_t)(host_time_us() / 1000u) - g_config_us < 300u;
@@ -1287,10 +1352,9 @@ static int config_shown(void)
 /* a click on Configure Company: in a grid, the choice */
 static void config_click(void)
 {
-    int fx, fy, x, y;
-    mouse_fraction(&fx, &fy);
-    x = (int)((long long)fx * 320 / 65536) - PICK_X;
-    y = (int)((long long)fy * 200 / 65536);
+    int x, y;
+    menu_mouse(&x, &y);
+    x -= PICK_X;
     if (x < 0) return;
     if (y >= PICK_Y && y < PICK_Y + 2 * (SWATCH + 1)) {
         int k = (y - PICK_Y) / (SWATCH + 1) * 12 + x / (SWATCH + 1);
@@ -1346,11 +1410,9 @@ static void config_pointer(uint32_t *rgb, int w, int h, const uint8_t *index, co
 {
     static uint8_t ref[320 * 200];
     static uint32_t ref_us;
-    int fx, fy, mx, my, x, y;
+    int mx, my, x, y;
     uint32_t now = (uint32_t)(host_time_us() / 1000u);
-    mouse_fraction(&fx, &fy);
-    mx = (int)((long long)fx * w / 65536);
-    my = (int)((long long)fy * h / 65536);
+    menu_mouse(&mx, &my);
     if (now - ref_us > 500u) memcpy(ref, index, sizeof ref); /* the screen came again */
     ref_us = now;
     for (y = 0; y < h; y++)
@@ -1883,11 +1945,21 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     uint64_t age;
     int fx, fy, hw, alpha;
     render_gpu_changed = 0;
-    if (g_addrs != NULL && w == 320 && h == 200) {
-        menu_true_colour(index, palette, rgb, w, h);
-        if (config_shown()) config_grids(rgb, w, h, index, palette);
+    if (g_addrs != NULL && w >= 320 && h == 200) {
+        static uint32_t game[320 * 200];
+        int y;
+        uint32_t *pic = w == 320 ? rgb : game;
+        if (w > 320)
+            for (y = 0; y < 200; y++) memcpy(game + y * 320, rgb + y * w, sizeof *game * 320);
+        menu_true_colour(index, palette, pic, 320, h);
+        if (config_shown()) config_grids(pic, 320, h, index, palette);
+        g_menu_w = w;
+        g_menu_off = (w - 320) / 2;
+        rt_mouse_window(g_menu_off * 65536 / w, (g_menu_off + 320) * 65536 / w);
+        if (w > 320) wide_menu(index, palette, game, rgb, w);
         return 0;
     }
+    rt_mouse_window(0, 65536);
     if (g_addrs != NULL && !in_mission()) menu_true_colour(index, palette, rgb, w, h);
     if (g_addrs == NULL || w < 640 || h != 480 || !in_mission()) return 0;
     g_cw = w;

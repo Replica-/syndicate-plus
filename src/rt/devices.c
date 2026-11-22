@@ -283,13 +283,30 @@ void rt_mouse_wheel(int notches)
     game_wheel(notches);
 }
 
+/* the part of the picture the game's own screen is (rt_mouse_window): from x0 to x1, fractions of its width */
+static volatile int g_win_x0 = 0, g_win_x1 = 65536;
+
+void rt_mouse_window(int x0, int x1)
+{
+    if (x1 <= x0) x0 = 0, x1 = 65536;
+    g_win_x0 = x0;
+    g_win_x1 = x1;
+}
+
+/* the mouse across the game's own screen (0..65535) */
+static int game_fx(void)
+{
+    long long f = (long long)(g_mfx - g_win_x0) * 65536 / (g_win_x1 - g_win_x0);
+    return f < 0 ? 0 : f > 65535 ? 65535 : (int)f;
+}
+
 void mouse_get(int *x, int *y, int *buttons)
 {
     if (g_mouse_set) {
         *x = g_mx;
         *y = g_my;
     } else {
-        *x = g_minx + (int)((long long)g_mfx * (g_maxx - g_minx + 1) / 65536);
+        *x = g_minx + (int)((long long)game_fx() * (g_maxx - g_minx + 1) / 65536);
         *y = g_miny + (int)((long long)g_mfy * (g_maxy - g_miny + 1) / 65536);
     }
     if (buttons) *buttons = g_mbuttons;
@@ -358,7 +375,9 @@ void bios_int33(void)
         host_lock();
         g_mx = (int16_t)R.ecx;
         g_my = (int16_t)R.edx;
-        if (g_maxx > g_minx) g_mfx = (int)((long long)(g_mx - g_minx) * 65536 / (g_maxx - g_minx + 1));
+        if (g_maxx > g_minx)
+            g_mfx = g_win_x0 + (int)((long long)(g_mx - g_minx) * 65536 / (g_maxx - g_minx + 1) *
+                                     (g_win_x1 - g_win_x0) / 65536);
         if (g_maxy > g_miny) g_mfy = (int)((long long)(g_my - g_miny) * 65536 / (g_maxy - g_miny + 1));
         g_mouse_set = 0;
         host_unlock();

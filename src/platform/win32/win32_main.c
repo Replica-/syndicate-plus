@@ -129,6 +129,12 @@ void host_present(const uint32_t *pixels, int w, int h)
 /* the client area's size (any thread) */
 static volatile LONG g_client_w = 640, g_client_h = 480;
 
+int host_menu_width(void)
+{
+    LONG cw = g_client_w, ch = g_client_h;
+    return ch > 0 ? (int)((long long)cw * 240 / ch) & ~1 : 320;
+}
+
 int host_canvas_width(void)
 {
     LONG cw = g_client_w, ch = g_client_h;
@@ -144,6 +150,7 @@ static RECT picture_rect(HWND h)
     int crop = g_fcity ? MISSION_CROP : 0;
     int cw, ch, w, hh, aw = g_fcity || (g_fh == 480 && g_fw > 640) ? g_fw : 4;
     int ah = g_fcity || (g_fh == 480 && g_fw > 640) ? g_fh - 2 * crop : 3;
+    if (g_fh == 200 && g_fw > 320) aw = g_fw, ah = 240; /* a wide menu (its pixels as tall as 320 x 200's) */
     GetClientRect(h, &c);
     cw = c.right - c.left;
     ch = c.bottom - c.top;

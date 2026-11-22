@@ -17,7 +17,8 @@
  * hex (1c = Enter) or a name (enter, esc, space, up, down, left, right, f1..f10, some letters and digits);
  * "key:down" / "key:up" to press or release only; "click@x;y" / "rclick@x;y" (held 150 ms) and "move@x;y"
  * with x, y fractions 0..65535 of the picture; "wheel@N" turns the mouse wheel N notches (negative: towards the
- * user).  --wide W makes missions W pixels wide (as a wide window does).
+ * user).  --wide W makes missions W pixels wide (as a wide window does), --menu-width W the menus (320 x 200: 426 is
+ * 16:9).
  *
  * --cycles N limits the emulated CPU to N instructions a ms, as the window does (8000; without it the game runs as
  * fast as it can, as the tests want); --fps shows the frames a second at the top right.
@@ -160,6 +161,14 @@ int host_canvas_width(void)
     return g_canvas_w;
 }
 
+/* --menu-width W: the menus W wide (the window's at 16:9: 426) */
+static int g_menu_w = 320;
+
+int host_menu_width(void)
+{
+    return g_menu_w;
+}
+
 /* --gpu WxH (Windows): the picture made as the window's Direct3D makes it, offscreen, WxH; the frames dumped are
  * that picture (the city drawn by the GPU under the frame) */
 static int g_gpu_w, g_gpu_h, g_gpu_on, g_frame_city;
@@ -219,24 +228,22 @@ static const uint32_t *gpu_picture(const uint32_t *pixels, int w, int h, int *ow
 {
 #ifdef _WIN32
     RECT r;
-    int pw, ph;
+    int pw, ph, sh = h == 200 ? 240 : h; /* 200 lines are shown 240 high (tall pixels) */
     if (!g_gpu_on) return pixels;
     if (!g_frame_city) gpu_city_off();
     g_frame_city = 0;
     /* the largest rectangle of the frame's shape (w x h, 4:3 for 320 x 200) */
-    if (h == 200) w = 320, h = 240;
-    if ((long long)g_gpu_w * h >= (long long)g_gpu_h * w) {
+    if ((long long)g_gpu_w * sh >= (long long)g_gpu_h * w) {
         ph = g_gpu_h;
-        pw = (int)((long long)g_gpu_h * w / h);
+        pw = (int)((long long)g_gpu_h * w / sh);
     } else {
         pw = g_gpu_w;
-        ph = (int)((long long)g_gpu_w * h / w);
+        ph = (int)((long long)g_gpu_w * sh / w);
     }
     r.left = (g_gpu_w - pw) / 2;
     r.top = (g_gpu_h - ph) / 2;
     r.right = r.left + pw;
     r.bottom = r.top + ph;
-    if (h == 240) w = 320, h = 200;
     if (g_shot_file != NULL && (host_time_us() - g_start_us) / 1000u >= g_shot_ms) gpu_capture();
     gpu_present(pixels, w, h, r, 1);
     {
@@ -488,6 +495,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--time"))
             gpu_set_time(!strcmp(v, "day") ? 1 : !strcmp(v, "dusk") ? 2 : !strcmp(v, "night") ? 3 : !strcmp(v, "dawn") ? 4 : 0), i++;
 #endif
+        else if (!strcmp(a, "--menu-width")) g_menu_w = atoi(v) & ~1, i++;
         else if (!strcmp(a, "--wide")) g_canvas_w = atoi(v) < 640 ? 640 : atoi(v) > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : atoi(v) & ~1, i++;
         else if (!strcmp(a, "--fps")) rt_set_show_fps(1);
         else if (!strcmp(a, "--mem-dump") && g_ndumps < 16 && strchr(v, ':')) {

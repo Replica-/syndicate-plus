@@ -209,6 +209,11 @@ int host_canvas_width(void)
     return 640;
 }
 
+int host_menu_width(void)
+{
+    return 320;
+}
+
 /* the city is always in the frame here */
 int host_city_gpu(void)
 {

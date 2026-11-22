@@ -28,6 +28,8 @@ void host_present(const uint32_t *pixels, int w, int h);
  * wide (the city fills the rest), at most HOST_CANVAS_MAX */
 #define HOST_CANVAS_MAX 1280
 int host_canvas_width(void);
+/* the width of a 200-line menu picture as wide as the display shows it (320: 4:3; its pixels as tall as in 4:3) */
+int host_menu_width(void);
 
 /* audio: the core produces signed 16-bit stereo at host_audio_rate() and pushes it here */
 int host_audio_rate(void);

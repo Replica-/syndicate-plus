@@ -733,9 +733,9 @@ static void present(void)
     uint64_t now = host_time_us();
     int w = 0, h = 0, i, moved, gw;
     if (vga_render(g_frame, &w, &h, g_pal)) {
-        /* true colour from here on; in missions the frame may be wider than the game's (its rows at the left) */
+        /* true colour from here on; in missions and the menus the frame may be wider than the game's (its rows at the left) */
         gw = w;
-        w = h == 480 ? game_canvas_width(gw, h) : gw;
+        w = h == 480 || h == 200 ? game_canvas_width(gw, h) : gw;
         if (w < gw || w > HOST_CANVAS_MAX) w = gw;
         if (w == gw) {
             for (i = 0; i < w * h; i++) rgb[i] = g_pal[g_frame[i]];

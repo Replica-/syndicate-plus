@@ -141,6 +141,9 @@ uint16_t kbd_bios_shift(void);
 void mouse_get(int *x, int *y, int *buttons);
 /* where the mouse is on the picture shown: fractions 0..65535 across and down */
 void mouse_fraction(int *fx, int *fy);
+/* the game's own screen is the part x0..x1 (fractions 0..65536 of the picture's width) of the picture: its mouse is
+ * there (0, 65536: all of it) */
+void rt_mouse_window(int x0, int x1);
 void mouse_take_motion(int *dx, int *dy);
 int mouse_used_swap(int used); /* sets whether the running program uses the mouse; returns the old value */
 int mouse_take_press(int button, int *count, int *x, int *y);

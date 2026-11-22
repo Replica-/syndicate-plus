@@ -316,6 +316,19 @@ def gpu_night(ctx):
 
 
 @test()
+def wide_menus(ctx):
+    """the menus as wide as a 16:9 window (--menu-width 426): the main menu in the middle, the desk photo on to the
+    sides, the frame's bright line at the picture's edges"""
+    r = ctx.run('wide', 11, start=SYN, extra=['--menu-width', '426'], inputs=SKIP_INTRO)
+    f = r.last()
+    check((f.w, f.h) == (426, 200), 'the menu is %d x %d, not 426 x 200: %s' % (f.w, f.h, name(f)))
+    side = [f.pix[y * f.w + x] & 0xFFFFFF for y in range(10, 190) for x in range(6, 50)]
+    check(sum(1 for p in side if p != 0) > len(side) * 0.9, 'no photo at the left side: ' + name(f))
+    edge = [f.pix[y * f.w + f.w - 3] & 0xFFFFFF for y in range(10, 190)]
+    check(len(set(edge)) == 1 and edge[0] != 0, 'no frame at the right edge: ' + name(f))
+
+
+@test()
 def company_colour(ctx):
     """a company colour chosen in the window's menu (headless --colour): the squad's hats are drawn in it"""
     r = ctx.run('colour', 27, start=SYN, every=250, extra=['--colour', '00E5FF'], inputs=TO_MISSION + ['26200:wheel@3'])
