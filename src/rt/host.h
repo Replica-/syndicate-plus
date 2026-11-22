@@ -71,6 +71,8 @@ int host_city_gpu(void);
 /* forget every image (new data); then define image `image` (w x h palette indices, row stride w) */
 void host_city_reset(void);
 void host_city_image(int image, int w, int h, const uint8_t *pixels);
+/* or image `image` in true colour (w x h of 0xFFRRGGBB; 0: transparent) */
+void host_city_image_rgb(int image, int w, int h, const uint32_t *pixels);
 /* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, with the
  * frame's palette, each image `scale` times its size (the zoom); the lights show when the platform lights the city
  * for a time of day darker than the mission's own look */

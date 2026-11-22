@@ -85,3 +85,4 @@ extern int render_tile_dx, render_tile_dy, render_obj_dx, render_obj_dy;
 extern int render_gpu_changed;
 /* the colour of the hat of a person (0: as drawn), for agents */
 extern uint32_t (*render_hat_colour)(int ped);
+extern int render_ground; /* the dirt ground in its own texture (1, the default) or as the game draws it */
