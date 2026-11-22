@@ -99,6 +99,20 @@ static int slope_up(int x, int y, int z, int *dx, int *dy)
     return 0;
 }
 
+/* the tiles round x, y on level z one cannot stand on (0 to 8): a step beside them costs more, so that a route keeps
+ * away from walls where there is room (the shortest one goes along them, and a person catches their corners) */
+static int blocked_round(int x, int y, int z)
+{
+    int dx, dy, n = 0;
+    for (dy = -1; dy <= 1; dy++)
+        for (dx = -1; dx <= 1; dx++)
+            if ((dx || dy) && !standable(x + dx, y + dy, z) && !is_slope(type_at(x + dx, y + dy, z + 1)) &&
+                !standable(x + dx, y + dy, z - 1))
+                n++;
+    return n;
+}
+#define WALL_COST 6 /* for each such tile (a step is 10, a diagonal 14) */
+
 /* ---- A* ---- */
 #define MAX_NODES (256 * 256 * 16)
 typedef struct Node {
@@ -155,7 +169,7 @@ static int32_t heap_pop(int gx, int gy, int gz)
 static void relax(int32_t from, int x, int y, int z, int cost, int gx, int gy, int gz)
 {
     int32_t id = node_id(x, y, z);
-    int32_t g = g_nodes[from].g + cost;
+    int32_t g = g_nodes[from].g + cost + WALL_COST * blocked_round(x, y, z);
     if (g_nodes[id].closed || (g_nodes[id].g >= 0 && g_nodes[id].g <= g)) return;
     g_nodes[id].g = g;
     g_nodes[id].from = from;
@@ -197,8 +211,9 @@ static void neighbours(int32_t id, int x, int y, int z, int gx, int gy, int gz)
         }
 }
 
-/* a straight walk on one level from a to b (tile centres) crosses only floor */
-static int straight(int ax, int ay, int bx, int by, int z)
+/* a straight walk on one level from a to b (tile centres) crosses only floor; `clear`: and no tile beside a wall but
+ * those a and b are (as the route found keeps away from them) */
+static int straight_walk(int ax, int ay, int bx, int by, int z, int clear)
 {
     int n = abs(bx - ax) > abs(by - ay) ? abs(bx - ax) : abs(by - ay), i;
     for (i = 0; i <= n * 2; i++) {
@@ -207,8 +222,15 @@ static int straight(int ax, int ay, int bx, int by, int z)
         int x2 = ax + (n ? ((bx - ax) * i + n) / (2 * n) : 0), y2 = ay + (n ? ((by - ay) * i + n) / (2 * n) : 0);
         if (!standable(x, y, z) || is_slope(type_at(x, y, z)) || !standable(x2, y2, z) || is_slope(type_at(x2, y2, z)))
             return 0;
+        if (clear && blocked_round(x, y, z) > 0 && !(x == ax && y == ay) && !(x == bx && y == by)) return 0;
+        if (clear && blocked_round(x2, y2, z) > 0 && !(x2 == ax && y2 == ay) && !(x2 == bx && y2 == by)) return 0;
     }
     return 1;
+}
+
+static int straight(int ax, int ay, int bx, int by, int z)
+{
+    return straight_walk(ax, ay, bx, by, z, 0);
 }
 
 /* a tile's level from a height (a person stands on the top of the tile under it) */
@@ -275,7 +297,7 @@ int path_route(int32_t sx, int32_t sy, int32_t sz, int32_t tx, int32_t ty, int32
     }
     if (!found) return 0;
     /* the route back to front, then its turning points: a point is kept when the straight walk from the last kept
-     * one to the next would leave the floor, or the level changes */
+     * one to the next would leave the floor or pass beside a wall, or the level changes */
     for (i = id; i >= 0; i = g_nodes[i].from) nroute++;
     route = (int32_t *)malloc(sizeof *route * (size_t)nroute);
     if (route == NULL) return 0;
@@ -289,7 +311,7 @@ int path_route(int32_t sx, int32_t sy, int32_t sz, int32_t tx, int32_t ty, int32
         if (!keep && (qz != pz || is_slope(type_at(qx, qy, qz)))) keep = 1;
         if (!keep) {
             int nx = route[i + 1] % g_mx, ny = (route[i + 1] / g_mx) % g_my, nz = route[i + 1] / (g_mx * g_my);
-            keep = nz != pz || !straight(px, py, nx, ny, pz);
+            keep = nz != pz || !straight_walk(px, py, nx, ny, pz, 1);
         }
         if (!keep) continue;
         out[n].x = qx * 256 + 128;

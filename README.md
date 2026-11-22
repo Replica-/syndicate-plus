@@ -150,7 +150,9 @@ map and its menus), and the 40 logos in the colour chosen.  Escape in a mission 
 briefing look while the mission waits: Resume, time of day, full screen, frames a second,
 the volumes, squad routes, and Abort mission (the game's Escape).  *Squad finds routes* (on by default): a move order the game's straight walk
 cannot do (another level, a gap or a wall between) is walked as a route over the map's floors and stairs (A* on
-the tiles, with the game's own tile types); an agent stuck on the way gets the order as the game had it.  Only the
+the tiles, with the game's own tile types), keeping a tile away from walls where there is room (a step beside one
+costs more, and the route's straight stretches do not pass beside them); an agent stuck on the way gets a new route
+from where it is, twice, then the order as the game had it.  Only the
 squad's orders: the other people and the enemies' AI are untouched.
 
 ### The scanner

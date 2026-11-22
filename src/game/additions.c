@@ -2324,12 +2324,14 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
  * route found over the map's floors (path.c), the agent sent to each of its turning points in turn ---- */
 #define ROUTE_MAX 64
 #define ROUTE_NEAR 96   /* this near a turning point (world units across), the agent goes on to the next */
-#define ROUTE_STUCK 40   /* ticks without coming nearer to a turning point: the player's order as the game had it */
+#define ROUTE_STUCK 40   /* ticks without coming nearer to a turning point: a new route from there ... */
+#define ROUTE_RETRIES 2  /* ... this many times, then the player's order as the game had it */
 static struct {
     PathPoint pt[ROUTE_MAX];
     int n, i;
     int32_t best;   /* the nearest the agent came to its turning point (squared), and when */
     int stuck;
+    int retries;    /* the new routes it was given on the way */
 } g_route[4];
 static int g_types_loaded;
 static volatile int g_routes_on = 1; /* game_set_routes; SYND_ROUTES=off: the game's straight walks only */
@@ -2432,6 +2434,19 @@ static void follow_routes(uint32_t company)
             g_route[slot].best = dx * dx + dy * dy;
             g_route[slot].stuck = 0;
         } else if (++g_route[slot].stuck > ROUTE_STUCK) {
+            PathPoint goal = g_route[slot].pt[g_route[slot].n - 1];
+            int retries = g_route[slot].retries;
+            if (retries < ROUTE_RETRIES) {
+                route_order(slot, ped, goal.x, goal.y, goal.z);
+                g_route[slot].retries = retries + 1;
+                if (g_route[slot].n > 0) {
+                    g_last_target[slot][0] = RD16(ped + PED_TARGET);
+                    g_last_target[slot][1] = RD16(ped + PED_TARGET + 2u);
+                    continue;
+                }
+                g_route[slot].pt[0] = goal;
+                g_route[slot].n = 1;
+            }
             p = &g_route[slot].pt[g_route[slot].n - 1];
             WR16(ped + PED_TARGET, (uint16_t)p->x);
             WR16(ped + PED_TARGET + 2u, (uint16_t)p->y);
@@ -2483,8 +2498,10 @@ static void watch_move_orders(void)
                     WR16(ped + PED_TARGET + 4u, (uint16_t)(g_cut_level * 128));
                 }
             }
-            if (g_routes_on && g_marker_us != 0)
+            if (g_routes_on && g_marker_us != 0) {
+                g_route[slot].retries = 0;
                 route_order(slot, ped, g_marker[0], g_marker[1], g_marker[2]);
+            }
             tx = RD16(ped + PED_TARGET);
             ty = RD16(ped + PED_TARGET + 2u);
         }
