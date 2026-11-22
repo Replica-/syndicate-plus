@@ -164,13 +164,6 @@ uint32_t dpmi_dos_alloc(uint32_t paragraphs, uint32_t *largest)
     return a >> 4;
 }
 
-/* frees the block of DOS memory at segment `seg` (from dpmi_dos_alloc) */
-void dpmi_dos_free(uint32_t seg)
-{
-    int i = heap_find(&g_dos_heap, seg << 4, 0);
-    if (i >= 0) heap_free_idx(&g_dos_heap, i);
-}
-
 static void set_ax(uint32_t v)
 {
     R.eax = (R.eax & 0xFFFF0000u) | (v & 0xFFFFu);

@@ -217,7 +217,7 @@ They need the game files in `_references/dos`.
 |------|---------------|
 | `tools/` | `find_equiv.py` (a function of one program in the others, for the hooks), `le.py` (LE/LX loader), `discover.py` (code discovery), `recomp.py` (x86 to C translator), `gen_all.py` (writes `gen/`), `pack_game.py` (the built-in game files), icon and notarization helpers |
 | `src/rt/` | the portable runtime: CPU state, DOS/DPMI/BIOS, VGA, timer, keyboard, mouse, Sound Blaster and OPL2 |
-| `src/game/` | which recompiled DOS programs make up the game and how it starts; the hooks on the game's functions (`hooks.c`) and what they add (`additions.c`) |
+| `src/game/` | which recompiled DOS programs make up the game and how it starts; the hooks on the game's functions (`hooks.c`) and what they add (`additions.c`); the city drawn (`render.c`), the squad's routes (`path.c`), the game's packed data files read (`rnc.c`) |
 | `src/video/` | the video recorder and screenshots |
 | `src/platform/` | the front ends: `win32/`, `macos/`, `posix/` (shared POSIX services), `headless/` (tests) |
 | `src/third_party/` | dr_mp3, dr_flac, dr_wav, stb_vorbis and stb_image_write (public domain / MIT-0) |

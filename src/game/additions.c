@@ -44,6 +44,7 @@
 #include "../rt/vfs.h"
 #include "hooks.h"
 #include "path.h"
+#include "rnc.h"
 #include "render.h"
 
 /* where the functions and data of each program are: English Syndicate's found by following the game (the
@@ -79,7 +80,6 @@ typedef struct GameAddrs {
     uint32_t speed;        /* (32 bits) the interrupts a tick waits for (7; the game's keys change it, 3..12) */
     uint32_t wait_count;   /* (8 bits) the interrupts counted since the last tick */
     uint32_t label_frames; /* (16 bits x 4) the frames of the squad's numbers, as the game draws them */
-    uint32_t unpack;       /* unpack(packed, out): the game's RNC unpacker */
     uint32_t draw_logo;    /* draw_logo(logo, colour, x, y, w, h, logos): a company's logo */
     uint32_t logo_ret;     /* where Configure Company draws its own (the return address) */
     uint32_t logo_local;   /* there: the logo it edits, from the stack pointer */
@@ -91,27 +91,27 @@ static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
      0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u,
-     0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x42caa4u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
+     0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu,
-     0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x42c994u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
+     0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u,
-     0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x42c994u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
+     0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
      0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu,
-     0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x42e204u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
+     0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu,
-     0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x42e184u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
+     0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u,
-     0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x42e184u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
+     0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -1950,44 +1950,56 @@ void game_set_routes(int on)
     g_routes_on = on != 0;
 }
 
-/* a file of the game's DATA folder, unpacked (RNC) by the game's own unpacker in a block of DOS memory: its bytes
- * (at most `max`), or 0 */
-static size_t load_packed(const char *name, uint8_t *out, size_t max)
+/* a file of the running game's DATA folder, unpacked when it is packed (rnc.c): its bytes (malloc'd, *size of
+ * them), or NULL */
+static uint8_t *load_data(const char *name, size_t *size)
 {
     char path[1200];
-    uint8_t packed[8192];
-    uint32_t seg, largest, at, args[2];
-    size_t n;
+    uint8_t *raw = NULL, *out;
+    size_t n = 0, cap = 0, got;
     VFile *f;
     snprintf(path, sizeof path, "%s/%s/DATA/%s", rt_game_dir, g_addrs->ar ? "DATADISK" : "SYNDICAT", name);
     f = vfs_open(path, "rb");
-    if (f == NULL) return 0;
-    n = vfs_read(f, packed, sizeof packed);
+    if (f == NULL) return NULL;
+    for (;;) {
+        uint8_t *r;
+        if (n == cap) {
+            cap = cap ? cap * 2 : 65536;
+            r = (uint8_t *)realloc(raw, cap);
+            if (r == NULL) break;
+            raw = r;
+        }
+        got = vfs_read(f, raw + n, cap - n);
+        if (got == 0) break;
+        n += got;
+    }
     vfs_close(f);
-    if (n < 18 || n >= sizeof packed || memcmp(packed, "RNC", 3) != 0) return 0;
-    seg = dpmi_dos_alloc((uint32_t)(n + max + 64) / 16u + 1u, &largest);
-    if (seg == 0) return 0;
-    at = seg << 4;
-    memcpy(M + at, packed, n);
-    args[0] = at;
-    args[1] = at + (uint32_t)n + 16u;
-    guest_call(g_addrs->unpack, args, 2);
-    memcpy(out, M + args[1], max);
-    /* freed at once: left there, it splits the DOS memory the game frees at the mission's end, and the block it
-     * then wants for SOUND-1.DAT (444 KB) is not found ("not enough memory": the game exits) */
-    dpmi_dos_free(seg);
-    return max;
+    if (raw == NULL) return NULL;
+    if (rnc_size(raw, n) == 0) {
+        *size = n;
+        return raw;
+    }
+    out = (uint8_t *)malloc(rnc_size(raw, n));
+    *size = out != NULL ? rnc_unpack(raw, n, out, rnc_size(raw, n)) : 0;
+    free(raw);
+    if (*size == 0) {
+        free(out);
+        return NULL;
+    }
+    return out;
 }
 
-/* the tile types: COL01.DAT of the running game, unpacked by the game's own unpacker in a block of DOS memory */
+/* the tile types: COL01.DAT of the running game */
 static void load_tile_types(void)
 {
-    uint8_t types[256];
+    size_t n;
+    uint8_t *types = load_data("COL01.DAT", &n);
     g_types_loaded = 1;
-    if (load_packed("COL01.DAT", types, sizeof types)) {
+    if (types != NULL && n >= 256) {
         path_set_types(types);
         render_set_tile_types(types);
     }
+    free(types);
 }
 
 /* a new order of the player's for the agent in `slot`, to tx, ty, tz: walked as a route if it needs one */

@@ -105,7 +105,6 @@ uint32_t dpmi_pm_vector(int n);     /* guest protected-mode handler (0 = none) *
 uint32_t dpmi_pm_vector_get(int n);
 void dpmi_set_pm_vector(int n, uint32_t addr);
 uint32_t dpmi_dos_alloc(uint32_t paragraphs, uint32_t *largest);
-void dpmi_dos_free(uint32_t seg);
 
 /* ---- BIOS / devices ------------------------------------------------------------------------------------ */
 void bios_init(void);
