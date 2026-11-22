@@ -94,7 +94,8 @@ def unfold(t):
 
 def seamless_top(t, seed, prompt):
     """the top's square 4 times its size, repeating without a seam"""
-    sq = np.array(Image.fromarray(unfold(t)).filter(ImageFilter.GaussianBlur(0.8)))
+    # without its outermost ring (the art outlines a tile's top: repeated, the outline would be a grid)
+    sq = np.array(Image.fromarray(unfold(t)[1:31, 1:31]).resize((32, 32), Image.LANCZOS).filter(ImageFilter.GaussianBlur(0.8)))
     ctx = np.tile(sq, (3, 3, 1))
     big = perform_upscale(ctx)
     big = np.array(Image.fromarray(big).resize((96 * S, 96 * S), Image.LANCZOS))[32 * S:64 * S, 32 * S:64 * S]
