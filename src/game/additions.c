@@ -1271,8 +1271,8 @@ static int player_colour_index(void)
     return M[g_addrs->colours + (uint32_t)(M[company + COMPANY_COLOUR] & 7u)];
 }
 
-/* the menus in true colour: what the game draws in the player's company colour (its palette entry for the game's
- * colour nearest the one chosen) is in the colour chosen */
+/* Configure Company in true colour: what the game draws there in the player's company colour (the logos; its palette
+ * entry for the game's colour nearest the one chosen) is in the colour chosen */
 static void menu_true_colour(const uint8_t *index, uint32_t *rgb, int w, int h)
 {
     int i, near, idx;
@@ -1775,8 +1775,11 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     int fx, fy, hw, alpha;
     render_gpu_changed = 0;
     if (g_addrs != NULL && w == 320 && h == 200) {
-        menu_true_colour(index, rgb, w, h);
-        if (config_shown()) config_grids(rgb, w, h, index, palette);
+        /* Configure Company only: elsewhere (the videos, other screens) the same palette entry is other colours */
+        if (config_shown()) {
+            menu_true_colour(index, rgb, w, h);
+            config_grids(rgb, w, h, index, palette);
+        }
         return 0;
     }
     if (g_addrs == NULL || w < 640 || h != 480 || !in_mission()) return 0;
