@@ -128,8 +128,7 @@ the shots.  Ctrl+L in a mission opens the light editor: the tile under the point
 it glows in the dark, L whether it lights what is around it, [ and ] the size of its light, C its colour; the
 settings are saved in `tile_lights.ini` beside the saves.
 
-The GPU keeps how high every pixel stands, so lamps light the ground around them but not through what stands
-between.  Traffic lights and other small coloured lights in the objects glow at dusk and
+Traffic lights and other small coloured lights in the objects glow at dusk and
 night.  Held B also outlines in cyan the edges of the floor the squad walks on.
 
 *HD textures* (window menu and the Escape menu; on by default) draws the ground tiles from an HD pack in

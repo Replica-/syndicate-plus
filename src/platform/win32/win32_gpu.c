@@ -175,24 +175,9 @@ static const char k_light_shader[] =
     "    o.uv = i.uv; o.col = i.col;\n"
     "    return o;\n"
     "}\n"
-    "Texture2D heights : register(t3);\n"
-    /* a lamp's light at a pixel, unless something between them stands over the line from the pixel to the lamp
-     * (its centre, 48 world units over what is there); the pixels nearest the lamp are its own */
     "float4 ps_light(LV i) : SV_Target {\n"
     "    float f = saturate(1 - dot(i.uv, i.uv));\n"
-    "    int2 p = (int2)i.pos.xy;\n"
-    "    float4 h0 = heights.Load(int3(p, 0));\n"
-    "    float vis = 1;\n"
-    "    if (h0.a > 0.5) {\n"
-    "        float2 c = i.pos.xy - i.uv / float2(ddx(i.uv.x), ddy(i.uv.y));\n"
-    "        float hl = heights.Load(int3((int2)c, 0)).r + 48;\n"
-    "        [loop] for (int k = 1; k < 24; k++) {\n"
-    "            float t = k / 24.0;\n"
-    "            float4 hq = heights.Load(int3((int2)lerp(i.pos.xy, c, t), 0));\n"
-    "            if (t < 0.8 && hq.a > 0.5) vis = min(vis, 1 - saturate((hq.r - lerp(h0.r, hl, t) - 16) / 32));\n"
-    "        }\n"
-    "    }\n"
-    "    return float4(i.col * (f * f * strength * vis), 0);\n"
+    "    return float4(i.col * (f * f * strength), 0);\n"
     "}\n"
     "Texture2D scene : register(t0);\n"
     "Texture2D emis : register(t1);\n"
@@ -1012,10 +997,8 @@ static void draw_city(RECT dst, int fw, int fh)
                     ID3D11DeviceContext_VSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
                     ID3D11DeviceContext_PSSetShader(g_ctx, g_light_ps, NULL, 0);
                     ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
-                    ID3D11DeviceContext_PSSetShaderResources(g_ctx, 3, 1, &g_lit_srv[3]);
                     ID3D11DeviceContext_OMSetBlendState(g_ctx, g_add, NULL, 0xFFFFFFFFu);
                     ID3D11DeviceContext_Draw(g_ctx, (UINT)nlv, 0);
-                    ID3D11DeviceContext_PSSetShaderResources(g_ctx, 3, 1, &none[3]);
                 }
             }
             /* the city, lit, into the picture */

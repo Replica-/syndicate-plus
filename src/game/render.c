@@ -418,8 +418,9 @@ void render_set_hd(int on)
     g_hd_want = on != 0;
 }
 
-/* tile `image` (its pixels px, palette indices) from the pack: its colours re-tinted to this palette (by the tile's
- * mean colour now over the mean colour it was made in, each channel), with its normals; 0 if not in the pack */
+/* tile `image` (its pixels px, palette indices) from the pack: its colours brought to the tile's (its mean colour, each
+ * channel, the tile's mean colour in this palette: as bright and tinted as the game draws it), with its normals; 0 if
+ * not in the pack */
 static int hd_define(int image, const uint8_t *px)
 {
     static uint32_t rgb[HD_W * HD_H], nrm[HD_W * HD_H];
@@ -436,10 +437,12 @@ static int hd_define(int image, const uint8_t *px)
     if (t->state != 1) return 0;
     for (y = 0; y < TILE_H * TILE_W; y++)
         if (px[y] != 255)
-            for (ch = 0; ch < 3; ch++) {
-                now[ch] += (float)((g_image_pal[px[y]] >> (16 - 8 * ch)) & 255);
-                was[ch] += (float)t->orig[y * 4 + ch];
-            }
+            for (ch = 0; ch < 3; ch++)
+                now[ch] += (float)((g_image_pal[px[y]] >> (16 - 8 * ch)) & 255) * (HD_SCALE * HD_SCALE);
+    for (y = 0; y < HD_H; y++)
+        for (x = 0; x < HD_W; x++)
+            if (t->rgba[(y * HD_W + x) * 4 + 3] >= 128 && px[(y / HD_SCALE) * TILE_W + x / HD_SCALE] != 255)
+                for (ch = 0; ch < 3; ch++) was[ch] += (float)t->rgba[(y * HD_W + x) * 4 + ch];
     for (ch = 0; ch < 3; ch++) f[ch] = was[ch] > 0 ? now[ch] / was[ch] : 1.0f;
     for (y = 0; y < HD_H; y++)
         for (x = 0; x < HD_W; x++) {
