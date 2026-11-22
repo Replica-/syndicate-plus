@@ -1815,6 +1815,19 @@ static void mission_menu(uint32_t *rgb, int w)
 #define PANEL_TOP 40
 #define PANEL_BOTTOM 200
 #define HAT_SPOT 24 /* a spot of the colour this big at most is a hat */
+#define HAT_SHINE_INDEX 14 /* the hats' highlight (the game's bright red) */
+
+/* a hat's colour where the light catches it */
+static uint32_t shine_colour(uint32_t c)
+{
+    uint32_t r = 0;
+    int k;
+    for (k = 0; k < 24; k += 8) {
+        int v = (int)((c >> k) & 255) * 3 / 2 + 20;
+        r |= (uint32_t)(v > 255 ? 255 : v) << k;
+    }
+    return r;
+}
 static void panel_true_colour(const uint8_t *index, uint32_t *rgb, int w)
 {
     static uint8_t seen[(PANEL_BOTTOM - PANEL_TOP) * 128];
@@ -1844,7 +1857,17 @@ static void panel_true_colour(const uint8_t *index, uint32_t *rgb, int w)
                 }
             }
             if (n <= HAT_SPOT)
-                for (k = 0; k < n; k++) rgb[(spot[k] / 128 + PANEL_TOP) * w + spot[k] % 128] = c;
+                for (k = 0; k < n; k++) {
+                    int sx = spot[k] % 128, sy = spot[k] / 128 + PANEL_TOP, d;
+                    rgb[sy * w + sx] = c;
+                    /* the hat's highlight beside it (the game's bright red): the colour brighter */
+                    for (d = 0; d < 4; d++) {
+                        int nx = sx + (d == 0) - (d == 1), ny = sy + (d == 2) - (d == 3);
+                        if (nx >= 0 && nx < VIEW_LEFT && ny >= PANEL_TOP && ny < PANEL_BOTTOM &&
+                            index[ny * 640 + nx] == HAT_SHINE_INDEX)
+                            rgb[ny * w + nx] = shine_colour(c);
+                    }
+                }
         }
 }
 
