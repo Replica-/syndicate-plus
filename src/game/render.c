@@ -313,11 +313,12 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
  * HAT_ROWS rows (what the agents hold uses colour 6 too, anywhere in it) */
 #define HAT_ROWS 5
 
-/* the agents' heads (the eight ways they face, in each of their sets): all their colour 6 is the hat, even where it
- * goes lower than HAT_ROWS (a head bowed towards the camera) */
+/* the agents' heads (the eight ways they face, in each of their sets: the top sprite of the people's frames): all
+ * their colour 6 is the hat, even where it goes lower than HAT_ROWS (a head bowed towards the camera, a cap seen
+ * from behind) */
 static int is_head(int id)
 {
-    return (id >= 41 && id <= 56) || (id >= 1121 && id <= 1128);
+    return (id >= 9 && id <= 16) || (id >= 41 && id <= 64) || (id >= 1121 && id <= 1128);
 }
 
 static int hat_rows(int id, const uint8_t *s, int sw, int sh)
