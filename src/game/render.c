@@ -817,6 +817,7 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
  * moved, and its red rear lights) */
 #define LIST_CARS 1
 #define LIST_STATICS 2
+#define LIST_EFFECTS 4
 #define HEADLIGHT_COLOUR 0xFFF5D7u
 #define REAR_LIGHT_COLOUR 0xFF281Eu
 
@@ -1243,10 +1244,16 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             if (nobj == 2048) break;
             /* the game's rule (its list of things to draw, 0x40d528): shown unless bit 0 is set */
             if (loc == 0 || (loc & 1u)) continue;
-            if (t256 >= 0) {
+            if (t256 >= 0 && li != LIST_EFFECTS && sa->loc[n] != 0 && !(sa->loc[n] & 1u)) {
                 x = lerp(sa->pos[n][0], sb->pos[n][0], t256);
                 y = lerp(sa->pos[n][1], sb->pos[n][1], t256);
                 z = lerp(sa->pos[n][2], sb->pos[n][2], t256);
+            } else if (t256 >= 0) {
+                /* an effect (a shot, a ricochet: its place in the list is used again and again), or a thing that
+                 * was not on the map at the earlier snapshot: where it is, not sliding from where it was */
+                x = sb->pos[n][0];
+                y = sb->pos[n][1];
+                z = sb->pos[n][2];
             } else {
                 x = (int16_t)rd16(a + 4u);
                 y = (int16_t)rd16(a + 6u);
