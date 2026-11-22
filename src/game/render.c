@@ -874,6 +874,8 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define LIST_STATICS 2
 #define LIST_EFFECTS 4
 #define CAR_REACH 160 /* how far a car reaches from its middle towards the viewer (a tile is 256) */
+#define LYING 255     /* Obj.z of a body lying: after every level of its row of tiles */
+#define LYING_H 20    /* a lying person's frame is at most this high */
 #define HEADLIGHT_COLOUR 0xFFF5D7u
 #define REAR_LIGHT_COLOUR 0xFF281Eu
 
@@ -1291,6 +1293,13 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
              * the floor of the row in front of it is drawn over its front) */
             objs[nobj].key = li == LIST_CARS ? ((x + CAR_REACH) >> 8) + ((y + CAR_REACH) >> 8) : (x >> 8) + (y >> 8);
             objs[nobj].z = z >> 7;
+            /* a person lying (a body, falling or dead: its frame low, wider than high; standing ones are 25 to 36
+             * high, firing ones up to 49 wide) reaches into the cells beside it in its row of tiles: drawn after all
+             * their levels, not under a raised tile next to it */
+            if (li == 0) {
+                uint32_t fr = rd32(P_FRAMES) + (uint32_t)frame * 8u;
+                if (M[fr + 3u] <= LYING_H && M[fr + 2u] > M[fr + 3u]) objs[nobj].z = LYING;
+            }
             objs[nobj].x = x;
             objs[nobj].y = y;
             objs[nobj].zw = z;
