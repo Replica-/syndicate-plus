@@ -1178,15 +1178,16 @@ static int renderer_on(void)
 static volatile uint32_t g_player_colour;
 
 /* ---- Configure Company: every colour and logo in two grids under the game's panel, one click each ----
- * The game's 8 company colours (as its preview draws them), then 16 more: one of these is shown in true colour
+ * The game's 8 company colours (as its preview draws them), then 18 more: one of these is shown in true colour
  * (the agents' hats), the game keeping the nearest of its own (the world map, its menus). */
 #define NB_GAME_COLOURS 8
-#define NB_PICK_COLOURS 24
+#define NB_PICK_COLOURS 26
 #define NB_LOGOS 40
 static const uint32_t k_pick_colours[NB_PICK_COLOURS] = {
     0xAA2400, 0x4D5979, 0xFF3C08, 0xFFA65D, 0xE3DB28, 0xDFFFFF, 0x967918, 0x008EBA, /* the game's */
     0xDC143C, 0xFF8C00, 0xFFD700, 0x9ACD32, 0x2ECC71, 0x00C896, 0x00E5FF, 0x5DADE2,
     0x2F4FD8, 0x5B2C9F, 0x9B59B6, 0xFF00C8, 0xFF8FB8, 0xF4F4F4, 0x8A9AA8, 0x303030,
+    0x8B5A2B, 0x008080, /* brown, teal */
 };
 #define PLAYER_COLOUR_FILE "company_colour.txt"
 static uint32_t g_config_us;      /* Configure Company was drawn then */
@@ -1278,13 +1279,16 @@ static int on_draw_logo(uint32_t addr)
     return 0;
 }
 
-/* where the grids are on the 320 x 200 screen */
+/* where the grids are on the 320 x 200 screen: each centred under the game's panel (x 140 to 306) */
 #define PICK_BRIGHT 0x61FF24u
-#define PICK_X 142
+#define PANEL_MID 223
+#define PICK_ROW (NB_PICK_COLOURS / 2) /* the colours in 2 rows */
+#define PICK_X (PANEL_MID - (PICK_ROW * (SWATCH + 1) - 1) / 2)
 #define PICK_Y 80
 #define SWATCH 10
 #define LOGO_CELL 15   /* a logo 14 x 14 and a gap: the 4 rows end above the MENU button (172) */
 #define LOGO_SIZE 14
+#define LOGOS_X (PANEL_MID - (10 * LOGO_CELL - 1) / 2)
 #define LOGOS_Y (PICK_Y + 2 * (SWATCH + 1) + 3)
 
 /* ---- the menus as wide as the window: the game's 320 x 200 picture in the middle of a wider one; on the green menus
@@ -1439,14 +1443,12 @@ static void config_click(void)
 {
     int x, y;
     menu_mouse(&x, &y);
-    x -= PICK_X;
-    if (x < 0) return;
-    if (y >= PICK_Y && y < PICK_Y + 2 * (SWATCH + 1)) {
-        int k = (y - PICK_Y) / (SWATCH + 1) * 12 + x / (SWATCH + 1);
-        if (x / (SWATCH + 1) < 12 && k < NB_PICK_COLOURS) g_pick_colour = k;
-    } else if (y >= LOGOS_Y && y < LOGOS_Y + 4 * LOGO_CELL) {
-        int k = (y - LOGOS_Y) / LOGO_CELL * 10 + x / LOGO_CELL;
-        if (x / LOGO_CELL < 10 && k < NB_LOGOS) g_pick_logo = k;
+    if (y >= PICK_Y && y < PICK_Y + 2 * (SWATCH + 1) && x >= PICK_X) {
+        int k = (y - PICK_Y) / (SWATCH + 1) * PICK_ROW + (x - PICK_X) / (SWATCH + 1);
+        if ((x - PICK_X) / (SWATCH + 1) < PICK_ROW && k < NB_PICK_COLOURS) g_pick_colour = k;
+    } else if (y >= LOGOS_Y && y < LOGOS_Y + 4 * LOGO_CELL && x >= LOGOS_X) {
+        int k = (y - LOGOS_Y) / LOGO_CELL * 10 + (x - LOGOS_X) / LOGO_CELL;
+        if ((x - LOGOS_X) / LOGO_CELL < 10 && k < NB_LOGOS) g_pick_logo = k;
     }
 }
 
@@ -1518,13 +1520,13 @@ static void config_grids(uint32_t *rgb, int w, int h, const uint8_t *index, cons
     if (colour < 0 || colour >= NB_PICK_COLOURS) colour = 0;
     c = k_pick_colours[colour];
     for (k = 0; k < NB_PICK_COLOURS; k++) {
-        int x0 = PICK_X + (k % 12) * (SWATCH + 1), y0 = PICK_Y + (k / 12) * (SWATCH + 1);
+        int x0 = PICK_X + (k % PICK_ROW) * (SWATCH + 1), y0 = PICK_Y + (k / PICK_ROW) * (SWATCH + 1);
         for (y = y0; y < y0 + SWATCH; y++)
             for (x = x0; x < x0 + SWATCH; x++) rgb[y * w + x] = k_pick_colours[k];
         frame_box(rgb, w, h, x0, y0, x0 + SWATCH, y0 + SWATCH, k == colour ? PICK_BRIGHT : 0x082800u);
     }
     for (k = 0; k < NB_LOGOS; k++) {
-        int x0 = PICK_X + (k % 10) * LOGO_CELL, y0 = LOGOS_Y + (k / 10) * LOGO_CELL;
+        int x0 = LOGOS_X + (k % 10) * LOGO_CELL, y0 = LOGOS_Y + (k / 10) * LOGO_CELL;
         const uint8_t *l = M + g_config_logos + (uint32_t)k * 1024u;
         for (y = 0; y < LOGO_SIZE; y++)
             for (x = 0; x < LOGO_SIZE; x++) {

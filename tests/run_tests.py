@@ -377,8 +377,8 @@ def company_picker(ctx):
     def at(x, y):   # a point of the 320 x 200 screen
         return '%d;%d' % (x * 65536 // 320, y * 65536 // 200)
     ctx.run('pick', 17, start=SYN, extra=['--mem-dump', '16800:' + dump], inputs=SKIP_INTRO + [
-        '10000:f1', '12000:move@' + at(257, 85), '12500:click@' + at(257, 85), '13500:move@' + at(224, 112),
-        '14000:click@' + at(224, 112), '15000:move@' + at(40, 179), '15500:click@' + at(40, 179)])
+        '10000:f1', '12000:move@' + at(267, 85), '12500:click@' + at(267, 85), '13500:move@' + at(231, 112),
+        '14000:click@' + at(231, 112), '15000:move@' + at(40, 179), '15500:click@' + at(40, 179)])
     mem = open(dump, 'rb').read()
     company = 0x44e49c - 0x400000   # the player's (the first)
     check((mem[company + 0xf], mem[company + 0x10]) == (4, 5),

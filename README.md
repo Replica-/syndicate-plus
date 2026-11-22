@@ -141,7 +141,7 @@ Traffic lights and other small coloured lights in the objects glow at dusk and
 night.  Held B also outlines in cyan the edges of the floor the squad walks on.
 
 Configure Company shows every colour and logo in grids under its panel, one click each: the game's 8 colours and
-16 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world
+18 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world
 map and its menus), and the 40 logos in the colour chosen.  Escape in a mission opens a menu in the game's
 briefing look while the mission waits: Resume, time of day, full screen, frames a second,
 the volumes, squad routes, and Abort mission (the game's Escape).  *Squad finds routes* (on by default): a move order the game's straight walk
