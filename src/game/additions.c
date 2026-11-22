@@ -827,7 +827,9 @@ static void diamond(uint32_t *rgb, int w, int cx, int cy, int hw, int edge, uint
 #define NB_PEDS 256
 #define PED_LOCATION 0xau     /* 4: on the map */
 #define PED_STATE 0xbu        /* 0x11: dead */
-#define PED_TYPE 0x1cu        /* 1 pedestrian, 2 agent, 4 police, 8 guard, 16 criminal */
+#define PED_TYPE 0x1cu        /* 1 pedestrian, 2 agent, 4 police, 8 guard, 16 criminal; the game adds 0x40 once the
+                               * person has killed: PED_KIND */
+#define PED_KIND(p) (M[(p) + PED_TYPE] & 0x1fu)
 #define PED_PERSUADER 0x20u   /* (16 bits) who persuaded it (0: nobody) */
 #define PED_WEAPON 0x44u      /* (16 bits) the weapon in its hands (0: none) */
 #define NB_STATICS 400
@@ -872,7 +874,7 @@ static void draw_scanner_extras(uint32_t *rgb, int w)
     }
     for (i = 0; i < NB_PEDS; i++) {
         uint32_t p = g_addrs->peds + (uint32_t)i * PED_SIZE;
-        uint8_t type = M[p + PED_TYPE];
+        uint8_t type = (uint8_t)PED_KIND(p);
         if (M[p + PED_LOCATION] != 4 || M[p + PED_STATE] == 0x11 || RD16(p + PED_PERSUADER) != 0) continue;
         if (type != 1 && type != 16) continue;
         if (RD16(p + PED_WEAPON) != 0)
@@ -1094,7 +1096,7 @@ static void company_hats(const uint8_t *pix, const uint32_t *pal, uint32_t *rgb,
         uint32_t company = g_addrs->companies + (uint32_t)(i / AGENTS_A_COMPANY) * g_addrs->company_size;
         uint32_t colour = company_rgb(company, pal);
         int fx, fy, x, y;
-        if (M[p + PED_TYPE] != 2 || M[p + PED_LOCATION] != 4 || colour == pal[HAT_COLOUR]) continue;
+        if (PED_KIND(p) != 2 || M[p + PED_LOCATION] != 4 || colour == pal[HAT_COLOUR]) continue;
         world_to_frame((int16_t)RD16(p + PED_X), (int16_t)RD16(p + PED_Y), (int16_t)RD16(p + PED_Z), &fx, &fy);
         /* the head, below the number of an agent of the squad */
         for (y = fy - 31; y <= fy - 14; y++)
@@ -1398,7 +1400,7 @@ static uint32_t hat_colour(int ped)
 {
     uint32_t company, c;
     int owner;
-    if (ped < 0 || ped >= NB_PEDS || M[g_addrs->peds + (uint32_t)ped * PED_SIZE + PED_TYPE] != 2) return 0;
+    if (ped < 0 || ped >= NB_PEDS || PED_KIND(g_addrs->peds + (uint32_t)ped * PED_SIZE) != 2) return 0;
     owner = agent_company(ped);
     if (owner < 0) return 0;
     if (g_player_colour != 0 && owner == (int16_t)RD16(g_addrs->player)) return g_player_colour & 0xFFFFFFu;
