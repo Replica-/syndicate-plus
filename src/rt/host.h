@@ -68,10 +68,11 @@ typedef struct HostCityLight {
 #define HOST_LIGHT_GLOW 0x01000000u
 /* 1 when the platform draws the city now (it may decline, e.g. while it records a video) */
 int host_city_gpu(void);
-/* forget every image (new data); then define image `image`: w x h pixels 0xAARRGGBB, row stride w; alpha 255
- * opaque, 254 a hat pixel (HostCityQuad.hat's colour), 253 a hat's shine (its colour brighter), 0 transparent */
+/* forget every image (new data); then define image `image`: w x h pixels 0xAARRGGBB, row stride w, `scale` (1, 2
+ * or 4) of them to a pixel of the frame each way; alpha 255 opaque, 254 a hat pixel (HostCityQuad.hat's colour), 253 a
+ * hat's shine (its colour brighter), 0 transparent */
 void host_city_reset(void);
-void host_city_image(int image, int w, int h, const uint32_t *pixels);
+void host_city_image(int image, int w, int h, int scale, const uint32_t *pixels);
 /* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, each image
  * `scale` times its size (the zoom); the lights show when the platform lights the city for a time of day darker
  * than the mission's own look */

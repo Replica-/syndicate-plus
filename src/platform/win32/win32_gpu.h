@@ -25,7 +25,7 @@ void gpu_present(const uint32_t *pixels, int w, int h, RECT dst, int sharp);
 /* the city under the frame (host_city_*), drawn by gpu_present with `sharp`, where the frame is see-through; any
  * thread */
 void gpu_city_reset(void);
-void gpu_city_image(int id, int w, int h, const uint32_t *pixels);
+void gpu_city_image(int id, int w, int h, int scale, const uint32_t *pixels);
 void gpu_city_frame(const HostCityQuad *quads, int n, int x0, int y0, int x1, int y1,
                     float scale, const HostCityLight *lights, int nlights);
 /* the time of day the city is lit for: 0 as the mission is (its colours; its lights glow as dark as its palette is),

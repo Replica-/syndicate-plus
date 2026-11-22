@@ -111,10 +111,11 @@ static const char k_city_shader[] =
     "    return float4(t.rgb, 1);\n"
     "}\n"
     /* the sun's shadow at a point of a tile: its top is a diamond, corners (32, 0), (64, 16), (32, 32), (0, 16) */
+    "float texels(V i) { return (float)(1u << ((i.glow >> 4) & 3)); }\n" /* the image's texels a frame pixel */
     "float sun(V i) {\n"
     "    float2 r, w;\n"
     "    if (i.shade == 0) return 1;\n"
-    "    r = i.tex - i.rect.xy - float2(32, 0);\n"
+    "    r = (i.tex - i.rect.xy) / texels(i) - float2(32, 0);\n"
     "    w = saturate(float2(r.x / 32 + r.y / 16, r.y / 16 - r.x / 32) * 0.5);\n"
     "    return 1 - shadow * smoothstep(0, 1, lerp(lerp(i.shade & 255, (i.shade >> 8) & 255, w.x),\n"
     "                                            lerp((i.shade >> 24) & 255, (i.shade >> 16) & 255, w.x), w.y)\n"
@@ -133,7 +134,7 @@ static const char k_city_shader[] =
     "float4 ps(V i) : SV_Target {\n"
     "    float2 p = i.tex - 0.5;\n"
     "    float2 b = floor(p);\n"
-    "    float2 f = saturate((p - b - 0.5) * scale + 0.5);\n"
+    "    float2 f = saturate((p - b - 0.5) * scale / texels(i) + 0.5);\n"
     "    int2 q = (int2)b;\n"
     "    float4 c = lerp(lerp(texel(q, i), texel(q + int2(1, 0), i), f.x),\n"
     "                    lerp(texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f.x), f.y);\n"
@@ -147,7 +148,7 @@ static const char k_city_shader[] =
     "    O o;\n"
     "    float2 p = i.tex - 0.5;\n"
     "    float2 b = floor(p);\n"
-    "    float2 f = saturate((p - b - 0.5) * scale + 0.5);\n"
+    "    float2 f = saturate((p - b - 0.5) * scale / texels(i) + 0.5);\n"
     "    int2 q = (int2)b;\n"
     "    float4 c00 = texel(q, i), c10 = texel(q + int2(1, 0), i), c01 = texel(q + int2(0, 1), i);\n"
     "    float4 c11 = texel(q + int2(1, 1), i);\n"
@@ -220,11 +221,12 @@ static const struct {
 };
 
 /* ---- the city's images and list, set on the game thread, drawn on the UI thread ---- */
-#define ATLAS 2048
+#define ATLAS 4096
 #define NB_IMAGES (256 + 4096 + 64) /* the tiles, the sprites, the dirt ground's tiles (render.c) */
 
 typedef struct Image {
     int w, h, ax, ay; /* size, place in the atlas (w 0: not defined) */
+    int scale;        /* its pixels to a frame pixel each way: 1, 2 or 4 */
     uint32_t *pixels; /* to upload (NULL once uploaded) */
 } Image;
 
@@ -261,7 +263,7 @@ void gpu_city_reset(void)
     ReleaseSRWLockExclusive(&g_city_lock);
 }
 
-void gpu_city_image(int id, int w, int h, const uint32_t *pixels)
+void gpu_city_image(int id, int w, int h, int scale, const uint32_t *pixels)
 {
     Image *im;
     if (id < 0 || id >= NB_IMAGES || w <= 0 || h <= 0 || w > 256 || h > 256) return;
@@ -285,6 +287,7 @@ void gpu_city_image(int id, int w, int h, const uint32_t *pixels)
     }
     im->w = w;
     im->h = h;
+    im->scale = scale == 4 ? 4 : scale == 2 ? 2 : 1;
     free(im->pixels);
     im->pixels = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)(w * h));
     if (im->pixels != NULL) memcpy(im->pixels, pixels, sizeof(uint32_t) * (size_t)(w * h));
@@ -798,8 +801,8 @@ static void draw_city(RECT dst, int fw, int fh)
         CityVertex c[4];
         int k;
         if (im->w == 0) continue;
-        x1 = x0 + (float)im->w * zoom;
-        y1 = y0 + (float)im->h * zoom;
+        x1 = x0 + (float)im->w * zoom / (float)im->scale;
+        y1 = y0 + (float)im->h * zoom / (float)im->scale;
         u0 = (q->flip & 1) ? (float)(im->ax + im->w) : (float)im->ax;
         u1 = (q->flip & 1) ? (float)im->ax : (float)(im->ax + im->w);
         for (k = 0; k < 4; k++) {
@@ -812,7 +815,7 @@ static void draw_city(RECT dst, int fw, int fh)
             c[k].rect[2] = (float)(im->ax + im->w);
             c[k].rect[3] = (float)(im->ay + im->h);
             c[k].hat = q->hat;
-            c[k].glow = q->glow;
+            c[k].glow = q->glow | (im->scale == 4 ? 0x20u : im->scale == 2 ? 0x10u : 0u);
             c[k].shade = q->shade;
         }
         verts[nv++] = c[0];

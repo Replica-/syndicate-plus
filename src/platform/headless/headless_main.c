@@ -187,14 +187,15 @@ void host_city_reset(void)
 #endif
 }
 
-void host_city_image(int image, int w, int h, const uint32_t *pixels)
+void host_city_image(int image, int w, int h, int scale, const uint32_t *pixels)
 {
 #ifdef _WIN32
-    if (g_gpu_on) gpu_city_image(image, w, h, pixels);
+    if (g_gpu_on) gpu_city_image(image, w, h, scale, pixels);
 #else
     (void)image;
     (void)w;
     (void)h;
+    (void)scale;
     (void)pixels;
 #endif
 }

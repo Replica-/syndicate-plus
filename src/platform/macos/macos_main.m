@@ -219,11 +219,12 @@ void host_city_reset(void)
 {
 }
 
-void host_city_image(int image, int w, int h, const uint32_t *pixels)
+void host_city_image(int image, int w, int h, int scale, const uint32_t *pixels)
 {
     (void)image;
     (void)w;
     (void)h;
+    (void)scale;
     (void)pixels;
 }
 
