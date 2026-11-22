@@ -988,6 +988,17 @@ static void capture(RECT dst)
     if (w <= 0 || h <= 0) return;
     if (g_swap != NULL && FAILED(IDXGISwapChain1_GetBuffer(g_swap, 0, &IID_ID3D11Texture2D, (void **)&src))) return;
     ID3D11Texture2D_GetDesc(src, &td);
+    /* what of it is on the window (a mission's goes on past its top and bottom) */
+    if (dst.left < 0) dst.left = 0;
+    if (dst.top < 0) dst.top = 0;
+    if (dst.right > (LONG)td.Width) dst.right = (LONG)td.Width;
+    if (dst.bottom > (LONG)td.Height) dst.bottom = (LONG)td.Height;
+    w = dst.right - dst.left;
+    h = dst.bottom - dst.top;
+    if (w <= 0 || h <= 0) {
+        if (g_swap != NULL) RELEASE(src);
+        return;
+    }
     td.Usage = D3D11_USAGE_STAGING;
     td.BindFlags = 0;
     td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;

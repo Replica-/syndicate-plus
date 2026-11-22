@@ -117,7 +117,8 @@ person hit, away from the shooter. Agents wear hats in the colour of their compa
 (the original draws every hat in the red of the first colour).
 
 With Direct3D, a mission fills a wide window: the city goes on to its right edge (the side panel stays at the
-left).  The mouse wheel zooms the city out to half its size or in to one and a half.  The game's mission area
+left), and the game's 400 lines of it fill the window's height, the side panel's too, as in FreeSynd (the empty
+lines above and below them are off the window).  The mouse wheel zooms the city out to half its size or in to one and a half.  The game's mission area
 limits where its camera can go, so at its edges the view may show city beyond it: a click there goes to the
 nearest point the game takes.  Holding B shows inside the buildings: what stands on the floor of the squad's
 highest agent (walls, roofs) is not drawn.

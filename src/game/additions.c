@@ -602,7 +602,9 @@ static void move_view(void)
     render_set_zoom(g_zoom, (float)map_cx(), (float)MAP_CY);
     canvas_mouse(&mx, &my);
     sx = (g_pan[1] || mx >= g_cw - 1 - EDGE_PX ? 1 : 0) - (g_pan[0] || mx <= EDGE_PX ? 1 : 0);
-    sy = (g_pan[3] || my >= VIEW_BOTTOM - 1 - EDGE_PX ? 1 : 0) - (g_pan[2] || my <= VIEW_TOP + EDGE_PX ? 1 : 0);
+    /* the window shows the game's 400 lines (the picture's top and bottom GAME_TOP lines are off it) */
+    sy = (g_pan[3] || my >= VIEW_BOTTOM - GAME_TOP - 1 - EDGE_PX ? 1 : 0) -
+         (g_pan[2] || my <= VIEW_TOP + GAME_TOP + EDGE_PX ? 1 : 0);
     if (sx != 0 || sy != 0) {
         /* screen right is world (+1, -1) at 1/4 px a unit, screen down (+1, +1) at 1/8 (the same speed on the
          * screen at any zoom) */

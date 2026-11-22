@@ -82,6 +82,10 @@ static SRWLOCK g_frame_lock = SRWLOCK_INIT;
 static uint32_t g_frame[FRAME_MAX_W * FRAME_MAX_H];
 static int g_fw, g_fh;
 static int g_frame_city;            /* the frame being made has the city on the GPU */
+static int g_fcity;                 /* the frame shown has it: a mission */
+/* a mission is shown from line MISSION_CROP of its frame to as far from its bottom, the 400 lines of the game's
+ * window over the whole height (as FreeSynd's): the side panel too; the lines above and below are off the window */
+#define MISSION_CROP 40
 #define WM_APP_OPTION (WM_APP + 8) /* the mission's menu changed option wParam by lParam (1, -1) */
 
 /* the city is always on the GPU */
@@ -110,12 +114,14 @@ void host_city_frame(const HostCityQuad *quads, int n, int x0, int y0, int x1, i
 void host_present(const uint32_t *pixels, int w, int h)
 {
     if (w <= 0 || h <= 0 || w > FRAME_MAX_W || h > FRAME_MAX_H) return;
+    int city = g_frame_city;
     if (!g_frame_city) gpu_city_off();
     g_frame_city = 0;
     AcquireSRWLockExclusive(&g_frame_lock);
     memcpy(g_frame, pixels, sizeof(uint32_t) * (size_t)(w * h));
     g_fw = w;
     g_fh = h;
+    g_fcity = city && h == 480;
     ReleaseSRWLockExclusive(&g_frame_lock);
     if (g_hwnd != NULL) InvalidateRect(g_hwnd, NULL, FALSE);
 }
@@ -126,15 +132,18 @@ static volatile LONG g_client_w = 640, g_client_h = 480;
 int host_canvas_width(void)
 {
     LONG cw = g_client_w, ch = g_client_h;
-    int w = ch > 0 ? (int)((long long)cw * 480 / ch) & ~1 : 640;
+    int w = ch > 0 ? (int)((long long)cw * (480 - 2 * MISSION_CROP) / ch) & ~1 : 640;
     return w < 640 ? 640 : w > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : w;
 }
 
-/* the largest rectangle of the frame's shape (4:3, or wider in missions) in the client area, centred */
+/* the largest rectangle of the frame's shape (4:3, or wider in missions) in the client area, centred; a mission's
+ * without its MISSION_CROP lines at the top and the bottom (the rectangle goes on past the client area there) */
 static RECT picture_rect(HWND h)
 {
     RECT c, r;
-    int cw, ch, w, hh, aw = g_fh == 480 && g_fw > 640 ? g_fw : 4, ah = g_fh == 480 && g_fw > 640 ? 480 : 3;
+    int crop = g_fcity ? MISSION_CROP : 0;
+    int cw, ch, w, hh, aw = g_fcity || (g_fh == 480 && g_fw > 640) ? g_fw : 4;
+    int ah = g_fcity || (g_fh == 480 && g_fw > 640) ? g_fh - 2 * crop : 3;
     GetClientRect(h, &c);
     cw = c.right - c.left;
     ch = c.bottom - c.top;
@@ -149,6 +158,11 @@ static RECT picture_rect(HWND h)
     r.top = (ch - hh) / 2;
     r.right = r.left + w;
     r.bottom = r.top + hh;
+    if (crop > 0 && ah > 0) {
+        int over = (int)((long long)hh * crop / ah);
+        r.top -= over;
+        r.bottom += over;
+    }
     return r;
 }
 
@@ -345,7 +359,9 @@ static void update_clip(void)
 {
     int want = g_full && !g_minimized && !g_modal && !g_in_menu && GetForegroundWindow() == g_hwnd;
     if (want) {
-        RECT r = picture_rect(g_hwnd);
+        RECT r = picture_rect(g_hwnd), c;
+        GetClientRect(g_hwnd, &c);
+        IntersectRect(&r, &r, &c); /* a mission's goes on past the window */
         g_clip_rect = r;
         MapWindowPoints(g_hwnd, NULL, (POINT *)&r, 2);
         ClipCursor(&r);
@@ -359,9 +375,11 @@ static void update_clip(void)
 /* the picture changed shape (a mission wider than 4:3, back to 4:3 in the menus): the pointer is kept in the new one */
 static void follow_picture(HWND h)
 {
-    RECT r;
+    RECT r, c;
     if (!g_clipped) return;
     r = picture_rect(h);
+    GetClientRect(h, &c);
+    IntersectRect(&r, &r, &c);
     if (!EqualRect(&r, &g_clip_rect)) update_clip();
 }
 

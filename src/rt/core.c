@@ -696,7 +696,7 @@ static void draw_fps(uint32_t *rgb, int w, int h)
         glyphs[n++] = text[i] >= '0' && text[i] <= '9' ? text[i] - '0' : text[i] == 'F' ? 10 : text[i] == 'P' ? 11
                     : text[i] == 'S' ? 12 : -1;
     x0 = w - (n * 4 + 1) * s - 2;
-    y0 = 2;
+    y0 = h == 480 ? 42 : 2; /* 640 x 480: a mission, shown from line 40 (the window's top) */
     if (x0 < 0 || h < 7 * s + 4) return;
     for (gy = y0 - s; gy < y0 + 6 * s; gy++)
         for (gx = x0 - s; gx < w - 1; gx++) rgb[gy * w + gx] = 0x101010u;
