@@ -117,6 +117,29 @@ static const char k_city_shader[] =
     "    if (!(i.glow & 4) || r.x < 32 || r.y < 32 - (r.x - 32) / 2) return 1;\n"
     "    return 1 - shadow * 0.45;\n"
     "}\n"
+    /* in the sun's shadow (FreeSynd's: a whole cell is or is not; its top's edges softened against neighbours
+     * in the other state): 0..1. glow bit 64: the tile (or the cell under the thing) is in it; a tile's hat:
+     * its 4 neighbours in it (bits 1 x - 1, 2 x + 1, 4 y - 1, 8 y + 1), bit 16 a slope going down from the sun */
+    "float shaded(V i) {\n"
+    "    float2 r = at(i);\n"
+    "    float own = (i.glow & 64) ? 1 : 0, v = own;\n"
+    "    if (!(i.glow & 8) || abs(r.x - 32) / 32 + abs(r.y - 16) / 16 > 1) return own;\n"
+    "    float2 q = r - float2(32, 0);\n"
+    "    float2 w = saturate(float2(q.x / 32 + q.y / 16, q.y / 16 - q.x / 32) * 0.5);\n"
+    "    float4 dist = float4(w.x, 1 - w.x, w.y, 1 - w.y);\n"
+    "    [unroll] for (int e = 0; e < 4; e++) {\n"
+    "        float n = (i.hat >> e) & 1;\n"
+    "        float edge = lerp(0.5, own, smoothstep(0, 0.14, dist[e]));\n"
+    "        if (n != own) v = own > 0 ? min(v, edge) : max(v, edge);\n"
+    "    }\n"
+    "    return v;\n"
+    "}\n"
+    /* the light the sun's shadows take there (FreeSynd's: 45% in a shadow, 20% on a slope down from the sun) */
+    "float loss(V i) {\n"
+    "    float l = 0.45 * shaded(i);\n"
+    "    if ((i.glow & 8) && (i.hat & 16)) l = max(l, 0.2);\n"
+    "    return l;\n"
+    "}\n"
     /* the height (world units) of the pixel: a tile's top at z, its faces 8 units lower a pixel down below it;
      * a sprite standing upright, z at its top row, 8 units lower a pixel down */
     "float height(V i) {\n"
@@ -159,12 +182,12 @@ static const char k_city_shader[] =
     "    o.c = lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);\n"
     "    o.c.rgb *= lerp(face(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
-    "    o.h = float4(height(i), 0, 0, (i.glow & 128) ? 0 : o.c.a);\n"
+    /* its height and the light the sun's shadow takes there (none where it glows) */
+    "    o.h = float4(height(i), loss(i) * (1 - glowing(o.c, i.glow).r / max(o.c.a, 1e-4)), 0, (i.glow & 128) ? 0 : o.c.a);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
     "    return o;\n"
     "}\n";
 
-/* the light map: soft ellipses added; then the city multiplied by it, plus what glows */
 static const char k_light_shader[] =
     "cbuffer C : register(b0) { float2 frame_size; float strength; float add; float2 origin; float2 pad; float4 sun; float4 ambient; };\n"
     "struct LI { float2 pos : POSITION; float2 uv : TEXCOORD0; float3 col : COLOR0; };\n"
@@ -175,42 +198,34 @@ static const char k_light_shader[] =
     "    o.uv = i.uv; o.col = i.col;\n"
     "    return o;\n"
     "}\n"
+    "Texture2D heights : register(t3);\n"
+    /* a lamp's light at a pixel, unless something between them stands over the line from the pixel to the lamp
+     * (its centre, 48 world units over what is there); the pixels nearest the lamp are its own */
     "float4 ps_light(LV i) : SV_Target {\n"
     "    float f = saturate(1 - dot(i.uv, i.uv));\n"
-    "    return float4(i.col * (f * f * strength), 0);\n"
+    "    int2 p = (int2)i.pos.xy;\n"
+    "    float4 h0 = heights.Load(int3(p, 0));\n"
+    "    float vis = 1;\n"
+    "    if (h0.a > 0.5) {\n"
+    "        float2 c = i.pos.xy - i.uv / float2(ddx(i.uv.x), ddy(i.uv.y));\n"
+    "        float hl = heights.Load(int3((int2)c, 0)).r + 48;\n"
+    "        [loop] for (int k = 1; k < 24; k++) {\n"
+    "            float t = k / 24.0;\n"
+    "            float4 hq = heights.Load(int3((int2)lerp(i.pos.xy, c, t), 0));\n"
+    "            if (t < 0.8 && hq.a > 0.5) vis = min(vis, 1 - saturate((hq.r - lerp(h0.r, hl, t) - 16) / 32));\n"
+    "        }\n"
+    "    }\n"
+    "    return float4(i.col * (f * f * strength * vis), 0);\n"
     "}\n"
     "Texture2D scene : register(t0);\n"
     "Texture2D emis : register(t1);\n"
     "Texture2D light : register(t2);\n"
-    "Texture2D heights : register(t3);\n"
-    /* the sun's shadow at a pixel: along the line towards the sun on the screen (sun.xy, a step), the ray
-     * rises sun.z world units a step; a pixel on the way that stands above it shades this one, the more the
-     * further it stands above (soft edges), the less the further away it is (the shadow fades from what casts
-     * it). sun.w: how dark, 0 none */
-    "#define STEPS 96\n"
-    "float shade(int2 p, float2 size) {\n"
-    "    float4 h0 = heights.Load(int3(p, 0));\n"
-    "    float occ = 0;\n"
-    "    if (sun.w <= 0 || h0.a < 0.5) return 0;\n"
-    "    [loop] for (int k = 1; k <= STEPS; k++) {\n"
-    "        float2 q = p + sun.xy * k;\n"
-    "        float4 hq;\n"
-    "        if (q.x < 0 || q.y < 0 || q.x >= size.x || q.y >= size.y) break;\n"
-    "        hq = heights.Load(int3(q, 0));\n"
-    "        if (hq.a > 0.5) {\n"
-    "            float over = hq.r - (h0.r + sun.z * k);\n"
-    "            occ = max(occ, saturate(over / 24) * (1 - 0.5 * k / STEPS));\n"
-    "        }\n"
-    "    }\n"
-    "    return occ * sun.w;\n"
-    "}\n"
     "float4 ps_comp(float4 pos : SV_Position) : SV_Target {\n"
     "    int3 p = int3(pos.xy - origin, 0);\n"
-    "    float2 size;\n"
     "    float4 c = scene.Load(p);\n"
-    "    heights.GetDimensions(size.x, size.y);\n"
-    /* the shadow takes the sun's part of the light (the ambient light), not the lamps' */
-    "    float3 l = light.Load(p).rgb - ambient.rgb * shade(p.xy, size);\n"
+    /* the shadow takes part of the sun's light (the ambient light; sun.w: how much, the time's strength), not
+     * the lamps': a lamp lights the ground in a shadow */
+    "    float3 l = light.Load(p).rgb - ambient.rgb * heights.Load(p).g * sun.w;\n"
     "    return float4(c.rgb * saturate(l + emis.Load(p).r) + c.rgb * add, c.a);\n"
     "}\n";
 
@@ -236,7 +251,7 @@ typedef struct LightVertex {
 
 typedef struct LightConsts {
     float frame_size[2], strength, add, origin[2], pad[2];
-    float sun[4];     /* the sun's shadows: a step towards the sun (window pixels), the rise a step, how dark */
+    float sun[4];     /* w: how strong the sun's shadows are (the time's strength; 0 none) */
     float ambient[4]; /* the ambient light (the sun's part, which a shadow takes) */
 } LightConsts;
 
@@ -885,7 +900,6 @@ static void draw_city(RECT dst, int fw, int fh)
         const HostCityLight *l = &g_city_lights[i];
         LightVertex c[4], *out;
         int k, *count, glows = (l->colour & HOST_LIGHT_GLOW) != 0;
-        if (!glows && time < 0) continue;
         out = glows ? gverts : lverts;
         count = glows ? &ngv : &nlv;
         for (k = 0; k < 4; k++) {
@@ -972,15 +986,7 @@ static void draw_city(RECT dst, int fw, int fh)
             lc.frame_size[1] = (float)fh;
             lc.strength = k_times[lit_time].strength;
             lc.add = k_times[lit_time].add;
-            {
-                /* the sun 63 degrees up from world -x: a frame pixel's step towards it on the screen, (-1, -(1/2 +
-                 * tan)) made a pixel long; the ray rises 8 tan / that length world units a step (8 a frame pixel up) */
-                float tn = 2.0f, len = sqrtf(1.0f + (0.5f + tn) * (0.5f + tn)), px = sx * zoom;
-                lc.sun[0] = -px / len;
-                lc.sun[1] = -px * (0.5f + tn) / len;
-                lc.sun[2] = 8.0f * tn / len;
-                lc.sun[3] = g_shadows ? 0.5f : 0.0f;
-            }
+            lc.sun[3] = g_shadows ? k_times[lit_time].strength : 0.0f; /* the shadows as strong as the time's light */
             memcpy(lc.ambient, ambient, sizeof lc.ambient);
             lc.origin[0] = (float)dst.left;
             lc.origin[1] = (float)dst.top;
@@ -1011,8 +1017,10 @@ static void draw_city(RECT dst, int fw, int fh)
                     ID3D11DeviceContext_VSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
                     ID3D11DeviceContext_PSSetShader(g_ctx, g_light_ps, NULL, 0);
                     ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
+                    ID3D11DeviceContext_PSSetShaderResources(g_ctx, 3, 1, &g_lit_srv[3]);
                     ID3D11DeviceContext_OMSetBlendState(g_ctx, g_add, NULL, 0xFFFFFFFFu);
                     ID3D11DeviceContext_Draw(g_ctx, (UINT)nlv, 0);
+                    ID3D11DeviceContext_PSSetShaderResources(g_ctx, 3, 1, &none[3]);
                 }
             }
             /* the city, lit, into the picture */

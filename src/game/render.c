@@ -191,6 +191,12 @@ static int g_cut = -1;   /* the tiles of this level and above are drawn almost s
 static int g_translucent; /* the tile being put is one of them */
 #define SEE_THROUGH_ALPHA 60 /* of 255, as FreeSynd's */
 static float g_quad_z;   /* the height of what is being put (HostCityQuad.z) */
+static int g_tile_shadow;   /* the tile being put is in the sun's shadow */
+static uint32_t g_tile_nb;  /* and its 4 neighbours (bits 1 x - 1, 2 x + 1, 4 y - 1, 8 y + 1; 16: a slope down from
+                             * the sun) */
+static int g_obj_shadow;    /* the thing being drawn stands in the sun's shadow */
+static uint32_t g_cols;     /* the map being drawn: its columns and size */
+static int g_mx, g_my, g_mz;
 static int g_solid;      /* the tile being put is solid: its face away from the sun is darker */
 
 #define HAT_INDEX 6  /* the hats' colour in the agents' sprites */
@@ -256,8 +262,9 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->z = g_quad_z;
     q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0) |
                         (image < IMAGE_SPRITES || image >= IMAGE_GROUND
-                             ? HOST_GLOW_TILE | (g_solid ? HOST_GLOW_SOLID : 0) : 0));
-    q->hat = hat; /* its top byte: the rows of the image with the hat */
+                             ? HOST_GLOW_TILE | (g_solid ? HOST_GLOW_SOLID : 0) | (g_tile_shadow ? HOST_GLOW_SHADOW : 0)
+                             : (g_obj_shadow ? HOST_GLOW_SHADOW : 0)));
+    q->hat = image < IMAGE_SPRITES || image >= IMAGE_GROUND ? g_tile_nb : hat; /* a sprite: its hat's rows, colour */
 }
 
 
@@ -1233,8 +1240,11 @@ static int static_lights(uint32_t a, int frame, float ax, float ay)
     return RENDER_GLOW_NONE;
 }
 
-/* ---- the tiles' types (COL01.DAT): which are solid (their face away from the sun is darker; the platform casts the
- * sun's shadows from the heights of what it draws) ---- */
+/* ---- the tiles' types (COL01.DAT) and the sun's shadows, as FreeSynd's: the sun at the top left of the screen (world
+ * -x), rising a level a cell; the top of a floor, road, slope or roof (nothing solid on it) is in shadow when a solid
+ * tile is on that line, up to SHADOW_LENGTH cells away; what stands on a shadowed cell is in it too.  A slope going down
+ * from the sun is a little darker; the faces of solid tiles away from the sun too ---- */
+#define SHADOW_LENGTH 8
 void render_set_tile_types(const uint8_t types[256])
 {
     memcpy(g_types, types, sizeof g_types);
@@ -1251,6 +1261,22 @@ static int type_at(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
 static int solid_type(int t)
 {
     return t != 0x00 && t != 0x0C && t != 0x10;
+}
+
+/* takes a shadow on its top: not empty, not a mesh, not a wall, nothing solid on it */
+static int receives_shadow(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
+{
+    int t = type_at(cols, mx, my, mz, x, y, z);
+    return t != 0x00 && t != 0x0C && t != 0x10 && t != 0x0A && !solid_type(type_at(cols, mx, my, mz, x, y, z + 1));
+}
+
+static int in_shadow(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
+{
+    int k;
+    if (!g_have_types || !receives_shadow(cols, mx, my, mz, x, y, z)) return 0;
+    for (k = 1; k <= SHADOW_LENGTH; k++)
+        if (solid_type(type_at(cols, mx, my, mz, x - k, y, z + k))) return 1;
+    return 0;
 }
 
 /* a tile drawn with its top left at fx, fy (unzoomed): its light */
@@ -1358,9 +1384,11 @@ static void draw_obj(const Target *t, const Obj *o)
     }
     g_obj_glow = o->glow;
     g_obj_z = (float)o->zw;
+    g_obj_shadow = t->gpu && in_shadow(g_cols, g_mx, g_my, g_mz, o->x >> 8, o->y >> 8, (o->zw >> 7) - 1 < 0 ? 0 : (o->zw >> 7) - 1);
     draw_frame(t, o->frame, fx + render_obj_dx, fy + render_obj_dy, ffx + (float)render_obj_dx, ffy + (float)render_obj_dy,
                hat);
     g_obj_glow = 0;
+    g_obj_shadow = 0;
 }
 
 void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1, uint64_t now_us)
@@ -1385,6 +1413,10 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     if (mx <= 0 || my <= 0 || mz <= 0 || mx > 256 || my > 256 || mz > 16) return;
     g_nquads = 0;
     g_nlights = 0;
+    g_cols = cols;
+    g_mx = mx;
+    g_my = my;
+    g_mz = mz;
     g_ndrawn = 0;
     if (t.gpu) {
         /* a new palette: the lamps are found again */
@@ -1483,6 +1515,15 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         float ffx, ffy;
                         project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
                         g_quad_z = (float)((tz + 1) * 128); /* the block's top */
+                        g_tile_shadow = t.gpu && in_shadow(cols, mx, my, mz, tx, ty, tz);
+                        g_tile_nb = 0;
+                        if (t.gpu) {
+                            static const int nb[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+                            int e;
+                            for (e = 0; e < 4; e++)
+                                if (in_shadow(cols, mx, my, mz, tx + nb[e][0], ty + nb[e][1], tz)) g_tile_nb |= 1u << e;
+                            if (g_have_types && type_at(cols, mx, my, mz, tx, ty, tz) == 0x04) g_tile_nb |= 16u;
+                        }
                         g_solid = t.gpu && g_have_types && solid_type(type_at(cols, mx, my, mz, tx, ty, tz));
                         g_translucent = g_cut >= 0 && tz >= g_cut;
                         if (ground_slot(tid) >= 0 && render_ground)
@@ -1492,6 +1533,8 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                             put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
                                 ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
                         g_solid = 0;
+                        g_tile_shadow = 0;
+                        g_tile_nb = 0;
                         g_translucent = 0;
                         if (t.gpu) tile_lights_at(tid, ffx + (float)render_tile_dx, ffy + (float)render_tile_dy);
                         if (g_ndrawn < NB_DRAWN) {
