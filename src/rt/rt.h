@@ -148,6 +148,12 @@ void mouse_fraction(int *fx, int *fy);
 /* the game's own screen is the part x0..x1 (fractions 0..65536 of the picture's width) of the picture: its mouse is
  * there (0, 65536: all of it) */
 void rt_mouse_window(int x0, int x1);
+/* x, a fraction of the game's own screen's width, as a fraction of the picture's */
+int rt_mouse_window_x(int fx);
+/* scripted input (script.c): the events of `events` ("ms:event,...") given to the game when due, ms from the
+ * start, by rt_script_poll */
+void rt_script_set(const char *events);
+void rt_script_poll(uint32_t ms);
 void mouse_take_motion(int *dx, int *dy);
 int mouse_used_swap(int used); /* sets whether the running program uses the mouse; returns the old value */
 int mouse_take_press(int button, int *count, int *x, int *y);

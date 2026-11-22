@@ -43,6 +43,7 @@
 
 #include "../../game/game.h"
 #include "../../rt/host.h"
+#include "../../rt/rt.h"
 #include "../../video/record.h"
 #include "win32_gpu.h"
 
@@ -342,6 +343,9 @@ static void audio_stop(void)
 /* ==== the game thread ==================================================================================== */
 int host_should_quit(void)
 {
+    static uint64_t start;
+    if (start == 0) start = host_time_us();
+    rt_script_poll((uint32_t)((host_time_us() - start) / 1000u));
     return g_quit != 0;
 }
 
@@ -1456,6 +1460,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
             i++;
         } else if (!wcscmp(a, L"--music-dir")) {
             _snwprintf(music_dir, sizeof music_dir / sizeof music_dir[0], L"%s", v);
+            i++;
+        } else if (!wcscmp(a, L"--input")) {
+            /* scripted input, as the headless program's (src/rt/script.c): a launch straight into a mission */
+            static char input_u8[4096];
+            to_utf8(v, input_u8, (int)sizeof input_u8);
+            rt_script_set(input_u8);
             i++;
         }
     }

@@ -375,6 +375,27 @@ def squad_route(ctx):
 
 
 @test()
+def route_stairs(ctx):
+    """Scandinavia (every mission open: TO THE TOP): agent 1 sent from the sunken yard on to the raised walkway (a
+    click there) walks the yard, up the stairs whose first step stands on floor, over and along the walkway: it gets
+    there"""
+    import struct
+    dump = os.path.join(ctx.dir, 'mem.bin')
+    inp = SKIP_INTRO + ['10000:move@29500;28800', '11000:click@29500;28800', '13000:click@35225;9830',
+                        '14500:click@8500;58500', '17500:click@8500;58700', '20500:click@8500;58700',
+                        '27000:move@18350;10923', '27500:click@18350;10923']
+    r = ctx.run('stairs', 70, start=SYN, extra=['--cheats', 'MINIGUN SQUAD:TO THE TOP', '--wide', '854',
+                                                 '--mem-dump', '69500:' + dump], inputs=inp)
+    check('route: agent 1, 10 points' in r.log, 'no route up the stairs (see stairs.log)')
+    check(os.path.exists(dump), 'no memory dump')
+    mem = open(dump, 'rb').read()
+    ped = 0x478110 - 0x400000   # agent 1
+    x, y, z = struct.unpack_from('<hhh', mem, ped + 4)
+    check(abs(x - 18940) < 160 and abs(y - 10628) < 160 and z == 384,
+          'agent 1 is at %d %d %d, not on the walkway at 18940 10628 384' % (x, y, z))
+
+
+@test()
 def mission_menu(ctx):
     """Escape in a mission opens its menu and the mission waits (nothing moves under it); Abort mission (down to
     the last item, Enter) ends the mission as Escape did: the debriefing"""

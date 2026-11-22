@@ -199,11 +199,11 @@ static void neighbours(int32_t id, int x, int y, int z, int gx, int gy, int gz)
             if ((dx == 0 && dy == 0) || nx < 0 || ny < 0 || nx >= g_mx || ny >= g_my) continue;
             /* not across a corner */
             if (dx != 0 && dy != 0 && (!standable(x + dx, y, z) || !standable(x, y + dy, z))) continue;
-            if (standable(nx, ny, z) && !is_slope(type_at(nx, ny, z))) {
-                relax(id, nx, ny, z, dx && dy ? 14 : 10, gx, gy, gz);
-            } else if (dx == 0 || dy == 0) {
+            if (standable(nx, ny, z) && !is_slope(type_at(nx, ny, z))) relax(id, nx, ny, z, dx && dy ? 14 : 10, gx, gy, gz);
+            if (dx == 0 || dy == 0) {
                 int sx, sy;
-                /* onto stairs going up from here (a level higher) or down (on this level, their low end here) */
+                /* onto stairs going up from here (a level higher; the tile under their first step may be floor) or
+                 * down (on this level, their low end here) */
                 if (is_slope(type_at(nx, ny, z + 1)) && standable(nx, ny, z + 1) && slope_up(nx, ny, z + 1, &sx, &sy) &&
                     sx == dx && sy == dy)
                     relax(id, nx, ny, z + 1, 14, gx, gy, gz);

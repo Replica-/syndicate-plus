@@ -2422,6 +2422,7 @@ static void route_order(int slot, uint32_t ped, int32_t tx, int32_t ty, int32_t 
                                  g_route[slot].pt, ROUTE_MAX);
     g_route[slot].best = 0x7FFFFFFF;
     g_route[slot].stuck = 0;
+    if (g_route[slot].n > 0) rt_log("route: agent %d, %d points", slot + 1, g_route[slot].n);
 }
 
 /* at each tick: each agent on a route sent on along it */

@@ -183,8 +183,10 @@ in `Screenshots`: with Direct3D, the picture as the window shows it (its size, l
 `dev\build.cmd [RelWithDebInfo|Release|Debug]` builds with Ninja into `build-dev\<config>`, without the game
 files built in: the programs find them in `_references\dos`.  `_references\dos` can be a junction to an
 installed copy (`mklink /J _references\dos <game folder>`).  VS Code has build tasks, a task for the tests and
-launch configurations (the launcher, Syndicate or American Revolt directly, and a headless run into a mission
-recorded as a video); `.vscode/`.  The tests run on that build with
+launch configurations (the launcher, Syndicate or American Revolt directly, straight into Scandinavia to try the
+squad's routes, and a headless run into a mission recorded as a video); `.vscode/`.  Both programs take scripted
+input, `--input "ms:event,..."` (keys, clicks at fractions of the picture, on a wide menu of the game's 320 x 200 in
+it: `src/rt/script.c`), which is how a launch goes through the menus.  The tests run on that build with
 `SYND_HEADLESS=build-dev\RelWithDebInfo\synd_headless.exe`.
 
 Started directly, the games need the sound card's arguments the launcher gives them, as in `SYND\SYND.INF`:

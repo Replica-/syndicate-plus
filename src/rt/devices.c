@@ -293,6 +293,12 @@ void rt_mouse_window(int x0, int x1)
     g_win_x1 = x1;
 }
 
+/* a fraction of the game's own screen's width as one of the picture's */
+int rt_mouse_window_x(int fx)
+{
+    return g_win_x0 + (int)((long long)fx * (g_win_x1 - g_win_x0) / 65536);
+}
+
 /* the mouse across the game's own screen (0..65535) */
 static int game_fx(void)
 {

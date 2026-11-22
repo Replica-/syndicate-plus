@@ -37,6 +37,7 @@ add_library(syncore STATIC
   src/rt/music.c
   src/rt/sha1.c
   src/rt/vfs.c
+  src/rt/script.c
   src/game/game.c
   src/game/hooks.c
   src/game/additions.c
