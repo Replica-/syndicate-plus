@@ -2,11 +2,14 @@
  *
  * The game walks an agent in a straight line towards where it was sent and stops at what is in the way: sent onto
  * a platform it walks to the point under it and stays there.  Here a route is found over the floors of the map
- * (A* on its tiles, the tile types of COL01.DAT): each step goes to a neighbouring tile on the same level, and
- * stairs (the slopes) join a level to the next.  The route is made of its turning points, which the agent is sent
- * to one after the other (additions.c); the game's own walking does the rest. */
+ * (A* on its tiles, the tile types of COL01.DAT): each step goes to a neighbouring tile on the same level, a step
+ * beside a wall costing more (a route keeps to the middle of open ground), and stairs (the slopes) join a level to
+ * the next.  The route is then pulled straight: its points are where a straight line from the last one would no
+ * longer stay clear of the walls (a band CLEARANCE wide either side of it on floor), and the stairs.  The agent is
+ * steered along it (additions.c); the game's own walking does the rest. */
 #include "path.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -211,26 +214,31 @@ static void neighbours(int32_t id, int x, int y, int z, int gx, int gy, int gz)
         }
 }
 
-/* a straight walk on one level from a to b (tile centres) crosses only floor; `clear`: and no tile beside a wall but
- * those a and b are (as the route found keeps away from them) */
-static int straight_walk(int ax, int ay, int bx, int by, int z, int clear)
+/* a person can walk on level z at the world point x, y (a floor, not stairs) */
+static int floor_at(int32_t x, int32_t y, int z)
 {
-    int n = abs(bx - ax) > abs(by - ay) ? abs(bx - ax) : abs(by - ay), i;
-    for (i = 0; i <= n * 2; i++) {
-        /* half-tile steps, the tiles either side of a diagonal */
-        int x = ax + (n ? (bx - ax) * i / (2 * n) : 0), y = ay + (n ? (by - ay) * i / (2 * n) : 0);
-        int x2 = ax + (n ? ((bx - ax) * i + n) / (2 * n) : 0), y2 = ay + (n ? ((by - ay) * i + n) / (2 * n) : 0);
-        if (!standable(x, y, z) || is_slope(type_at(x, y, z)) || !standable(x2, y2, z) || is_slope(type_at(x2, y2, z)))
-            return 0;
-        if (clear && blocked_round(x, y, z) > 0 && !(x == ax && y == ay) && !(x == bx && y == by)) return 0;
-        if (clear && blocked_round(x2, y2, z) > 0 && !(x2 == ax && y2 == ay) && !(x2 == bx && y2 == by)) return 0;
-    }
-    return 1;
+    int tx = x >> 8, ty = y >> 8;
+    return x >= 0 && y >= 0 && standable(tx, ty, z) && !is_slope(type_at(tx, ty, z));
 }
 
-static int straight(int ax, int ay, int bx, int by, int z)
+#define CLEARANCE 64 /* world units either side of a straight stretch that must be floor (a tile is 256) */
+#define LINE_STEP 32
+
+/* a straight walk on level z from a to b (world units) stays on floor, and clear of the walls but near its ends */
+static int clear_line(int32_t ax, int32_t ay, int32_t bx, int32_t by, int z)
 {
-    return straight_walk(ax, ay, bx, by, z, 0);
+    int32_t dx = bx - ax, dy = by - ay;
+    int32_t len = (int32_t)sqrt((double)dx * dx + (double)dy * dy), s;
+    double nx = len ? -(double)dy / len : 0, ny = len ? (double)dx / len : 0;
+    for (s = 0; s <= len; s += LINE_STEP) {
+        int32_t x = ax + (int32_t)((int64_t)dx * s / (len ? len : 1)), y = ay + (int32_t)((int64_t)dy * s / (len ? len : 1));
+        if (!floor_at(x, y, z)) return 0;
+        if (s >= CLEARANCE && len - s >= CLEARANCE &&
+            (!floor_at(x + (int32_t)(nx * CLEARANCE), y + (int32_t)(ny * CLEARANCE), z) ||
+             !floor_at(x - (int32_t)(nx * CLEARANCE), y - (int32_t)(ny * CLEARANCE), z)))
+            return 0;
+    }
+    return floor_at(bx, by, z);
 }
 
 /* a tile's level from a height (a person stands on the top of the tile under it) */
@@ -255,7 +263,7 @@ int path_route(int32_t sx, int32_t sy, int32_t sz, int32_t tx, int32_t ty, int32
 {
     int ax, ay, az, bx, by, bz, n = 0, found = 0;
     int32_t id, *route = NULL;
-    int nroute = 0, i, last;
+    int nroute = 0, i;
     if (!g_have_types || !render_map_size(&g_mx, &g_my, &g_mz) || g_mx * g_my * g_mz > MAX_NODES) return 0;
     ax = sx >> 8;
     ay = sy >> 8;
@@ -265,8 +273,8 @@ int path_route(int32_t sx, int32_t sy, int32_t sz, int32_t tx, int32_t ty, int32
     az = stand_level(ax, ay, sz);
     bz = stand_level(bx, by, tz);
     if (az < 0 || bz < 0) return 0;
-    /* the game's straight walk will do */
-    if (az == bz && straight(ax, ay, bx, by, az)) return 0;
+    /* the game's straight walk will do (clear of the walls) */
+    if (az == bz && clear_line(sx, sy, tx, ty, az)) return 0;
     if (g_nodes == NULL) {
         g_nodes = (Node *)malloc(sizeof *g_nodes * MAX_NODES);
         g_heap = (int32_t *)malloc(sizeof *g_heap * MAX_NODES);
@@ -296,36 +304,55 @@ int path_route(int32_t sx, int32_t sy, int32_t sz, int32_t tx, int32_t ty, int32
         neighbours(id, x, y, z, bx, by, bz);
     }
     if (!found) return 0;
-    /* the route back to front, then its turning points: a point is kept when the straight walk from the last kept
-     * one to the next would leave the floor or pass beside a wall, or the level changes */
     for (i = id; i >= 0; i = g_nodes[i].from) nroute++;
     route = (int32_t *)malloc(sizeof *route * (size_t)nroute);
     if (route == NULL) return 0;
     for (i = id, n = nroute; i >= 0; i = g_nodes[i].from) route[--n] = i;
-    n = 0;
-    last = 0;
-    for (i = 1; i < nroute && n < max; i++) {
-        int px = route[last] % g_mx, py = (route[last] / g_mx) % g_my, pz = route[last] / (g_mx * g_my);
-        int qx = route[i] % g_mx, qy = (route[i] / g_mx) % g_my, qz = route[i] / (g_mx * g_my);
-        int keep = i == nroute - 1;
-        if (!keep && (qz != pz || is_slope(type_at(qx, qy, qz)))) keep = 1;
-        if (!keep) {
-            int nx = route[i + 1] % g_mx, ny = (route[i + 1] / g_mx) % g_my, nz = route[i + 1] / (g_mx * g_my);
-            keep = nz != pz || !straight_walk(px, py, nx, ny, pz, 1);
+    /* pulled straight: from the last point, on along the route while a straight line to the next tile stays clear
+     * of the walls; the tile before stairs, the stairs and the tile after them are points the agent must reach */
+    {
+        int32_t lx = sx, ly = sy;
+        int lz = az, k;
+        n = 0;
+        for (k = 1; k < nroute && n < max - 1; k++) {
+            int qx = route[k] % g_mx, qy = (route[k] / g_mx) % g_my, qz = route[k] / (g_mx * g_my);
+            int px = route[k - 1] % g_mx, py = (route[k - 1] / g_mx) % g_my, pz = route[k - 1] / (g_mx * g_my);
+            int32_t cx = qx * 256 + 128, cy = qy * 256 + 128, bx0 = px * 256 + 128, by0 = py * 256 + 128;
+            int stairs = qz != pz || is_slope(type_at(qx, qy, qz)) || is_slope(type_at(px, py, pz));
+            int before = k > 1 && (bx0 != lx || by0 != ly); /* the tile before is not the last point */
+            if (!stairs && k < nroute - 1 && clear_line(lx, ly, cx, cy, lz)) continue;
+            if (!stairs && k == nroute - 1 && clear_line(lx, ly, tx, ty, lz)) break;
+            /* the last tile the line reached, then (stairs, or round a tight corner) this one */
+            if (before) {
+                out[n].x = bx0;
+                out[n].y = by0;
+                out[n].z = (pz + 1) * 128;
+                out[n].hard = stairs;
+                n++;
+                lx = bx0;
+                ly = by0;
+                lz = pz;
+                if (!stairs) {
+                    k--; /* this tile again from there */
+                    continue;
+                }
+            }
+            if (n >= max - 1) break;
+            out[n].x = cx;
+            out[n].y = cy;
+            out[n].z = (qz + 1) * 128;
+            out[n].hard = stairs;
+            n++;
+            lx = cx;
+            ly = cy;
+            lz = qz;
         }
-        if (!keep) continue;
-        out[n].x = qx * 256 + 128;
-        out[n].y = qy * 256 + 128;
-        out[n].z = (qz + 1) * 128;
-        n++;
-        last = i;
     }
     free(route);
     /* the last point is where the player sent the agent */
-    if (n > 0) {
-        out[n - 1].x = tx;
-        out[n - 1].y = ty;
-        out[n - 1].z = tz;
-    }
-    return n;
+    out[n].x = tx;
+    out[n].y = ty;
+    out[n].z = tz;
+    out[n].hard = 1;
+    return n + 1;
 }

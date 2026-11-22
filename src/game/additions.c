@@ -2320,16 +2320,20 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
 }
 
 /* a new move order of an agent of the squad: the marker goes there */
-/* ---- routes: a move order the game's straight walk cannot do (another level, a wall between) is walked as a
- * route found over the map's floors (path.c), the agent sent to each of its turning points in turn ---- */
+/* ---- routes: a move order the game's straight walk would not do well (another level, a wall between, or close to
+ * one on the way) is walked as a route found over the map's floors (path.c).  The agent is steered along it: at each
+ * tick sent to a point ROUTE_AHEAD further on along the route than it is (round corners in a curve, never back),
+ * but not past stairs before it reaches them ---- */
 #define ROUTE_MAX 64
-#define ROUTE_NEAR 96   /* this near a turning point (world units across), the agent goes on to the next */
-#define ROUTE_STUCK 40   /* ticks without coming nearer to a turning point: a new route from there ... */
-#define ROUTE_RETRIES 2  /* ... this many times, then the player's order as the game had it */
+#define ROUTE_AHEAD 384  /* world units ahead along the route (a tile is 256) */
+#define ROUTE_NEAR 96    /* this near a point to be reached, the agent goes on past it */
+#define ROUTE_STUCK 30   /* ticks without getting on along the route: a new route from there ... */
+#define ROUTE_RETRIES 3  /* ... this many times, then the player's order as the game had it */
 static struct {
     PathPoint pt[ROUTE_MAX];
-    int n, i;
-    int32_t best;   /* the nearest the agent came to its turning point (squared), and when */
+    int n, i;       /* the points, the one being walked to */
+    int32_t sx, sy; /* where it started */
+    int32_t best;   /* the least of the route left so far */
     int stuck;
     int retries;    /* the new routes it was given on the way */
 } g_route[4];
@@ -2394,80 +2398,104 @@ static void load_tile_types(void)
 }
 
 /* a new order of the player's for the agent in `slot`, to tx, ty, tz: walked as a route if it needs one */
+static double dist(int32_t ax, int32_t ay, int32_t bx, int32_t by)
+{
+    return sqrt((double)(bx - ax) * (bx - ax) + (double)(by - ay) * (by - ay));
+}
+
+static void send_to(int slot, uint32_t ped, int32_t x, int32_t y, int32_t z)
+{
+    WR16(ped + PED_TARGET, (uint16_t)x);
+    WR16(ped + PED_TARGET + 2u, (uint16_t)y);
+    WR16(ped + PED_TARGET + 4u, (uint16_t)z);
+    g_last_target[slot][0] = (uint16_t)x;
+    g_last_target[slot][1] = (uint16_t)y;
+}
+
 static void route_order(int slot, uint32_t ped, int32_t tx, int32_t ty, int32_t tz)
 {
     g_route[slot].n = g_route[slot].i = 0;
     if (!g_types_loaded) load_tile_types();
-    g_route[slot].n = path_route((int16_t)RD16(ped + PED_X), (int16_t)RD16(ped + PED_Y), (int16_t)RD16(ped + PED_Z), tx, ty, tz,
+    g_route[slot].sx = (int16_t)RD16(ped + PED_X);
+    g_route[slot].sy = (int16_t)RD16(ped + PED_Y);
+    g_route[slot].n = path_route(g_route[slot].sx, g_route[slot].sy, (int16_t)RD16(ped + PED_Z), tx, ty, tz,
                                  g_route[slot].pt, ROUTE_MAX);
     g_route[slot].best = 0x7FFFFFFF;
     g_route[slot].stuck = 0;
-    if (g_route[slot].n > 1) {
-        /* the first turning point (the agent keeps walking: only where to changes) */
-        WR16(ped + PED_TARGET, (uint16_t)g_route[slot].pt[0].x);
-        WR16(ped + PED_TARGET + 2u, (uint16_t)g_route[slot].pt[0].y);
-        WR16(ped + PED_TARGET + 4u, (uint16_t)g_route[slot].pt[0].z);
-    } else {
-        g_route[slot].n = 0;
-    }
 }
 
-/* at each tick: an agent near its turning point goes on to the next */
+/* at each tick: each agent on a route sent on along it */
 static void follow_routes(uint32_t company)
 {
     int slot;
     for (slot = 0; slot < 4; slot++) {
         uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
-        const PathPoint *p;
-        int32_t dx, dy;
-        if (g_route[slot].n == 0) continue;
-        p = &g_route[slot].pt[g_route[slot].i];
-        if (!PED_ON_MAP(ped) || (int16_t)RD16(ped + PED_TARGET) != (int16_t)p->x ||
-            (int16_t)RD16(ped + PED_TARGET + 2u) != (int16_t)p->y) {
+        int32_t x = (int16_t)RD16(ped + PED_X), y = (int16_t)RD16(ped + PED_Y), ax, ay, left;
+        int n = g_route[slot].n, k;
+        const PathPoint *pt = g_route[slot].pt;
+        double along, d;
+        if (n == 0) continue;
+        if (!PED_ON_MAP(ped) || RD16(ped + PED_TARGET) != g_last_target[slot][0] ||
+            RD16(ped + PED_TARGET + 2u) != g_last_target[slot][1]) {
             g_route[slot].n = 0; /* another order, or gone */
             continue;
         }
-        dx = (int16_t)RD16(ped + PED_X) - p->x;
-        dy = (int16_t)RD16(ped + PED_Y) - p->y;
-        /* stuck on the way: the order as the player gave it (the game's own walk) */
-        if (dx * dx + dy * dy < g_route[slot].best) {
-            g_route[slot].best = dx * dx + dy * dy;
+        /* on past the points it is beyond: near them, or (not to be reached) past them along the route */
+        for (;;) {
+            k = g_route[slot].i;
+            if (k >= n - 1) break;
+            ax = k == 0 ? g_route[slot].sx : pt[k - 1].x;
+            ay = k == 0 ? g_route[slot].sy : pt[k - 1].y;
+            d = dist(ax, ay, pt[k].x, pt[k].y);
+            if (dist(x, y, pt[k].x, pt[k].y) < ROUTE_NEAR ||
+                (!pt[k].hard && d > 0 && ((x - ax) * (double)(pt[k].x - ax) + (y - ay) * (double)(pt[k].y - ay)) / d >= d))
+                g_route[slot].i++;
+            else
+                break;
+        }
+        k = g_route[slot].i;
+        /* the route left: to the point being walked to, then from point to point */
+        along = dist(x, y, pt[k].x, pt[k].y);
+        for (left = (int32_t)along; k + 1 < n; k++) left += (int32_t)dist(pt[k].x, pt[k].y, pt[k + 1].x, pt[k + 1].y);
+        if (left < g_route[slot].best - 8) {
+            g_route[slot].best = left;
             g_route[slot].stuck = 0;
         } else if (++g_route[slot].stuck > ROUTE_STUCK) {
-            PathPoint goal = g_route[slot].pt[g_route[slot].n - 1];
+            PathPoint goal = pt[n - 1];
             int retries = g_route[slot].retries;
             if (retries < ROUTE_RETRIES) {
                 route_order(slot, ped, goal.x, goal.y, goal.z);
                 g_route[slot].retries = retries + 1;
-                if (g_route[slot].n > 0) {
-                    g_last_target[slot][0] = RD16(ped + PED_TARGET);
-                    g_last_target[slot][1] = RD16(ped + PED_TARGET + 2u);
-                    continue;
-                }
-                g_route[slot].pt[0] = goal;
-                g_route[slot].n = 1;
+                if (g_route[slot].n > 0) continue;
             }
-            p = &g_route[slot].pt[g_route[slot].n - 1];
-            WR16(ped + PED_TARGET, (uint16_t)p->x);
-            WR16(ped + PED_TARGET + 2u, (uint16_t)p->y);
-            WR16(ped + PED_TARGET + 4u, (uint16_t)p->z);
-            g_last_target[slot][0] = (uint16_t)p->x;
-            g_last_target[slot][1] = (uint16_t)p->y;
+            /* the player's order as the game had it */
             g_route[slot].n = 0;
+            send_to(slot, ped, goal.x, goal.y, goal.z);
             continue;
         }
-        if (dx * dx + dy * dy > ROUTE_NEAR * ROUTE_NEAR || ++g_route[slot].i >= g_route[slot].n) {
-            if (g_route[slot].i >= g_route[slot].n) g_route[slot].n = 0;
-            continue;
+        /* ROUTE_AHEAD on from where it is along the route, not past a point to be reached */
+        k = g_route[slot].i;
+        {
+            int32_t px = x, py = y;
+            double ahead = ROUTE_AHEAD;
+            for (;;) {
+                double seg = dist(px, py, pt[k].x, pt[k].y);
+                if (seg >= ahead || pt[k].hard || k == n - 1) {
+                    double f = seg > ahead ? ahead / seg : 1.0;
+                    send_to(slot, ped, px + (int32_t)((pt[k].x - px) * f), py + (int32_t)((pt[k].y - py) * f), pt[k].z);
+                    break;
+                }
+                ahead -= seg;
+                px = pt[k].x;
+                py = pt[k].y;
+                k++;
+            }
         }
-        p = &g_route[slot].pt[g_route[slot].i];
-        g_route[slot].best = 0x7FFFFFFF;
-        g_route[slot].stuck = 0;
-        WR16(ped + PED_TARGET, (uint16_t)p->x);
-        WR16(ped + PED_TARGET + 2u, (uint16_t)p->y);
-        WR16(ped + PED_TARGET + 4u, (uint16_t)p->z);
-        g_last_target[slot][0] = (uint16_t)p->x;
-        g_last_target[slot][1] = (uint16_t)p->y;
+        if (g_route[slot].i == n - 1 && dist(x, y, pt[n - 1].x, pt[n - 1].y) < ROUTE_AHEAD) {
+            /* the end in sight: the game walks it there */
+            send_to(slot, ped, pt[n - 1].x, pt[n - 1].y, pt[n - 1].z);
+            g_route[slot].n = 0;
+        }
     }
 }
 
