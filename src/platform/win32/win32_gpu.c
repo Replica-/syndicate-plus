@@ -157,7 +157,7 @@ static const char k_city_shader[] =
     "    int2 q = (int2)b;\n"
     "    float4 c = lerp(lerp(texel(q, i), texel(q + int2(1, 0), i), f.x),\n"
     "                    lerp(texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f.x), f.y);\n"
-    "    c.rgb *= sun(i) * face(i);\n"
+    "    c.rgb *= lerp(sun(i) * face(i), 1, glowing(c, i.glow).r / max(c.a, 1e-4));\n" /* light is not shaded */
     "    if (i.glow & 128) c *= 60.0 / 255.0;\n" /* drawn see-through (B held) */
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
     "}\n"
@@ -172,7 +172,7 @@ static const char k_city_shader[] =
     "    float4 c00 = texel(q, i), c10 = texel(q + int2(1, 0), i), c01 = texel(q + int2(0, 1), i);\n"
     "    float4 c11 = texel(q + int2(1, 1), i);\n"
     "    o.c = lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);\n"
-    "    o.c.rgb *= sun(i) * face(i);\n"
+    "    o.c.rgb *= lerp(sun(i) * face(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light: not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x),\n"
     "               lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
