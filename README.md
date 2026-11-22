@@ -156,6 +156,15 @@ walls either side.  The agent is steered along it, sent at each tick to a point 
 stops getting on gets a new route from where it is, three times, then the order as the game had it.  Only the
 squad's orders: the other people and the enemies' AI are untouched.
 
+A car the squad drives goes the same way (with squad routes on): an order to an agent in it drives it over the
+roads to the lane nearest the point clicked, the side of the road clicked, facing that lane's traffic.  The route
+keeps to the lanes' ways (traffic keeps right; never against a lane, never backing up), turns at junctions and
+round the loops at the roads' ends, and turns round across the middle line only where there is no better way.  The
+car is steered along its lane's line, slowing into sharp turns and to a stop at the end; a green marker shows where
+it will stop until it gets there, and the numbers of the agents in it are drawn over it.  The game's own driving
+(which keeps to the lane a car is in, driving on away from a point behind it) stays for every other car, and for
+the squad's when no lane is near the point clicked.
+
 ### The scanner
 
 The scanner (the map at the bottom left of a mission) shows more of the city around the leader: 6 pixels a tile
@@ -234,7 +243,7 @@ They need the game files in `_references/dos`.
 |------|---------------|
 | `tools/` | `find_equiv.py` (a function of one program in the others, for the hooks), `le.py` (LE/LX loader), `discover.py` (code discovery), `recomp.py` (x86 to C translator), `gen_all.py` (writes `gen/`), `pack_game.py` (the built-in game files), icon and notarization helpers |
 | `src/rt/` | the portable runtime: CPU state, DOS/DPMI/BIOS, VGA, timer, keyboard, mouse, Sound Blaster and OPL2 |
-| `src/game/` | which recompiled DOS programs make up the game and how it starts; the hooks on the game's functions (`hooks.c`) and what they add (`additions.c`); the city drawn (`render.c`), the squad's routes (`path.c`), the game's packed data files read (`rnc.c`) |
+| `src/game/` | which recompiled DOS programs make up the game and how it starts; the hooks on the game's functions (`hooks.c`) and what they add (`additions.c`); the city drawn (`render.c`), the squad's routes (`path.c`) and its cars' (`drive.c`), the game's packed data files read (`rnc.c`) |
 | `src/video/` | the video recorder and screenshots |
 | `src/platform/` | the front ends: `win32/`, `macos/`, `posix/` (shared POSIX services), `headless/` (tests) |
 | `src/third_party/` | dr_mp3, dr_flac, dr_wav, stb_vorbis and stb_image_write (public domain / MIT-0) |

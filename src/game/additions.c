@@ -53,6 +53,7 @@
 #include "hooks.h"
 #include "menu_backdrop.h"
 #include "menu_sides.h"
+#include "drive.h"
 #include "path.h"
 #include "rnc.h"
 #include "render.h"
@@ -95,33 +96,46 @@ typedef struct GameAddrs {
     uint32_t logo_local;   /* there: the logo it edits, from the stack pointer */
     uint32_t colour_local; /* and the colour */
     int ar;                /* American Revolt: its pointers are further apart */
+    /* cars */
+    uint32_t drive_car;    /* drive_car(driver, car): a car driven on, one tick (its driver's target, the roads) */
+    uint32_t set_place;    /* set_place(thing, x, y, z): a thing moved (and put in the list of its new tile) */
+    uint32_t driver_state; /* driver_state(driver): the driver's state from what it does (drive_car calls it where
+                            * the car stops) */
+    uint32_t headings;     /* (16 bits x 256, then as many for y) a heading's step in x per 256 of speed */
+    uint32_t car_place;    /* (16 bits x, y, z) where drive_car put the car (its driver is put there after it) */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
     {GAME_SYN, 0x427f80u, 0x417e00u, 0x428420u, 0x44b970u,
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
      0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u,
-     0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
+     0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
+     0x427110u, 0x419530u, 0x420250u, 0x44ab60u, 0x450b28u},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu,
-     0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
+     0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
+     0x427030u, 0x419490u, 0x420190u, 0x448358u, 0x44e320u},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u,
-     0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0},
+     0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
+     0x427030u, 0x419490u, 0x420190u, 0x4483bcu, 0x44e384u},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
      0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu,
-     0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
+     0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
+     0x428690u, 0x41a550u, 0x4217c0u, 0x45faacu, 0x463c12u},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu,
-     0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
+     0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
+     0x428610u, 0x41a4f0u, 0x421740u, 0x45d19cu, 0x461302u},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u,
-     0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1},
+     0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
+     0x428610u, 0x41a4f0u, 0x421740u, 0x45d204u, 0x46136au},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -1696,6 +1710,9 @@ static uint32_t hat_colour(int ped)
 #define PED_SHOWN_BIT 4u
 #define PED_GONE 0xbu
 #define LABEL_DY (-16 + GAME_TOP - 56)
+#define CAR_LABEL_DY (-10 + GAME_TOP - 56) /* over a car (its middle, where the city has it) */
+#define CAR_LABEL_GAP 11                   /* side by side */
+static int car_label(uint32_t ped, int slot, int *id, int *dx);
 
 static int g_cut_level = -1;
 #define FLOOR_OUTLINE 0x5AFF5Au
@@ -1751,14 +1768,22 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
      * from line 40 of the frame); over the side panel and the bars the game's own picture shows it */
     draw_pointer(rgb, pal);
     /* the numbers over the agents of the squad: the frames the game shows, over each agent where the smooth city
-     * has it */
+     * has it; over the car of those in one (the game shows none), side by side */
     company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
     for (slot = 0; slot < 4; slot++) {
+        static int last_frame[4];
         uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
-        int frame = RD16(g_addrs->label_frames + 2u * (uint32_t)slot);
+        int frame = RD16(g_addrs->label_frames + 2u * (uint32_t)slot), id, dx;
+        if (frame != 0) last_frame[slot] = frame;
+        if (car_label(ped, slot, &id, &dx)) {
+            if (last_frame[slot] != 0)
+                render_ped_frame(rgb, g_cw, 480, pal, last_frame[slot], id, dx, CAR_LABEL_DY, VIEW_LEFT, VIEW_TOP, g_cw,
+                                 VIEW_BOTTOM);
+            continue;
+        }
         if (!(M[ped + PED_SHOWN] & PED_SHOWN_BIT) || (M[ped + PED_GONE] & 1u) || frame == 0) continue;
-        render_ped_frame(rgb, g_cw, 480, pal, frame, (int)M[company + COMPANY_SQUAD] + slot, LABEL_DY, VIEW_LEFT, VIEW_TOP,
-                         g_cw, VIEW_BOTTOM);
+        render_ped_frame(rgb, g_cw, 480, pal, frame, (int)M[company + COMPANY_SQUAD] + slot, 0, LABEL_DY, VIEW_LEFT,
+                         VIEW_TOP, g_cw, VIEW_BOTTOM);
     }
 }
 
@@ -2229,6 +2254,7 @@ static void mission_menu(uint32_t *rgb, int w)
 }
 
 #define MARKER_COLOUR 0x5aff5au
+static void draw_drive_ends(uint32_t *rgb, int w);
 
 
 /* the side panel of a mission in true colour: the agents in their boxes wear the colour chosen. The game draws their
@@ -2346,6 +2372,7 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     }
     solid_selected_boxes(index, palette, rgb, w);
     draw_scanner_extras(rgb, w);
+    draw_drive_ends(rgb, w);
     if (g_marker_us == 0 || host_time_us() - g_marker_us >= MARKER_US) {
         g_marker_us = 0;
         if (g_menu) {
@@ -2552,15 +2579,290 @@ static void follow_routes(uint32_t company)
         follow_route(slot, g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE);
 }
 
+/* ---- the squad's cars: an order to an agent in a car (its driver or one with it) drives the car on a route over
+ * the lanes (drive.c), to the lane nearest the point clicked.  While it does, the game's driving of that car
+ * (drive_car) is done here instead: steered along the route (on the lanes' lines, round its corners), faster on
+ * the straight, slower into turns and to a stop at its end.  The cars of everyone else (and the squad's cars
+ * without such a route) are left to the game ---- */
+#define PED_VEHICLE 0x2cu    /* (16 bits) the car it is in (the level data's things numbered from peds - 2) */
+#define PED_SPEED 0x54u      /* a driver's: (8 bits) its car's speed; +0x55 its top speed */
+#define PED_LAST_PLACE 0x34u /* (16 bits x, y) a driver's: where its car was put last */
+#define IN_CAR 5u            /* PED_LOCATION in a car */
+#define CARS_OFFSET 0x5c00u  /* the cars in the level data: after the people */
+#define CAR_SIZE 0x2au
+#define CAR_HEADING 0x1au    /* (8 bits) 0 +y, 64 +x, 128 -y, 192 -x */
+#define CAR_DRIVER 0x1cu     /* (16 bits) its driver, numbered as PED_VEHICLE */
+#define NB_CARS 64
+#define CAR_ROUTE_MAX 96
+#define CAR_LOOK 192    /* it steers to this far ahead along the route (and as far again as it goes in a tick) */
+#define CAR_TURN 14     /* (of 256) the most it turns in a tick */
+#define CAR_ACCEL 4     /* speed gained in a tick (the game's) */
+#define CAR_BRAKE 10    /* lost */
+#define CAR_PLAN_BRAKE 8 /* (a little less, braking in time) */
+#define CAR_CORNER 34   /* the speed it turns sharply at */
+#define CAR_BRAKE_AHEAD 1200 /* the turns this far ahead along the route slow it down */
+#define CAR_CREEP 10    /* it does not go slower than this until it is there */
+#define CAR_THERE 24    /* this near the end of the route: there */
+#define THING(off) (g_addrs->peds - 2u + (uint32_t)(off))
+#define IS_IN_CAR(p) ((M[(p) + PED_LOCATION] & ~8u) == IN_CAR)
+static struct {
+    PathPoint pt[CAR_ROUTE_MAX];
+    int n, i;
+    int heading;      /* its exact heading (the game keeps the car's to the four ways its pictures show) */
+    uint32_t ordered; /* the tick of its order (several agents in it are given the same) */
+} g_drive[NB_CARS];
+static uint32_t g_order_tick;
+
+static uint32_t car_of(uint32_t ped)
+{
+    return THING(RD16(ped + PED_VEHICLE));
+}
+
+static int car_index(uint32_t car)
+{
+    uint32_t base = g_addrs->peds + CARS_OFFSET;
+    if (car < base || (car - base) % CAR_SIZE != 0 || (car - base) / CAR_SIZE >= NB_CARS) return -1;
+    return (int)((car - base) / CAR_SIZE);
+}
+
+/* the slot in the player's squad of the agent `ped`, -1 if it is not one */
+static int squad_slot(uint32_t ped)
+{
+    uint32_t company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+    uint32_t first = g_addrs->peds + M[company + COMPANY_SQUAD] * PED_SIZE;
+    if (ped < first || (ped - first) % PED_SIZE != 0 || (ped - first) / PED_SIZE >= 4) return -1;
+    return (int)((ped - first) / PED_SIZE);
+}
+
+static double dist(int32_t ax, int32_t ay, int32_t bx, int32_t by);
+
+/* the driver of `car` sent to x, y (the route's end): the game's own driving heads there too */
+static void set_driver_target(uint32_t driver, int32_t x, int32_t y, int32_t z)
+{
+    int slot = squad_slot(driver);
+    WR16(driver + PED_TARGET, (uint16_t)x);
+    WR16(driver + PED_TARGET + 2u, (uint16_t)y);
+    WR16(driver + PED_TARGET + 4u, (uint16_t)z);
+    if (slot >= 0) {
+        g_last_target[slot][0] = (uint16_t)x;
+        g_last_target[slot][1] = (uint16_t)y;
+    }
+}
+
+/* an order to the agent `ped`, in a car, to tx, ty: a route for the car when the squad drives it */
+static void car_order(uint32_t ped, int32_t tx, int32_t ty)
+{
+    uint32_t car = car_of(ped), driver;
+    int ci = car_index(car), n;
+    int32_t x, y, z;
+    if (ci < 0) return;
+    driver = THING(RD16(car + CAR_DRIVER));
+    if (squad_slot(driver) < 0 || !IS_IN_CAR(driver)) return; /* not the squad's to drive */
+    if (g_drive[ci].ordered == g_order_tick && g_drive[ci].n > 0) return;
+    x = (int16_t)RD16(car + PED_X);
+    y = (int16_t)RD16(car + PED_Y);
+    z = (int16_t)RD16(car + PED_Z);
+    /* the point clicked on the level of the car (the game's target for each agent is beside it, the squad spread) */
+    if (g_view_on) render_unproject(g_click_sx, g_click_sy, z, &tx, &ty);
+    if (!g_types_loaded) load_tile_types();
+    if (g_drive[ci].n == 0) g_drive[ci].heading = M[car + CAR_HEADING]; /* (on a route: the exact one) */
+    n = drive_route(x, y, z, g_drive[ci].heading, tx, ty, g_drive[ci].pt, CAR_ROUTE_MAX);
+    g_drive[ci].n = n;
+    g_drive[ci].i = 0;
+    g_drive[ci].ordered = g_order_tick;
+    if (n == 0) return; /* not on a road, or no lane there: the game's driving */
+    rt_log("drive: car %d, %d points, to %d %d", ci, n, g_drive[ci].pt[n - 1].x, g_drive[ci].pt[n - 1].y);
+    set_driver_target(driver, g_drive[ci].pt[n - 1].x, g_drive[ci].pt[n - 1].y, z);
+    g_marker[0] = g_drive[ci].pt[n - 1].x;
+    g_marker[1] = g_drive[ci].pt[n - 1].y;
+    g_marker[2] = z;
+    g_marker_us = host_time_us();
+}
+
+/* the car `ci` driven on along its route for a tick, as the game's driving does it (the speed in its driver, the
+ * place set by set_place) */
+static void drive_on(int ci, uint32_t driver, uint32_t car)
+{
+    const PathPoint *pt = g_drive[ci].pt;
+    int n = g_drive[ci].n, k, h = g_drive[ci].heading, s = M[driver + PED_SPEED], top = M[driver + PED_SPEED + 1u];
+    int32_t x = (int16_t)RD16(car + PED_X), y = (int16_t)RD16(car + PED_Y), z = (int16_t)RD16(car + PED_Z);
+    int32_t px, py, nx, ny;
+    double left, ahead;
+    int want, hd, turn;
+    uint32_t args[4];
+    if (top == 0) top = 100;
+    /* on past the points it is beyond (near, or past them along the route) */
+    for (;;) {
+        int32_t ax, ay;
+        double d;
+        k = g_drive[ci].i;
+        if (k >= n - 1) break;
+        ax = k == 0 ? x : pt[k - 1].x;
+        ay = k == 0 ? y : pt[k - 1].y;
+        d = dist(ax, ay, pt[k].x, pt[k].y);
+        if (dist(x, y, pt[k].x, pt[k].y) < 48 + s ||
+            (k > 0 && d > 0 && ((x - ax) * (double)(pt[k].x - ax) + (y - ay) * (double)(pt[k].y - ay)) / d >= d))
+            g_drive[ci].i++;
+        else
+            break;
+    }
+    k = g_drive[ci].i;
+    left = dist(x, y, pt[k].x, pt[k].y);
+    for (; k + 1 < n; k++) left += dist(pt[k].x, pt[k].y, pt[k + 1].x, pt[k + 1].y);
+    if (left <= (s > CAR_THERE ? s : CAR_THERE)) {
+        /* there */
+        nx = pt[n - 1].x;
+        ny = pt[n - 1].y;
+        s = 0;
+        g_drive[ci].n = 0;
+    } else {
+        /* the point it steers to: CAR_LOOK on along the route */
+        k = g_drive[ci].i;
+        px = x;
+        py = y;
+        ahead = CAR_LOOK + s;
+        for (;;) {
+            double seg = dist(px, py, pt[k].x, pt[k].y);
+            if (seg >= ahead || k == n - 1) {
+                double f = seg > ahead ? ahead / seg : 1.0;
+                px += (int32_t)((pt[k].x - px) * f);
+                py += (int32_t)((pt[k].y - py) * f);
+                break;
+            }
+            ahead -= seg;
+            px = pt[k].x;
+            py = pt[k].y;
+            k++;
+        }
+        hd = (int)floor(atan2((double)(px - x), (double)(py - y)) * 128.0 / 3.14159265358979 + 0.5) & 255;
+        turn = (int)(int8_t)(uint8_t)(hd - h);
+        if (turn > CAR_TURN) turn = CAR_TURN;
+        if (turn < -CAR_TURN) turn = -CAR_TURN;
+        h = (h + turn) & 255;
+        /* fast on the straight, slow into a sharp turn and to a stop at the end */
+        want = top;
+        if (abs((int)(int8_t)(uint8_t)(hd - h)) > 24 && want > CAR_CORNER) want = CAR_CORNER;
+        {
+            /* down to CAR_CORNER by the sharp turns ahead */
+            double along = dist(x, y, pt[g_drive[ci].i].x, pt[g_drive[ci].i].y);
+            for (k = g_drive[ci].i; k + 1 < n && along < CAR_BRAKE_AHEAD; k++) {
+                int32_t bx = k > 0 ? pt[k - 1].x : x, by = k > 0 ? pt[k - 1].y : y;
+                double a = atan2((double)(pt[k + 1].x - pt[k].x), (double)(pt[k + 1].y - pt[k].y)) -
+                           atan2((double)(pt[k].x - bx), (double)(pt[k].y - by));
+                while (a > 3.14159265358979) a -= 2 * 3.14159265358979;
+                while (a < -3.14159265358979) a += 2 * 3.14159265358979;
+                if (fabs(a) > 0.6) {
+                    int v = (int)sqrt((double)CAR_CORNER * CAR_CORNER + 2.0 * CAR_PLAN_BRAKE * along);
+                    if (want > v) want = v;
+                }
+                along += dist(pt[k].x, pt[k].y, pt[k + 1].x, pt[k + 1].y);
+            }
+        }
+        if (want > (int)sqrt(2.0 * CAR_PLAN_BRAKE * (left - CAR_THERE))) want = (int)sqrt(2.0 * CAR_PLAN_BRAKE * (left - CAR_THERE));
+        if (want < CAR_CREEP) want = CAR_CREEP;
+        s = s < want ? (s + CAR_ACCEL > want ? want : s + CAR_ACCEL) : (s - CAR_BRAKE < want ? want : s - CAR_BRAKE);
+        nx = x + ((s * (int16_t)RD16(g_addrs->headings + 2u * (uint32_t)h)) >> 8);
+        ny = y + ((s * (int16_t)RD16(g_addrs->headings + 0x200u + 2u * (uint32_t)h)) >> 8);
+    }
+    g_drive[ci].heading = h;
+    M[car + CAR_HEADING] = (uint8_t)h;
+    M[driver + PED_SPEED] = (uint8_t)s;
+    WR16(driver + PED_LAST_PLACE, (uint16_t)nx);
+    WR16(driver + PED_LAST_PLACE + 2u, (uint16_t)ny);
+    if (g_drive[ci].n == 0) {
+        /* stopped: the driver no longer driving (as the game's driving does it there) */
+        args[0] = driver;
+        guest_call(g_addrs->driver_state, args, 1);
+    }
+    args[0] = car;
+    args[1] = (uint32_t)nx;
+    args[2] = (uint32_t)ny;
+    args[3] = (uint32_t)z;
+    guest_call(g_addrs->set_place, args, 4);
+    WR16(g_addrs->car_place, (uint16_t)nx);
+    WR16(g_addrs->car_place + 2u, (uint16_t)ny);
+    WR16(g_addrs->car_place + 4u, (uint16_t)z);
+    if (g_drive[ci].n == 0) set_driver_target(driver, nx, ny, z); /* stopped: the game's driving stays */
+}
+
+/* the game drives a car on for a tick: done here when the squad drives it on a route */
+static int on_drive_car(uint32_t addr)
+{
+    uint32_t driver = RD32(R.esp + 4u), car = RD32(R.esp + 8u);
+    int ci = car_index(car), n;
+    (void)addr;
+    if (ci < 0 || (n = g_drive[ci].n) == 0) return 0;
+    if (squad_slot(driver) < 0 || THING(RD16(car + CAR_DRIVER)) != driver ||
+        RD16(driver + PED_TARGET) != (uint16_t)g_drive[ci].pt[n - 1].x ||
+        RD16(driver + PED_TARGET + 2u) != (uint16_t)g_drive[ci].pt[n - 1].y) {
+        g_drive[ci].n = 0; /* another driver, or another order */
+        return 0;
+    }
+    drive_on(ci, driver, car);
+    R.esp += 4u; /* the function's ret */
+    return 1;
+}
+
+/* the agent `ped` (in `slot` of the squad) in a car: its number goes over the car (the renderer's id for it, how
+ * far to the side among the squad in it); 0 when it is not in one */
+static int car_label(uint32_t ped, int slot, int *id, int *dx)
+{
+    uint32_t company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+    uint32_t car;
+    int ci, k, n = 0, at = 0;
+    if (!IS_IN_CAR(ped) || (M[ped + PED_GONE] & 1u) || (int16_t)RD16(ped + PED_HEALTH) <= 0) return 0;
+    car = car_of(ped);
+    if ((ci = car_index(car)) < 0) return 0;
+    for (k = 0; k < 4; k++) {
+        uint32_t p = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)k) * PED_SIZE;
+        if (!IS_IN_CAR(p) || car_of(p) != car || (M[p + PED_GONE] & 1u) || (int16_t)RD16(p + PED_HEALTH) <= 0) continue;
+        if (k == slot) at = n;
+        n++;
+    }
+    *id = RENDER_CAR_ID(ci);
+    *dx = (2 * at - (n - 1)) * CAR_LABEL_GAP / 2;
+    return 1;
+}
+
+/* where the cars on a route stop: a marker there until they do */
+static void draw_drive_ends(uint32_t *rgb, int w)
+{
+    int ci, fx, fy;
+    for (ci = 0; ci < NB_CARS; ci++) {
+        const PathPoint *e;
+        if (g_drive[ci].n == 0) continue;
+        {
+            /* not when its driver is no longer in it (out, or dead) */
+            uint32_t car = g_addrs->peds + CARS_OFFSET + (uint32_t)ci * CAR_SIZE, driver = THING(RD16(car + CAR_DRIVER));
+            if (squad_slot(driver) < 0 || !IS_IN_CAR(driver) || (int16_t)RD16(driver + PED_HEALTH) <= 0) {
+                g_drive[ci].n = 0;
+                continue;
+            }
+        }
+        e = &g_drive[ci].pt[g_drive[ci].n - 1];
+        world_to_frame(e->x, e->y, e->z, &fx, &fy);
+        diamond(rgb, w, fx, fy, 7, 3, MARKER_COLOUR, 220);
+        diamond(rgb, w, fx, fy, 3, 0, MARKER_COLOUR, 220);
+    }
+}
+
 static void watch_move_orders(void)
 {
     uint32_t company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
     int slot;
     follow_routes(company);
+    g_order_tick++;
     for (slot = 0; slot < 4; slot++) {
         uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
         uint16_t tx = RD16(ped + PED_TARGET), ty = RD16(ped + PED_TARGET + 2u);
-        if ((tx != g_last_target[slot][0] || ty != g_last_target[slot][1]) && (tx || ty) && (M[ped + PED_FLAGS] & 4u)) {
+        if ((tx != g_last_target[slot][0] || ty != g_last_target[slot][1]) && (tx || ty) && (M[ped + PED_FLAGS] & 4u) &&
+            IS_IN_CAR(ped)) {
+            g_last_target[slot][0] = tx;
+            g_last_target[slot][1] = ty;
+            if (g_routes_on) car_order(ped, (int16_t)tx, (int16_t)ty);
+            tx = RD16(ped + PED_TARGET);
+            ty = RD16(ped + PED_TARGET + 2u);
+        } else if ((tx != g_last_target[slot][0] || ty != g_last_target[slot][1]) && (tx || ty) && (M[ped + PED_FLAGS] & 4u)) {
             g_marker[0] = (int16_t)tx;
             g_marker[1] = (int16_t)ty;
             g_marker[2] = (int16_t)RD16(ped + PED_TARGET + 4u);
@@ -2664,6 +2966,7 @@ static int on_mission_tick(uint32_t addr)
         watch_hits(1);
         render_reset();
         memset(g_route, 0, sizeof g_route);
+        memset(g_drive, 0, sizeof g_drive);
         load_tile_types(); /* (they may differ from game to game) */
         if (getenv("SYND_ROUTES") != NULL && strcmp(getenv("SYND_ROUTES"), "off") == 0) g_routes_on = 0;
         g_view_on = 0;
@@ -2729,6 +3032,7 @@ void additions_install(int game)
         render_set_addrs(&ra);
     }
     hook_add(g_addrs->mission_tick, on_mission_tick);
+    hook_add(g_addrs->drive_car, on_drive_car);
     hook_add(g_addrs->draw_logo, on_draw_logo);
     player_colour_load();
     hook_add(g_addrs->frame_wait, on_frame_wait);

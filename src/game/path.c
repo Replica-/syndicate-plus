@@ -71,6 +71,12 @@ static int standable(int x, int y, int z)
     return above == T_NONE || is_slope(above) ? 1 : is_floor(above) ? 0 : above != T_WALL && above != T_RAIL;
 }
 
+int path_tile_type(int x, int y, int z)
+{
+    if (!g_have_types || !render_map_size(&g_mx, &g_my, &g_mz)) return T_NONE;
+    return type_at(x, y, z);
+}
+
 int path_walkable(int x, int y, int z)
 {
     if (!g_have_types || !render_map_size(&g_mx, &g_my, &g_mz)) return 0;

@@ -14,6 +14,8 @@ typedef struct PathPoint {
 
 /* the type of each tile (the game's COL01.DAT, unpacked) */
 void path_set_types(const uint8_t types[256]);
+/* the type of the tile at x, y, z (COL01.DAT's; 0 outside the map, or before the types are known) */
+int path_tile_type(int x, int y, int z);
 /* a person can be in the cell x, y, z (standing on the tile under it) */
 int path_walkable(int x, int y, int z);
 /* a route from the person at sx, sy, sz to tx, ty, tz: its points in `out` (the last one tx, ty, tz), at most `max`;

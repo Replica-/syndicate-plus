@@ -1126,7 +1126,7 @@ typedef struct Obj {
     int x, y, zw; /* where it is drawn (world units) */
     uint32_t a;   /* its record */
     int frame;    /* the frame it shows */
-    int ped;      /* its number among the people, -1 for others */
+    int ped;      /* its number among the people, RENDER_CAR_ID(n) for the cars, -1 for others */
     uint8_t glow; /* how it glows in the dark (HostCityQuad.glow) */
 } Obj;
 
@@ -1140,9 +1140,10 @@ static int cmp_obj(const void *a, const void *b)
     return p->zw - q->zw;
 }
 
-/* the people's places in the frame last drawn */
-static int16_t g_ped_fx[256], g_ped_fy[256];
-static uint8_t g_ped_drawn[256];
+/* the people's (and the cars') places in the frame last drawn */
+#define NB_PLACES RENDER_CAR_ID(64)
+static int16_t g_ped_fx[NB_PLACES], g_ped_fy[NB_PLACES];
+static uint8_t g_ped_drawn[NB_PLACES];
 
 void render_unproject(int sx, int sy, int32_t z, int32_t *x, int32_t *y)
 {
@@ -1155,26 +1156,26 @@ void render_unproject(int sx, int sy, int32_t z, int32_t *x, int32_t *y)
 
 int render_ped_place(int ped, int *fx, int *fy)
 {
-    if (ped < 0 || ped >= 256 || !g_ped_drawn[ped]) return 0;
+    if (ped < 0 || ped >= NB_PLACES || !g_ped_drawn[ped]) return 0;
     *fx = (int)floorf(zoom_x((float)g_ped_fx[ped]) + 0.5f);
     *fy = (int)floorf(zoom_y((float)g_ped_fy[ped]) + 0.5f);
     return 1;
 }
 
-int render_ped_frame(uint32_t *rgb, int w, int h, const uint32_t *pal, int frame, int ped, int dy, int x0, int y0, int x1,
-                     int y1)
+int render_ped_frame(uint32_t *rgb, int w, int h, const uint32_t *pal, int frame, int ped, int dx, int dy, int x0, int y0,
+                     int x1, int y1)
 {
     Target t = {rgb, w, h, x0, y0, x1, y1, pal, 0};
     uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), e;
     int guard = 0;
-    if (ped < 0 || ped >= 256 || !g_ped_drawn[ped]) return 0;
+    if (ped < 0 || ped >= NB_PLACES || !g_ped_drawn[ped]) return 0;
     e = rd16(frames + (uint32_t)frame * 8u);
     for (;;) {
         uint32_t ea = elements + e * 10u;
         int sw, sh, id = rd16(ea) / 6;
         const uint8_t *s = sprite(id, &sw, &sh);
         /* its place zoomed, its size not */
-        float fx = zoom_x((float)(g_ped_fx[ped] + (int16_t)rd16(ea + 2u)));
+        float fx = zoom_x((float)(g_ped_fx[ped] + dx + (int16_t)rd16(ea + 2u)));
         float fy = zoom_y((float)(g_ped_fy[ped] + dy + (int16_t)rd16(ea + 4u)));
         if (s != NULL) blit(&t, s, sw, sh, (int)floorf(fx + 0.5f), (int)floorf(fy + 0.5f), rd16(ea + 6u) != 0, 0);
         e = rd16(ea + 8u);
@@ -1194,7 +1195,7 @@ static void draw_obj(const Target *t, const Obj *o)
         g_ped_fx[o->ped] = (int16_t)(fx + render_obj_dx);
         g_ped_fy[o->ped] = (int16_t)(fy + render_obj_dy);
         g_ped_drawn[o->ped] = 1;
-        if (render_hat_colour != NULL) hat = render_hat_colour(o->ped);
+        if (render_hat_colour != NULL && o->ped < 256) hat = render_hat_colour(o->ped);
     }
     g_obj_glow = o->glow;
     g_obj_z = (float)o->zw;
@@ -1305,7 +1306,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             objs[nobj].zw = z;
             objs[nobj].a = a;
             objs[nobj].frame = frame;
-            objs[nobj].ped = li == 0 ? (int)i : -1;
+            objs[nobj].ped = li == 0 ? (int)i : li == LIST_CARS ? RENDER_CAR_ID(i) : -1;
             nobj++;
         }
     }

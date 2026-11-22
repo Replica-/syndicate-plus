@@ -68,10 +68,13 @@ void render_image(uint32_t *rgb, int w, int h, const uint32_t *pal, uint32_t pix
                   int y0, int x1, int y1);
 /* the top left of the coloured pixels of sprite `id` (not black, not transparent); 0 when it has none */
 int render_sprite_ink(int id, int *x, int *y);
-/* draws frame `frame` (HFRA: its elements) anchored `dy` pixels below where ped `ped` was drawn (unzoomed), each
- * element at its zoomed place but at its own size, inside x0..x1, y0..y1; 0 if the ped was not drawn */
-int render_ped_frame(uint32_t *rgb, int w, int h, const uint32_t *pal, int frame, int ped, int dy, int x0, int y0, int x1,
-                     int y1);
+/* the id of car `n` (its number in the level data's cars) for render_ped_frame and render_ped_place */
+#define RENDER_CAR_ID(n) (256 + (n))
+/* draws frame `frame` (HFRA: its elements) anchored `dx` pixels right of and `dy` below where ped `ped` was drawn
+ * (unzoomed), each element at its zoomed place but at its own size, inside x0..x1, y0..y1; 0 if the ped was not
+ * drawn */
+int render_ped_frame(uint32_t *rgb, int w, int h, const uint32_t *pal, int frame, int ped, int dx, int dy, int x0, int y0,
+                     int x1, int y1);
 /* sprite `id` as palette indices (255 transparent), w x h; NULL if there is none */
 const uint8_t *render_sprite_pixels(int id, int *w, int *h);
 /* where person `ped` (its number in the level data) was drawn in the last frame; 0 when it was not */
