@@ -357,6 +357,8 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
  * made for each place in it ---- */
 #define GROUND_REPEAT 4
 #define GROUND_TOP 32 /* a tile's top: a diamond 64 x 32, a square of GROUND_TOP x GROUND_TOP game pixels */
+#define GROUND_EDGE 1.08f /* the top's upper edges reach this far, over the tiles behind (their sides would show as
+                           * lines between the tops: the finer top leaves a sliver of them) */
 #define GROUND_W (TILE_W * GROUND_RES)
 #define GROUND_H (TILE_H * GROUND_RES)
 int render_ground = 1;
@@ -427,7 +429,7 @@ static void ground_colours(const uint32_t *pal)
  * dirt from the texture */
 static const uint32_t *ground_image(int slot, const uint8_t *tl, int tx, int ty, const uint32_t *pal)
 {
-    int k = (tx % GROUND_REPEAT) + (ty % GROUND_REPEAT) * GROUND_REPEAT, x, y, dirt[4], count[256];
+    int k = (tx % GROUND_REPEAT) + (ty % GROUND_REPEAT) * GROUND_REPEAT, x, y;
     uint32_t *out = g_ground[slot][k];
     if (memcmp(g_ground_pal, pal, sizeof g_ground_pal) != 0) {
         /* another palette: every tile made again */
@@ -437,17 +439,13 @@ static const uint32_t *ground_image(int slot, const uint8_t *tl, int tx, int ty,
         ground_colours(pal);
     }
     if (g_ground_made[slot][k]) return out;
-    memset(count, 0, sizeof count);
-    dirt_colours(tl, dirt, count);
     for (y = 0; y < GROUND_H; y++)
         for (x = 0; x < GROUND_W; x++) {
-            /* the tile's own pixel here; on its top, where it is dirt, the texture instead */
+            /* the tile's own pixel here; on its top the texture instead */
             float fx = ((float)x + 0.5f) / GROUND_RES, fy = ((float)y + 0.5f) / GROUND_RES;
             uint8_t c = tl[(y / GROUND_RES) * TILE_W + x / GROUND_RES];
             uint32_t px;
-            if (c == 255) {
-                px = 0;
-            } else if (in_top(fx, fy, 1.0f) && (c == dirt[0] || c == dirt[1] || c == dirt[2] || c == dirt[3])) {
+            if (in_top(fx, fy, fy < 16.0f ? GROUND_EDGE : 1.0f) && (c != 255 || fy < 16.0f)) {
                 /* down the tile is along both of its edges, across it along one and back along the other */
                 int u = (int)floorf((float)(GROUND_TOP * GROUND_RES * (tx % GROUND_REPEAT)) +
                                     (fy + (fx - 32.0f) / 2.0f) * GROUND_RES) & (GROUND_SIZE - 1);
@@ -455,6 +453,8 @@ static const uint32_t *ground_image(int slot, const uint8_t *tl, int tx, int ty,
                                     (fy - (fx - 32.0f) / 2.0f) * GROUND_RES) & (GROUND_SIZE - 1);
                 char d = k_ground[v][u];
                 px = g_ground_colours[d <= '9' ? d - '0' : d - 'a' + 10];
+            } else if (c == 255) {
+                px = 0;
             } else {
                 px = 0xFF000000u | (pal[c] & 0xFFFFFFu);
             }
