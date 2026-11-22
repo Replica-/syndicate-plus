@@ -405,6 +405,16 @@ def save_load(ctx):
 
 
 @test()
+def sound_mission_end(ctx):
+    """with the sound card (as the window runs the game): a mission ends and the game goes on to the world map
+    (the DOS memory it frees then is in one piece: SOUND-1.DAT, 444 KB, finds its block)"""
+    r = ctx.run('sound', 42, start=SYN.split()[0] + ' /c0 /iirq7 /idma1 /iio220',
+                inputs=TO_MISSION + ['27000:click@36000;40455'] + abort(31000) + ['35000:enter'])
+    check('not enough memory' not in r.log, 'the game ran out of memory after the mission (see sound.log)')
+    check('auto save: AUTO' in r.log, 'no world map after the mission (see sound.log)')
+
+
+@test()
 def auto_save(ctx):
     """after a mission the world map saves the game in line 1 ("AUTO ..."); a save of the player found there moves
     to line 4, and a save the player makes in line 1 goes to line 4 too"""

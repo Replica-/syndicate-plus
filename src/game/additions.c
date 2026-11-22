@@ -1973,6 +1973,9 @@ static size_t load_packed(const char *name, uint8_t *out, size_t max)
     args[1] = at + (uint32_t)n + 16u;
     guest_call(g_addrs->unpack, args, 2);
     memcpy(out, M + args[1], max);
+    /* freed at once: left there, it splits the DOS memory the game frees at the mission's end, and the block it
+     * then wants for SOUND-1.DAT (444 KB) is not found ("not enough memory": the game exits) */
+    dpmi_dos_free(seg);
     return max;
 }
 
