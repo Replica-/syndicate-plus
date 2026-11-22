@@ -1366,6 +1366,18 @@ static int menu_framed(const uint8_t *index)
 }
 
 #define SEAM 16 /* the columns over which a green side goes into the game's green */
+#define FADE 40 /* and over which the desk fades out beyond it */
+
+/* the green desk's darkest palette entry (its background) */
+static int darkest_photo(void)
+{
+    int k, best = 0, bl = 1 << 30;
+    for (k = 0; k < MENU_PHOTO_N; k++) {
+        int l = k_menu_photo[k][1] * 3 + k_menu_photo[k][2] * 6 + k_menu_photo[k][3];
+        if (l < bl) bl = l, best = k;
+    }
+    return k_menu_photo[best][0];
+}
 
 /* `a` of `b` (0..256) and the rest of `c` */
 static uint32_t blend(uint32_t c, uint32_t b, int a)
@@ -1388,7 +1400,7 @@ static uint32_t faded(uint32_t rgb, const uint32_t fade[3])
 static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t *game, uint32_t *rgb, int w)
 {
     int off = (w - 320) / 2, x, y, framed = menu_framed(index), desk = g_desk;
-    uint32_t green_fade[3], colour_fade[3];
+    uint32_t green_fade[3], colour_fade[3], dark = pal[darkest_photo()] & 0xFFFFFFu;
     palette_fade(pal, k_menu_photo, MENU_PHOTO_N, green_fade);
     palette_fade(pal, k_menu_colour, MENU_COLOUR_N, colour_fade);
     for (y = 0; y < 200; y++) {
@@ -1411,6 +1423,13 @@ static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t 
             int a = 256 * (SEAM - x) / (SEAM + 1);
             if (!left_colour) row[off - 1 - x] = blend(row[off - 1 - x], g[6], a);
             if (!right_colour) row[off + 320 + x] = blend(row[off + 320 + x], g[313], a);
+        }
+        /* away from the game's picture the desk fades into the menus' dark green (black for the coloured desk): at
+         * the menus' size its outpainted detail is too coarse to show at a window's */
+        for (x = 0; x < off; x++) {
+            int a = x >= FADE ? 256 : 256 * x / FADE;
+            row[off - 1 - x] = blend(row[off - 1 - x], left_colour ? 0 : dark, a);
+            row[off + 320 + x] = blend(row[off + 320 + x], right_colour ? 0 : dark, a);
         }
         /* the game's frame at its sides (in green: its dark lines are there before the bright one is drawn): the
          * photo beside it, the top and bottom lines going on */
