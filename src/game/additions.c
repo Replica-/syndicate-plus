@@ -34,6 +34,7 @@
  * --cheats "COMPANY:PLAYER" names the player's company and the player when the world map first comes up and runs
  * the game's cheat check, as Configure Company does: "MINIGUN SQUAD:TO THE TOP" gives every mod and miniguns,
  * every mission and $100 000 000. */
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1289,9 +1290,58 @@ static int on_draw_logo(uint32_t addr)
 /* ---- the menus as wide as the window: the game's 320 x 200 picture in the middle of a wider one; on the green menus
  * (the desk photo and the frame round it, in all of them: its bright line, palette entry FRAME_INDEX, at columns 3
  * and 317, rows 2 and 197) the photo goes on to the sides (menu_sides.h, outpainted, in true colour), the frame round
- * all of it ---- */
+ * all of it.  While the game plays the desk's animation (the desk in colour, the green wiping down over it, the
+ * frame drawn) each row of the sides is as the game's row is, in colour or green ---- */
 #define FRAME_INDEX 252
 static int g_menu_w = 320, g_menu_off; /* the menu's picture, and where the game's is in it */
+static volatile int g_desk; /* the game plays MSCRENUP.DAT: the desk in colour, then the green taking it over */
+
+/* the menus' animations (Syndicate's DATA folder): MSCRENUP.DAT the desk's, any other another screen's */
+void game_file_opened(const char *path)
+{
+    static const char *const k_screens[] = {"MBRIEF", "MBRIEOUT", "MCONFUP", "MCONFOUT", "MDEBRIEF", "MDEOUT", "MMAP",
+                                            "MMAPOUT", "MOPTION", "MOPTOUT", "MRESRCH", "MRESOUT", "MSELECT", "MSELOUT",
+                                            "MLOSA", "MLOSAOUT", "MMULTI", "MMULTOUT", "MTITLE", "MENDWIN", "MENDLOSE",
+                                            "MGAMEWIN", "MLOSEGAM"};
+    const char *name = path;
+    char base[16];
+    size_t k, n;
+    for (k = 0; path[k]; k++)
+        if (path[k] == '/' || path[k] == '\\' || path[k] == ':') name = path + k + 1;
+    for (n = 0; name[n] && name[n] != '.' && n < sizeof base - 1; n++) base[n] = (char)toupper((unsigned char)name[n]);
+    base[n] = 0;
+    if (strcmp(base, "MSCRENUP") == 0) g_desk = 1;
+    for (k = 0; k < sizeof k_screens / sizeof k_screens[0]; k++)
+        if (strcmp(base, k_screens[k]) == 0) g_desk = 0;
+}
+
+/* how bright the palette has the desk's entries (`ref`, their colours 0..63), each channel (256: as bright as those
+ * are; less while the game fades a menu) */
+static void palette_fade(const uint32_t *pal, const unsigned char (*ref)[4], int n, uint32_t fade[3])
+{
+    int c, k;
+    for (c = 0; c < 3; c++) {
+        uint32_t now = 0, was = 0;
+        for (k = 0; k < n; k++) {
+            uint32_t v = ref[k][1 + c];
+            now += (pal[ref[k][0]] >> (16 - 8 * c)) & 255u;
+            was += v << 2 | v >> 4;
+        }
+        fade[c] = was == 0 || now * 256u >= was * 250u ? 256u : now * 256u / was;
+    }
+}
+
+/* the desk in colour between x0 and x1 of a row (its entries more than the green one's) */
+static int colour_part(const uint8_t *row, int x0, int x1)
+{
+    int x, colour = 0, green = 0;
+    for (x = x0; x < x1; x++) {
+        uint8_t i = row[x];
+        if (k_menu_colour_set[i >> 3] & (1u << (i & 7))) colour++;
+        else green++;
+    }
+    return colour > green;
+}
 
 /* the mouse on the game's 320 x 200 picture (left of it, right of it: past its edges) */
 static void menu_mouse(int *x, int *y)
@@ -1311,6 +1361,18 @@ static int menu_framed(const uint8_t *index)
     return n >= (192 + 312) * 9 / 10;
 }
 
+#define SEAM 16 /* the columns over which a green side goes into the game's green */
+
+/* `a` of `b` (0..256) and the rest of `c` */
+static uint32_t blend(uint32_t c, uint32_t b, int a)
+{
+    uint32_t out = 0;
+    int k;
+    for (k = 0; k < 24; k += 8)
+        out |= (uint32_t)((((b >> k) & 255u) * (uint32_t)a + ((c >> k) & 255u) * (uint32_t)(256 - a)) >> 8) << k;
+    return out;
+}
+
 static uint32_t faded(uint32_t rgb, const uint32_t fade[3])
 {
     if (fade[0] == 256u && fade[1] == 256u && fade[2] == 256u) return rgb;
@@ -1321,33 +1383,38 @@ static uint32_t faded(uint32_t rgb, const uint32_t fade[3])
 /* `game`, the game's picture (320 x 200, what this version draws on it included), into the menu's `rgb` (w wide) */
 static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t *game, uint32_t *rgb, int w)
 {
-    int off = (w - 320) / 2, x, y, framed = menu_framed(index), k, c;
-    uint32_t fade[3]; /* the palette's brightness (256: as the menus have it; less while the game fades them) */
-    for (c = 0; c < 3; c++) {
-        uint32_t now = 0, was = 0;
-        for (k = 0; k < MENU_PHOTO_N; k++) {
-            uint32_t v = k_menu_photo[k][1 + c];
-            now += (pal[k_menu_photo[k][0]] >> (16 - 8 * c)) & 255u;
-            was += v << 2 | v >> 4;
-        }
-        fade[c] = was == 0 || now * 256u >= was * 250u ? 256u : now * 256u / was;
-    }
+    int off = (w - 320) / 2, x, y, framed = menu_framed(index), desk = g_desk;
+    uint32_t green_fade[3], colour_fade[3];
+    palette_fade(pal, k_menu_photo, MENU_PHOTO_N, green_fade);
+    palette_fade(pal, k_menu_colour, MENU_COLOUR_N, colour_fade);
     for (y = 0; y < 200; y++) {
         uint32_t *row = rgb + y * w;
         const uint32_t *g = game + y * 320;
         int line = (y >= 1 && y <= 3) || (y >= 196 && y <= 198); /* a row of the frame's top or bottom */
+        /* each side as the game's picture is beside it (the green wipes over the coloured desk) */
+        int left_colour = desk && colour_part(index + y * 320, 6, 22);
+        int right_colour = desk && colour_part(index + y * 320, 298, 314);
+        const uint32_t *lf = left_colour ? colour_fade : green_fade, *rf = right_colour ? colour_fade : green_fade;
         for (x = 0; x < w; x++) row[x] = 0;
         memcpy(row + off, g, sizeof *g * 320);
-        if (!framed) continue;
+        if (!framed && !desk) continue;
         for (x = 0; x < off; x++) {
-            row[x] = faded(k_menu_sides[0][y][MENU_SIDE_W - off + x], fade);
-            row[off + 320 + x] = faded(k_menu_sides[1][y][x], fade);
+            row[x] = faded((left_colour ? k_menu_colour_sides : k_menu_green_sides)[0][y][MENU_SIDE_W - off + x], lf);
+            row[off + 320 + x] = faded((right_colour ? k_menu_colour_sides : k_menu_green_sides)[1][y][x], rf);
         }
-        /* the game's frame at its sides: the photo beside it, the top and bottom lines going on */
+        /* the green sides (made from the colour ones) eased into the game's own green beside them */
+        for (x = 0; x < SEAM && x < off; x++) {
+            int a = 256 * (SEAM - x) / (SEAM + 1);
+            if (!left_colour) row[off - 1 - x] = blend(row[off - 1 - x], g[6], a);
+            if (!right_colour) row[off + 320 + x] = blend(row[off + 320 + x], g[313], a);
+        }
+        /* the game's frame at its sides (in green: its dark lines are there before the bright one is drawn): the
+         * photo beside it, the top and bottom lines going on */
         for (x = 0; x < 6; x++) {
-            row[off + x] = line ? g[8] : g[6];
-            row[off + 314 + x] = line ? g[311] : g[313];
+            if (!left_colour) row[off + x] = framed && line ? g[8] : g[6];
+            if (!right_colour) row[off + 314 + x] = framed && line ? g[311] : g[313];
         }
+        if (!framed) continue; /* the desk before its frame is drawn */
         if (line)
             for (x = 2; x < off + 6; x++) {
                 row[x] = g[8];

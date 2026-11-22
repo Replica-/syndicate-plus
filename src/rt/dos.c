@@ -370,6 +370,7 @@ static void op_open(int create, int mode)
         dos_canon(path, canon, sizeof canon); /* the full path: the current directory may change */
         g_dos.files[h].cow = strdup(canon);
     }
+    if (!create) game_file_opened(path);
     set_ax((uint32_t)h);
     ok();
 }

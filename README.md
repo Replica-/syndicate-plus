@@ -124,10 +124,12 @@ nearest point the game takes.  Holding B shows inside the buildings: what stands
 highest agent (walls, roofs) is not drawn.
 
 The menus fill a wide window too (up to 21:9): the game's 320 x 200 picture stays in the middle, the green menus'
-desk photo goes on to the window's edges and their frame goes round all of it.  The sides are the photo outpainted
-with Fooocus (`tools/menu_outpaint.py`, then `tools/menu_sides.py` scales them to the menus' pixels, in true colour as they
-are, into `src/game/menu_sides.h`; they dim with the game's palette while it fades a menu in or out); the title screen, the videos and the screens' opening animations keep black
-sides.
+desk goes on to the window's edges and their frame goes round all of it.  The sides are the desk as the main menu
+first shows it, a coloured render, outpainted with Fooocus (`tools/menu_outpaint.py`); `tools/menu_sides.py` scales
+them to the menus' pixels in true colour and makes their green as the game makes its green desk
+(`src/game/menu_sides.h`).  While the main menu's animation wipes the green over the coloured desk, each side follows
+the game's picture beside it; they dim with the game's palette when it fades a menu.  The title screen, the videos
+and the other screens' opening animations keep black sides.
 
 The window menu's *Time of day* lights the city at dusk or at night (the side panel stays as it is): the city is
 darker, with the time's colour, and lit by its lamps (found in the tiles), the cars' headlights and the flashes of

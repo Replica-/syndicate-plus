@@ -1,11 +1,13 @@
 # menu_outpaint.py - the menus' desk photo outpainted to 576 x 200 (21:9 at the game's pixel shape) with Fooocus's
 # inpaint engine, for tools/menu_sides.py.  Run with Fooocus's python_embeded, the photo (the last frame of
-# MSCRENUP.DAT in true colour, 320 x 200) as MSCRENUP_rgb.png in MENU_DIR, where they are written:
+# MSCRENUP.DAT in true colour, 320 x 200) in MENU_DIR, where they are written: MSCRENUP_colour.png (its first frame,
+# the desk before the green takes over) for MENU_KIND=colour (the default), MSCRENUP_green.png (its last) for green:
 #
-#     FOOOCUS_DIR=... MENU_DIR=... python_embeded/python.exe -s menu_outpaint.py [SEEDS]
+#     FOOOCUS_DIR=... MENU_DIR=... [MENU_KIND=green] python_embeded/python.exe -s menu_outpaint.py [SEEDS]
 #
-# The frame's lines are taken out first (their pixels those beside them), then the left side and the right side are
-# outpainted in turn from the picture beside them, as Fooocus's own outpaint does.  out_SEED.png: 1728 x 720.
+# The green one's frame lines are taken out first (their pixels those beside them), then the left side and the right
+# side are outpainted in turn from the picture beside them, as Fooocus's own outpaint does.  KIND_SEED.png:
+# 1728 x 720.
 import os
 import sys
 
@@ -32,29 +34,37 @@ import modules.patch as patch
 W, H, CW = 576, 200, 320          # the wide picture, the game's
 SX, SY = 3, 3.6                   # to square pixels, 3 times (320 x 200 is shown 4:3)
 OFF = (W - CW) // 2
-PROMPT = ('very blurry out of focus dim green monochrome photograph, night vision green tint, dark office desk seen '
-          'from above at an angle, shapes of a desk telephone, papers and potted plant leaves, soft, hazy, low detail, '
-          'low contrast, dark shadows')
-NEGATIVE = ('text, letters, frame, border, lines, user interface, buttons, sharp, detailed, in focus, bright, white, grey, '
-            'colours other than green, people, faces, cartoon')
+KIND = os.environ.get('MENU_KIND', 'colour')  # colour: the desk before the green takes over (frame 0); green: the last
+if KIND == 'colour':
+    PROMPT = ('1990s 3D computer graphics render, ray traced, dark room, black background, a futuristic purple desk with a '
+              'round central console, a green circuit board, a yellow keypad, papers, a chrome desk lamp, soft purple and '
+              'pink light, smooth plastic surfaces, video game intro scene')
+    NEGATIVE = ('text, letters, frame, border, lines, user interface, photograph, people, faces, cartoon, bright '
+                'background, sky, window')
+else:
+    PROMPT = ('very blurry out of focus dim green monochrome photograph, night vision green tint, dark office desk seen '
+              'from above at an angle, shapes of a desk telephone, papers and potted plant leaves, soft, hazy, low '
+              'detail, low contrast, dark shadows')
+    NEGATIVE = ('text, letters, frame, border, lines, user interface, buttons, sharp, detailed, in focus, bright, white, '
+                'grey, colours other than green, people, faces, cartoon')
 
-src = np.array(Image.open(os.path.join(HERE, 'MSCRENUP_rgb.png')).convert('RGB')).astype(np.float32)
-# the frame's lines out: each of their pixels the mean of the nearest ones on either side, outside the lines
+src = np.array(Image.open(os.path.join(HERE, 'MSCRENUP_%s.png' % KIND)).convert('RGB')).astype(np.float32)
+# the green one's frame lines out: each of their pixels the nearest one inside them
 clean = src.copy()
-for y in range(H):
+for y in range(H if KIND == 'green' else 0):
     for x in (1, 2, 3, 4, 5):
         clean[y, x] = clean[y, 6]
     for x in (314, 315, 316, 317, 318):
         clean[y, x] = clean[y, 313]
     clean[y, 0] = clean[y, 6]
     clean[y, 319] = clean[y, 313]
-for x in range(CW):
+for x in range(CW if KIND == 'green' else 0):
     for y in (0, 1, 2, 3, 4):
         clean[y, x] = clean[5, x]
     for y in (195, 196, 197, 198, 199):
         clean[y, x] = clean[194, x]
 clean = clean.astype(np.uint8)
-Image.fromarray(clean).save(os.path.join(HERE, 'clean.png'))
+Image.fromarray(clean).save(os.path.join(HERE, 'clean_%s.png' % KIND))
 big_w, big_h = int(W * SX), int(H * SY)
 CB = int(CW * SX)
 SIDE = (big_w - CB) // 2
@@ -100,6 +110,6 @@ for seed in SEEDS:
     m = np.zeros(img.shape[:2], np.uint8)
     m[:, -SIDE:] = 255
     full = outpaint(np.ascontiguousarray(img), m, seed + 100)
-    Image.fromarray(full).save(os.path.join(HERE, 'out_%d.png' % seed))
+    Image.fromarray(full).save(os.path.join(HERE, '%s_%d.png' % (KIND, seed)))
     print('seed', seed, 'done')
 inpaint_worker.current_task = None

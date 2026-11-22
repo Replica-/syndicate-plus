@@ -67,6 +67,8 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
 void game_mouse_filter(int *x, int *y);
 /* the width of the frame made from the game's w x h (wider in missions: host_canvas_width) */
 int game_canvas_width(int w, int h);
+/* the game opened the file `path` (its DOS path) to read it (game thread) */
+void game_file_opened(const char *path);
 /* the mouse wheel (game thread) */
 void game_wheel(int notches);
 /* the game layer may keep a change of the mouse buttons from the game (a menu of its own is open): 1 when kept */
