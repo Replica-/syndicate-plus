@@ -56,7 +56,8 @@ typedef struct HostCityQuad {
     uint8_t glow;     /* in the dark: 0 nothing shines, 1 its brightest pixels, 2 all of it, 3 a road's white lights;
                        * bit 7: drawn almost see-through; HOST_GLOW_SHADOW: a tile in the sun's shadow */
     uint32_t hat;     /* a colour (0x00RRGGBB) for the image's hat pixels (alpha 254) in its top rows (the top byte:
-                       * how many; 0: none) */
+                       * how many; 0: none); a tile's: its 4 neighbours in the sun's shadow (bits 1 x - 1, 2 x + 1,
+                       * 4 y - 1, 8 y + 1) */
     uint32_t shade;   /* a tile: how deep in the sun's shadow (0..255) the corners of its top are, from its top
                        * corner clockwise (a byte each, the first the lowest); blended between them */
 } HostCityQuad;

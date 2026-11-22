@@ -117,14 +117,22 @@ static const char k_city_shader[] =
     "    if (i.shade == 0) return 1;\n"
     "    r = (i.tex - i.rect.xy) / texels(i) - float2(32, 0);\n"
     "    w = saturate(float2(r.x / 32 + r.y / 16, r.y / 16 - r.x / 32) * 0.5);\n"
-    /* a solid shadow: a tile is in it or not (its outline is the building's, cell by cell); inside it, the depth of
-     * its corners blended, the corners out of the shadow counted as the deepest (the shadow fades off smoothly away
-     * from the building, with no step between its tiles) */
+    /* a solid shadow: a tile is in it or not (its outline is the building's, cell by cell), softened over a band
+     * either side of the edges it shares with a tile in the other state (`hat`, a tile's: its 4 neighbours in the
+     * shadow, bits 1 x - 1, 2 x + 1, 4 y - 1, 8 y + 1); its depth the corners' blended, the corners out of the
+     * shadow counted as the deepest (it fades off smoothly away from the building, with no step between tiles) */
     "    float4 c = float4(i.shade & 255, (i.shade >> 8) & 255, (i.shade >> 16) & 255, (i.shade >> 24) & 255);\n"
     "    float m = max(max(c.x, c.y), max(c.z, c.w));\n"
     "    float4 f = c > 0 ? c : m;\n"
-    "    if (!(i.glow & 64) || m <= 0) return 1;\n"
-    "    return 1 - shadow * lerp(lerp(f.x, f.y, w.x), lerp(f.w, f.z, w.x), w.y) / 255.0;\n"
+    "    float own = (i.glow & 64) ? 1 : 0, v = own;\n"
+    "    float4 dist = float4(w.x, 1 - w.x, w.y, 1 - w.y);\n"
+    "    if (m <= 0) return 1;\n"
+    "    [unroll] for (int e = 0; e < 4; e++) {\n"
+    "        float n = (i.hat >> e) & 1;\n"
+    "        float edge = lerp(0.5, own, smoothstep(0, 0.14, dist[e]));\n"
+    "        if (n != own) v = own > 0 ? min(v, edge) : max(v, edge);\n"
+    "    }\n"
+    "    return 1 - shadow * v * lerp(lerp(f.x, f.y, w.x), lerp(f.w, f.z, w.x), w.y) / 255.0;\n"
     "}\n"
     /* how much of a texel keeps its brightness in the dark (FreeSynd's): all of it (glow 2), its bright pixels by
      * their brightness (1), a road's white lights (3), nothing (0) */

@@ -192,6 +192,7 @@ static int g_translucent; /* the tile being put is one of them */
 #define SEE_THROUGH_ALPHA 60 /* of 255, as FreeSynd's */
 static uint32_t g_shade; /* the shadow at the corners of the tile being put (HostCityQuad.shade) */
 static int g_shade_in;   /* the tile being put is in a shadow (its cell: the shadow's outline is the cells') */
+static uint32_t g_shade_nb; /* its 4 neighbours in a shadow: bits 1 x - 1, 2 x + 1, 4 y - 1, 8 y + 1 (HostCityQuad.hat) */
 
 #define HAT_INDEX 6  /* the hats' colour in the agents' sprites */
 #define HAT_SHINE 14 /* the hats' bright red, where the light catches them (in the heads only) */
@@ -256,6 +257,7 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0) |
                         (g_shade_in && (image < IMAGE_SPRITES || image >= IMAGE_GROUND) ? HOST_GLOW_SHADOW : 0));
     q->hat = hat; /* its top byte: the rows of the image with the hat */
+    if (image < IMAGE_SPRITES || image >= IMAGE_GROUND) q->hat = g_shade_nb; /* a tile: its neighbours' shadow */
 }
 
 
@@ -1522,6 +1524,13 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
                         g_shade = t.gpu ? sun_shade(cols, mx, my, mz, tx, ty, tz) : 0;
                         g_shade_in = g_shade != 0 && cell_shade(cols, mx, my, mz, tx, ty, tz) > 0;
+                        g_shade_nb = 0;
+                        if (g_shade != 0) {
+                            static const int nb[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+                            int e;
+                            for (e = 0; e < 4; e++)
+                                if (cell_shade(cols, mx, my, mz, tx + nb[e][0], ty + nb[e][1], tz) > 0) g_shade_nb |= 1u << e;
+                        }
                         g_translucent = g_cut >= 0 && tz >= g_cut;
                         if (ground_slot(tid) >= 0 && render_ground)
                             put_ground(&t, ground_slot(tid), tl, tx, ty, ffx + (float)render_tile_dx,
