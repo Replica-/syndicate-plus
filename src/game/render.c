@@ -313,9 +313,17 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
  * HAT_ROWS rows (what the agents hold uses colour 6 too, anywhere in it) */
 #define HAT_ROWS 5
 
+/* the agents' heads (the eight ways they face, in each of their sets): all their colour 6 is the hat, even where it
+ * goes lower than HAT_ROWS (a head bowed towards the camera) */
+static int is_head(int id)
+{
+    return (id >= 41 && id <= 56) || (id >= 1121 && id <= 1128);
+}
+
 static int hat_rows(int id, const uint8_t *s, int sw, int sh)
 {
     if (id < 0 || id >= NB_SPRITES) return 0;
+    if (g_hat_rows[id] == 255 && is_head(id)) g_hat_rows[id] = (uint8_t)(sh < 255 ? sh : 254);
     if (g_hat_rows[id] == 255) {
         int x, y, top = -1, last = -1;
         for (y = 0; y < sh; y++)
@@ -818,6 +826,7 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define LIST_CARS 1
 #define LIST_STATICS 2
 #define LIST_EFFECTS 4
+#define CAR_REACH 160 /* how far a car reaches from its middle towards the viewer (a tile is 256) */
 #define HEADLIGHT_COLOUR 0xFFF5D7u
 #define REAR_LIGHT_COLOUR 0xFF281Eu
 
@@ -1269,7 +1278,9 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             if (t.gpu && li == LIST_CARS)
                 object_lights(li, (int)i, x, y, z, t256 >= 0 ? sb->pos[n][0] - sa->pos[n][0] : 0,
                               t256 >= 0 ? sb->pos[n][1] - sa->pos[n][1] : 0);
-            objs[nobj].key = (x >> 8) + (y >> 8);
+            /* a car is longer than a tile: drawn with the row of tiles its front end is in (with its middle's,
+             * the floor of the row in front of it is drawn over its front) */
+            objs[nobj].key = li == LIST_CARS ? ((x + CAR_REACH) >> 8) + ((y + CAR_REACH) >> 8) : (x >> 8) + (y >> 8);
             objs[nobj].z = z >> 7;
             objs[nobj].x = x;
             objs[nobj].y = y;
