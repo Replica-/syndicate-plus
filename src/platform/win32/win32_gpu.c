@@ -117,9 +117,14 @@ static const char k_city_shader[] =
     "    if (i.shade == 0) return 1;\n"
     "    r = (i.tex - i.rect.xy) / texels(i) - float2(32, 0);\n"
     "    w = saturate(float2(r.x / 32 + r.y / 16, r.y / 16 - r.x / 32) * 0.5);\n"
-    "    return 1 - shadow * smoothstep(0, 1, lerp(lerp(i.shade & 255, (i.shade >> 8) & 255, w.x),\n"
-    "                                            lerp((i.shade >> 24) & 255, (i.shade >> 16) & 255, w.x), w.y)\n"
-    "                                         / 255.0);\n" /* a firmer edge than a straight blend */
+    /* a solid shadow: a tile is in it or not (its outline is the building's, cell by cell); inside it, the depth of
+     * its corners blended, the corners out of the shadow counted as the deepest (the shadow fades off smoothly away
+     * from the building, with no step between its tiles) */
+    "    float4 c = float4(i.shade & 255, (i.shade >> 8) & 255, (i.shade >> 16) & 255, (i.shade >> 24) & 255);\n"
+    "    float m = max(max(c.x, c.y), max(c.z, c.w));\n"
+    "    float4 f = c > 0 ? c : m;\n"
+    "    if (!(i.glow & 64) || m <= 0) return 1;\n"
+    "    return 1 - shadow * lerp(lerp(f.x, f.y, w.x), lerp(f.w, f.z, w.x), w.y) / 255.0;\n"
     "}\n"
     /* how much of a texel keeps its brightness in the dark (FreeSynd's): all of it (glow 2), its bright pixels by
      * their brightness (1), a road's white lights (3), nothing (0) */
