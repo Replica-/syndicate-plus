@@ -1310,6 +1310,7 @@ static int on_draw_logo(uint32_t addr)
  * green wiping down over it, the frame drawn) each side is as the game's row beside it is: black beside the
  * coloured desk.  menu_sides.h: the desk's palette entries ---- */
 #define FRAME_INDEX 252
+#define MENU_BG 0x082800u /* the menus' dark green (the mission's menu, the choice of game) */
 static int g_menu_w = 320, g_menu_off; /* the menu's picture, and where the game's is in it */
 static volatile int g_desk; /* the game plays MSCRENUP.DAT: the desk in colour, then the green taking it over */
 
@@ -1430,14 +1431,15 @@ static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t 
 {
     static uint8_t green_set[32];
     static int hardware = -1; /* the platform draws the outpainted sides */
-    int off = (w - 320) / 2, x, y, framed = menu_framed(index), desk = g_desk;
-    uint32_t dark = pal[darkest_photo()] & 0xFFFFFFu;
+    /* the choice of game: its own picture, framed, plain sides */
+    int off = (w - 320) / 2, x, y, framed = g_pick_active || menu_framed(index), desk = g_desk && !g_pick_active;
+    uint32_t dark = g_pick_active ? MENU_BG : pal[darkest_photo()] & 0xFFFFFFu;
     HostMenuSides sides;
     if (green_set[k_menu_photo[0][0] >> 3] == 0)
         for (x = 0; x < MENU_PHOTO_N; x++) green_set[k_menu_photo[x][0] >> 3] |= (uint8_t)(1u << (k_menu_photo[x][0] & 7));
     if (hardware < 0) hardware = side_images();
     memset(&sides, 0, sizeof sides);
-    sides.on = hardware && (framed || desk);
+    sides.on = hardware && !g_pick_active && (framed || desk);
     sides.x0[0] = off - MENU_SIDE_W;
     sides.x1[0] = off + MENU_BACKDROP_OVERLAP;
     sides.x0[1] = off + 320 - MENU_BACKDROP_OVERLAP;
@@ -1472,7 +1474,7 @@ static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t 
             row[off + 314 + x] = framed && line ? g[311] : rbg;
         }
         /* the desk's own picture fading into the sides (its pixels only, not what is drawn over it) */
-        for (x = 0; x < VIGNETTE; x++) {
+        for (x = 0; x < VIGNETTE && !g_pick_active; x++) {
             int a = 256 * (VIGNETTE - x) / (VIGNETTE + 1), l = 6 + x, r = 313 - x;
             uint32_t see = (uint32_t)(a * 255 / 256) << 24;
             if (lset[ix[l] >> 3] & (1u << (ix[l] & 7)))
@@ -1863,7 +1865,6 @@ static void light_editor(uint32_t *rgb, int w)
 #define MENU_W 500
 #define MENU_ROW 30
 #define MENU_SCALE 2
-#define MENU_BG 0x082800u
 #define MENU_BAR 0x144904u
 #define MENU_BAR_SEL 0x1E6A0Au
 #define MENU_FRAME 0x1C9200u
@@ -2085,8 +2086,14 @@ static void game_pick(uint32_t *pic)
         game_choice_made(g_pick_sel);      /* the other game: does not return */
         return;
     }
-    for (y = 6; y < 194; y++)
-        for (x = 6; x < 314; x++) plot_any_blend(pic, 320, x, y, MENU_BG, 235);
+    /* over all of the game's picture (no game's menu yet), in the menus' frame */
+    for (y = 0; y < 200; y++)
+        for (x = 0; x < 320; x++) {
+            int edge = (x >= 2 && x <= 317 && (y == 1 || y == 3 || y == 196 || y == 198)) ||
+                       (y >= 1 && y <= 198 && (x == 2 || x == 4 || x == 315 || x == 317));
+            int line = (x >= 3 && x <= 316 && (y == 2 || y == 197)) || (y >= 2 && y <= 197 && (x == 3 || x == 316));
+            pic[y * 320 + x] = line ? MENU_BRIGHT : edge ? MENU_BAR : MENU_BG;
+        }
     menu_text_scaled(pic, 320, 160 - text_width_scaled("SELECT GAME", 2) / 2, 14, "SELECT GAME", MENU_BRIGHT, 2);
     for (k = 0; k < 2; k++) {
         int x0 = cover_x(k), i;
@@ -2100,6 +2107,16 @@ static void game_pick(uint32_t *pic)
     }
     menu_text_scaled(pic, 320, 160 - text_width_scaled("CLICK ONE OR PRESS ENTER", 1) / 2, 176,
                      "CLICK ONE OR PRESS ENTER", MENU_TEXT, 1);
+    /* a pointer of its own (the game's is under it) */
+    {
+        static const char *const arrow[11] = {"X", "XX", "X#X", "X##X", "X###X", "X####X", "X#####X", "X##XXXX",
+                                              "X#X", "XX", "X"};
+        for (y = 0; y < 11; y++)
+            for (x = 0; arrow[y][x]; x++) {
+                int px = mx + x, py = my + y;
+                if (px >= 0 && px < 320 && py >= 0 && py < 200) pic[py * 320 + px] = arrow[y][x] == '#' ? MENU_BRIGHT : 0;
+            }
+    }
 }
 
 /* drawn over the mission, its keys and clicks acted on (game thread) */
@@ -2263,7 +2280,7 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
             for (y = 0; y < 200; y++) memcpy(game + y * 320, rgb + y * w, sizeof *game * 320);
         menu_true_colour(index, palette, pic, 320, h);
         if (config_shown()) config_grids(pic, 320, h, index, palette);
-        if (!g_pick_active && game_choice_offered() && g_desk && menu_framed(index)) g_pick_active = 1;
+        if (!g_pick_active && game_choice_offered() && g_desk) g_pick_active = 1; /* before the main menu comes up */
         if (g_pick_active) game_pick(pic);
         g_menu_w = w;
         g_menu_off = (w - 320) / 2;
