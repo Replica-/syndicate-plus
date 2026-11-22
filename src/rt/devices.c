@@ -174,6 +174,7 @@ static uint32_t g_mh_off;
 #define MQ_SIZE 32
 static struct {
     int ev, buttons;
+    int x, y; /* a click of this program's (rt_mouse_click_at): where, in the game's coordinates; -1: the mouse's */
 } g_mq[MQ_SIZE];
 static int g_mq_n;
 static int g_mh_lastx, g_mh_lasty, g_mickx, g_micky;
@@ -187,7 +188,32 @@ static void mq_add(int ev, int buttons) /* host_lock held */
     }
     g_mq[g_mq_n].ev = ev;
     g_mq[g_mq_n].buttons = buttons;
+    g_mq[g_mq_n].x = -1;
     g_mq_n++;
+}
+
+/* a left click at x, y of the game's screen, for its event handler: a move there (the game acts on the position it
+ * last moved to), the press and the release, then a move back to where the mouse is (the pointer stays) */
+void rt_mouse_click_at(int x, int y)
+{
+    static const int ev[3] = {1, 2, 4};
+    int k;
+    host_lock();
+    for (k = 0; k < 3; k++) {
+        g_mq_n = g_mq_n < MQ_SIZE ? g_mq_n : MQ_SIZE - 1;
+        g_mq[g_mq_n].ev = ev[k];
+        g_mq[g_mq_n].buttons = k == 1 ? g_mbuttons | 1 : g_mbuttons & ~1;
+        g_mq[g_mq_n].x = x;
+        g_mq[g_mq_n].y = y;
+        g_mq_n++;
+    }
+    if (g_mq_n < MQ_SIZE) {
+        g_mq[g_mq_n].ev = 1;
+        g_mq[g_mq_n].buttons = g_mbuttons;
+        g_mq[g_mq_n].x = -1;
+        g_mq_n++;
+    }
+    host_unlock();
 }
 
 void rt_mouse_move(int fx, int fy)
@@ -421,20 +447,27 @@ void bios_int33(void)
  * CX/DX the position, SI/DI the motion counters; every register is kept for the interrupted code) */
 int mouse_poll_handler(void)
 {
-    int ev = 0, x, y, b = 0;
+    int ev = 0, x, y, b = 0, at_x = -1, at_y = -1;
     Cpu saved;
     if (g_mh_mask == 0) return 0;
     host_lock();
     while (g_mq_n > 0 && ev == 0) {
         ev = g_mq[0].ev & g_mh_mask;
         b = g_mq[0].buttons;
+        at_x = g_mq[0].x;
+        at_y = g_mq[0].y;
         memmove(g_mq, g_mq + 1, (size_t)(g_mq_n - 1) * sizeof g_mq[0]);
         g_mq_n--;
     }
     mouse_get(&x, &y, NULL);
     host_unlock();
     if (ev == 0) return 0;
-    game_mouse_filter(&x, &y);
+    if (at_x >= 0) {
+        x = at_x;
+        y = at_y;
+    } else {
+        game_mouse_filter(&x, &y);
+    }
     g_mickx += x - g_mh_lastx; /* as the motion counters: 1 mickey per pixel across, 2 down */
     g_micky += (y - g_mh_lasty) * 2;
     g_mh_lastx = x;

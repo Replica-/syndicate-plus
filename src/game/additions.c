@@ -9,7 +9,8 @@
  * Keys in missions: the arrow keys and W, A, S, D (and the pointer at an edge of the screen) scroll the view at
  * once, at every frame shown: the view is this program's, and the game's camera follows it at its ticks (the
  * clicks on the city are moved by the difference, so they go where they are seen); 1 to 4 select an agent (the
- * game's own) and pressed twice within 0.4 s centre the view on it.
+ * game's own) and pressed twice within 0.4 s centre the view on it.  A double click on the city sets the selected
+ * agents' speed drug (adrenaline) to the top.
  *
  * A hit sprays blood out of the person hit, away from the shooter.
  *
@@ -369,6 +370,10 @@ static void cheat_names(void)
 #define PED_FLAGS 0x1du       /* bit 2: there (an agent of the squad still in the mission) */
 #define DOUBLE_PRESS_US 400000u
 #define SC_1 0x02u            /* 1 to 4: 0x02 to 0x05 */
+#define AGENT_BOX_X 32        /* the middle of agent 1's box in the side panel (the game's coordinates), 2 right of */
+#define AGENT_BOX_Y 24        /* it, 3 under it */
+#define AGENT_BOX_DX 64
+#define AGENT_BOX_DY 98
 #define SC_W 0x11u
 #define SC_A 0x1eu
 #define SC_S 0x1fu
@@ -447,16 +452,20 @@ uint32_t game_key_filter(uint32_t sc, int down)
     }
     was_down = g_down[k];
     g_down[k] = (uint8_t)(down != 0);
-    /* 1-4 pressed twice (not held) */
-    if (k >= SC_1 && k < SC_1 + 4u && down && !was_down && in_mission()) {
+    /* 1-4: the agent selected at once, as a click on its box in the side panel does (the game itself looks at
+     * these keys only every few ticks, and misses a short press); pressed twice (not held), the view centred */
+    if (k >= SC_1 && k < SC_1 + 4u && in_mission()) {
         uint64_t now = host_time_us();
         int slot = (int)(k - SC_1);
+        if (!down || was_down) return 0;
+        rt_mouse_click_at(AGENT_BOX_X + (slot & 1) * AGENT_BOX_DX, AGENT_BOX_Y + (slot >> 1) * AGENT_BOX_DY);
         if (g_press_us[slot] != 0 && now - g_press_us[slot] < DOUBLE_PRESS_US) {
             g_centre_slot = slot + 1;
             g_press_us[slot] = 0;
         } else {
             g_press_us[slot] = now;
         }
+        return 0;
     }
     /* Ctrl+L in a mission: the light editor on or off; while it is on its keys are its own */
     if (k == SC_L && down && !was_down && g_down[SC_CTRL] && in_mission()) {
@@ -697,6 +706,23 @@ void game_mouse_filter(int *x, int *y)
     *y = (int)floor(clampd(gy, MOUSE_MARGIN, 399 - MOUSE_MARGIN));
 }
 
+/* the drugs (IPA) of a person: adrenaline (speed), perception, intelligence, 4 bytes each; the third the level set
+ * by its bar (0-255, 128 neutral) */
+#define PED_ADRENALINE_SET 0x49u
+#define DOUBLE_CLICK_US 400000u
+static volatile int g_boost; /* a double click on the city: the selected agents' speed drug to the top */
+static volatile int g_selected; /* the squad's agents selected (bit 0: agent 1), as the panel shows them */
+
+static void boost_selected(void)
+{
+    uint32_t company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+    int slot, sel = g_selected;
+    for (slot = 0; slot < 4; slot++) {
+        uint32_t ped = g_addrs->peds + (M[company + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
+        if ((sel >> slot) & 1) M[ped + PED_ADRENALINE_SET] = 255;
+    }
+}
+
 static void centre_on_agent(int slot)
 {
     uint32_t company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
@@ -871,6 +897,7 @@ static int reddish(uint32_t c)
 /* as FreeSynd does it: a pixel of a checkerboard has no neighbour of its colour and 3 or 4 of one other colour;
  * lines drawn over it (the digits) are 2 pixels thick, so they stay */
 #define SELECTED_COLOUR 0xd7460fu
+static const int k_agent_box[4][4] = {{4, 44, 60, 84}, {68, 44, 124, 84}, {4, 142, 60, 182}, {68, 142, 124, 182}};
 
 static void solid_selected_boxes(const uint8_t *pix, const uint32_t *pal, uint32_t *rgb, int w)
 {
@@ -894,7 +921,10 @@ static void solid_selected_boxes(const uint8_t *pix, const uint32_t *pal, uint32
                 a = x;
                 b = y;
             }
-    if (best < 100) return;
+    if (best < 100) {
+        g_selected = 0;
+        return;
+    }
     for (y = PANEL_Y0 + 1; y < PANEL_Y1 - 1; y++)
         for (x = PANEL_X0 + 1; x < PANEL_X1 - 1; x++) {
             uint8_t c = PX(x, y), n[4] = {PX(x - 1, y), PX(x + 1, y), PX(x, y - 1), PX(x, y + 1)};
@@ -918,6 +948,17 @@ static void solid_selected_boxes(const uint8_t *pix, const uint32_t *pal, uint32
     for (y = PANEL_Y0; y < PANEL_Y1; y++)
         for (x = PANEL_X0; x < PANEL_X1; x++)
             if (MK(x, y)) rgb[y * w + x] = SELECTED_COLOUR;
+    {
+        /* which boxes are selected: most of their checkerboard */
+        int k, sel = 0;
+        for (k = 0; k < 4; k++) {
+            int n = 0;
+            for (y = k_agent_box[k][1]; y < k_agent_box[k][3]; y++)
+                for (x = k_agent_box[k][0]; x < k_agent_box[k][2]; x++) n += MK(x, y) != 0;
+            if (n > 200) sel |= 1 << k;
+        }
+        g_selected = sel;
+    }
 #undef PX
 #undef MK
 }
@@ -1651,6 +1692,23 @@ int game_mouse_buttons(int buttons)
     int pressed = (buttons & 1) && !(g_menu_buttons & 1);
     g_menu_buttons = buttons;
     if (pressed && g_addrs != NULL && g_view_on) canvas_mouse(&g_click_sx, &g_click_sy);
+    if (pressed && g_addrs != NULL && !g_menu && in_mission()) {
+        /* a double click on the city: the selected agents' speed drug to the top */
+        static uint64_t last_us;
+        static int last_x, last_y;
+        uint64_t now = host_time_us();
+        int x, y;
+        canvas_mouse(&x, &y);
+        if (x >= MAP_LEFT && last_us != 0 && now - last_us < DOUBLE_CLICK_US && abs(x - last_x) < 8 &&
+            abs(y - last_y) < 8) {
+            g_boost = 1;
+            last_us = 0;
+        } else {
+            last_us = x >= MAP_LEFT ? now : 0;
+            last_x = x;
+            last_y = y;
+        }
+    }
     if (pressed && g_addrs != NULL && config_shown()) config_click();
     if (g_menu) {
         if (pressed) g_menu_click = 1;
@@ -2089,6 +2147,10 @@ static int on_mission_tick(uint32_t addr)
     }
     watch_move_orders();
     watch_hits(0);
+    if (g_boost) {
+        g_boost = 0;
+        boost_selected();
+    }
     if (slot) {
         g_centre_slot = 0;
         centre_on_agent(slot);

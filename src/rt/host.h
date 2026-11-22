@@ -129,6 +129,8 @@ void rt_mouse_move(int fx, int fy);
 void rt_mouse_buttons(int buttons);
 /* the mouse wheel turned `notches` (positive: away from the user) */
 void rt_mouse_wheel(int notches);
+/* a left click at x, y of the game's screen (its coordinates), given to its mouse handler; the pointer stays */
+void rt_mouse_click_at(int x, int y);
 /* relative motion in mickeys (used when the game reads motion counters) */
 void rt_mouse_motion(int dx, int dy);
 /* non-zero while the running program uses the mouse (reads its position, buttons or motion, or has an event

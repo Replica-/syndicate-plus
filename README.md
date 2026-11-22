@@ -108,7 +108,9 @@ save is made.  This works in both games and every language (`src/game/additions.
 In missions the view scrolls at once and smoothly, at every frame shown, with the arrow keys, W, A, S and D (only
 in missions: in the menus they are letters) or the pointer at an edge of the screen; the game's camera follows it
 at its own pace, and clicks go where they are seen. 1 to 4 select
-an agent, as in the original; pressed twice within 0.4 s they also bring the view to that agent. A move order shows
+an agent as a click on its box does (the original looks at these keys only every few ticks and misses a short
+press); pressed twice within 0.4 s they also bring the view to that agent.  A double click on the city sets the
+selected agents' speed drug (adrenaline) to the top. A move order shows
 a green diamond on the floor where the agents go, shrinking and fading out in 0.6 s. The boxes of the selected
 agents have a solid background instead of the checkerboard of orange and olive. A hit sprays blood out of the
 person hit, away from the shooter. Agents wear hats in the colour of their company, yours and the rival syndicates'
