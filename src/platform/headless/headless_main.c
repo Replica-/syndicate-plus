@@ -182,6 +182,28 @@ int host_city_gpu(void)
     return g_gpu_on && !record_active();
 }
 
+int host_menu_side_images(const uint32_t *const px[4], int w, int h)
+{
+#ifdef _WIN32
+    if (g_gpu_on) gpu_menu_side_images(px, w, h);
+    return g_gpu_on;
+#else
+    (void)px;
+    (void)w;
+    (void)h;
+    return 0;
+#endif
+}
+
+void host_menu_sides(const HostMenuSides *s)
+{
+#ifdef _WIN32
+    if (g_gpu_on) gpu_menu_sides(s);
+#else
+    (void)s;
+#endif
+}
+
 void host_city_reset(void)
 {
 #ifdef _WIN32

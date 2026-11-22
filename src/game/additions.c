@@ -42,9 +42,16 @@
 #include <time.h>
 
 #include "../rt/rt.h"
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_JPEG
+#define STBI_NO_STDIO
+#define STBI_NO_HDR
+#define STBI_NO_LINEAR
+#include "../third_party/stb_image.h"
 #include "../rt/vfs.h"
 #include "game.h"
 #include "hooks.h"
+#include "menu_backdrop.h"
 #include "menu_sides.h"
 #include "path.h"
 #include "rnc.h"
@@ -1327,6 +1334,44 @@ void game_file_opened(const char *path)
         if (strcmp(base, k_screens[k]) == 0) g_desk = 0;
 }
 
+/* how bright the palette has the desk's entries (`ref`, their colours 0..63), each channel (1: as bright as those
+ * are; less while the game fades a menu) */
+static void palette_bright(const uint32_t *pal, const unsigned char (*ref)[4], int n, float bright[3])
+{
+    int c, k;
+    for (c = 0; c < 3; c++) {
+        uint32_t now = 0, was = 0;
+        for (k = 0; k < n; k++) {
+            uint32_t v = ref[k][1 + c];
+            now += (pal[ref[k][0]] >> (16 - 8 * c)) & 255u;
+            was += v << 2 | v >> 4;
+        }
+        bright[c] = was == 0 || now * 100u >= was * 98u ? 1.0f : (float)now / (float)was;
+    }
+}
+
+/* the outpainted sides (menu_backdrop.h, JPEG) to the platform, which draws them at the display's resolution: 1
+ * when it does */
+static int side_images(void)
+{
+    uint32_t *px[4];
+    int k, w = 0, h = 0, ok = 1, on;
+    for (k = 0; k < 4; k++) {
+        int n, i;
+        unsigned char *d = stbi_load_from_memory(k_menu_backdrop[k], (int)k_menu_backdrop_size[k], &w, &h, &n, 4);
+        px[k] = d != NULL ? (uint32_t *)malloc(sizeof(uint32_t) * (size_t)w * (size_t)h) : NULL;
+        if (px[k] == NULL)
+            ok = 0;
+        else
+            for (i = 0; i < w * h; i++)
+                px[k][i] = (uint32_t)d[i * 4] << 16 | (uint32_t)d[i * 4 + 1] << 8 | d[i * 4 + 2];
+        stbi_image_free(d);
+    }
+    on = ok && host_menu_side_images((const uint32_t *const *)px, w, h);
+    for (k = 0; k < 4; k++) free(px[k]);
+    return on;
+}
+
 /* the desk in colour between x0 and x1 of a row (its entries more than the green one's) */
 static int colour_part(const uint8_t *row, int x0, int x1)
 {
@@ -1357,7 +1402,9 @@ static int menu_framed(const uint8_t *index)
     return n >= (192 + 312) * 9 / 10;
 }
 
-#define VIGNETTE 24 /* the game's columns over which the desk's picture fades into its background, at either side */
+#define VIGNETTE 18 /* the game's columns over which the desk's picture fades into the sides (within the
+                     * outpainted sides' overlap under it) */
+#define SEE_THROUGH 0xFF000000u /* a pixel of the frame the platform's drawing under it shows through */
 
 /* the green desk's darkest palette entry (its background) */
 static int darkest_photo(void)
@@ -1384,10 +1431,21 @@ static uint32_t blend(uint32_t c, uint32_t b, int a)
 static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t *game, uint32_t *rgb, int w)
 {
     static uint8_t green_set[32];
+    static int hardware = -1; /* the platform draws the outpainted sides */
     int off = (w - 320) / 2, x, y, framed = menu_framed(index), desk = g_desk;
     uint32_t dark = pal[darkest_photo()] & 0xFFFFFFu;
+    HostMenuSides sides;
     if (green_set[k_menu_photo[0][0] >> 3] == 0)
         for (x = 0; x < MENU_PHOTO_N; x++) green_set[k_menu_photo[x][0] >> 3] |= (uint8_t)(1u << (k_menu_photo[x][0] & 7));
+    if (hardware < 0) hardware = side_images();
+    memset(&sides, 0, sizeof sides);
+    sides.on = hardware && (framed || desk);
+    sides.x0[0] = off - MENU_SIDE_W;
+    sides.x1[0] = off + MENU_BACKDROP_OVERLAP;
+    sides.x0[1] = off + 320 - MENU_BACKDROP_OVERLAP;
+    sides.x1[1] = off + 320 + MENU_SIDE_W;
+    palette_bright(pal, k_menu_colour, MENU_COLOUR_N, sides.bright[0]);
+    palette_bright(pal, k_menu_photo, MENU_PHOTO_N, sides.bright[1]);
     for (y = 0; y < 200; y++) {
         uint32_t *row = rgb + y * w;
         const uint32_t *g = game + y * 320;
@@ -1395,13 +1453,18 @@ static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t 
         int line = (y >= 1 && y <= 3) || (y >= 196 && y <= 198); /* a row of the frame's top or bottom */
         /* each side as the game's picture is beside it (the green wipes over the coloured desk) */
         int left_colour = desk && colour_part(ix, 6, 22), right_colour = desk && colour_part(ix, 298, 314);
-        uint32_t lbg = left_colour ? 0 : dark, rbg = right_colour ? 0 : dark;
-        const uint8_t *lset = left_colour ? k_menu_colour_set : green_set, *rset = right_colour ? k_menu_colour_set : green_set;
+        /* the sides: the outpainted desk under them (see-through), else the desk's background colour */
+        uint32_t lbg = sides.on ? SEE_THROUGH : left_colour ? 0 : dark;
+        uint32_t rbg = sides.on ? SEE_THROUGH : right_colour ? 0 : dark;
+        const uint8_t *lset = left_colour ? k_menu_colour_set : green_set;
+        const uint8_t *rset = right_colour ? k_menu_colour_set : green_set;
+        if (!left_colour) sides.green_rows[0][y >> 5] |= 1u << (y & 31);
+        if (!right_colour) sides.green_rows[1][y >> 5] |= 1u << (y & 31);
         for (x = 0; x < w; x++) row[x] = 0;
         memcpy(row + off, g, sizeof *g * 320);
         if (!framed && !desk) continue;
-        /* the sides the desk's background colour, the game's frame at its sides (in green its dark lines are there
-         * before the bright one is drawn) too, but for the top and bottom lines going on */
+        /* the game's frame at its sides too (in green its dark lines are there before the bright one is drawn), but
+         * for the top and bottom lines going on */
         for (x = 0; x < off; x++) {
             row[x] = lbg;
             row[off + 320 + x] = rbg;
@@ -1410,11 +1473,14 @@ static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t 
             row[off + x] = framed && line ? g[8] : lbg;
             row[off + 314 + x] = framed && line ? g[311] : rbg;
         }
-        /* the desk's own picture fading into it towards the sides (its pixels only, not what is drawn over it) */
+        /* the desk's own picture fading into the sides (its pixels only, not what is drawn over it) */
         for (x = 0; x < VIGNETTE; x++) {
             int a = 256 * (VIGNETTE - x) / (VIGNETTE + 1), l = 6 + x, r = 313 - x;
-            if (lset[ix[l] >> 3] & (1u << (ix[l] & 7))) row[off + l] = blend(row[off + l], lbg, a);
-            if (rset[ix[r] >> 3] & (1u << (ix[r] & 7))) row[off + r] = blend(row[off + r], rbg, a);
+            uint32_t see = (uint32_t)(a * 255 / 256) << 24;
+            if (lset[ix[l] >> 3] & (1u << (ix[l] & 7)))
+                row[off + l] = sides.on ? (row[off + l] & 0xFFFFFFu) | see : blend(row[off + l], lbg, a);
+            if (rset[ix[r] >> 3] & (1u << (ix[r] & 7)))
+                row[off + r] = sides.on ? (row[off + r] & 0xFFFFFFu) | see : blend(row[off + r], rbg, a);
         }
         if (!framed) continue; /* the desk before its frame is drawn */
         if (line)
@@ -1429,6 +1495,7 @@ static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t 
                 row[w - 320 + 314 + x] = g[314 + x];
             }
     }
+    host_menu_sides(&sides);
 }
 
 static int config_shown(void)
@@ -2128,6 +2195,10 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     uint64_t age;
     int fx, fy, hw, alpha;
     render_gpu_changed = 0;
+    {
+        static const HostMenuSides none; /* the wide menu's sides only under it (wide_menu) */
+        host_menu_sides(&none);
+    }
     if (g_addrs != NULL && w >= 320 && h == 200) {
         static uint32_t game[320 * 200];
         int y;

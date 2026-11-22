@@ -69,6 +69,19 @@ typedef struct HostCityLight {
     uint32_t colour;  /* 0x00RRGGBB; HOST_LIGHT_GLOW: a glow, added to the colours (a muzzle flash, seen by day too) */
 } HostCityLight;
 #define HOST_LIGHT_GLOW 0x01000000u
+/* the widescreen menus' sides, drawn at the display's resolution (not the frame's) under the frame where it is
+ * see-through: 4 images set once (left, right in colour; left, right in green: w x h 0x00RRGGBB), 0 when the
+ * platform does not draw them; then before each frame each side's place in the frame's columns (x0 to x1, all its
+ * rows; may go past it), which of its 200 rows are green (bit y of green_rows) and how bright colour (bright[0]) and
+ * green (bright[1]) are, r g b 0..1 */
+typedef struct HostMenuSides {
+    int on;
+    int x0[2], x1[2];
+    uint32_t green_rows[2][7];
+    float bright[2][3];
+} HostMenuSides;
+int host_menu_side_images(const uint32_t *const px[4], int w, int h);
+void host_menu_sides(const HostMenuSides *s);
 /* 1 when the platform draws the city now (it may decline, e.g. while it records a video) */
 int host_city_gpu(void);
 /* forget every image (new data); then define image `image`: w x h pixels 0xAARRGGBB, row stride w, `scale` (1, 2

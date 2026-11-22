@@ -1,8 +1,9 @@
 /* menu_sides.h - the palette entries of the menus' desk (made by tools/menu_sides.py): k_menu_photo the
- * green one's, with their colours (0..63; the darkest is its background), k_menu_colour_set the coloured
- * one's */
+ * green one's, k_menu_colour the coloured one's most used, with their colours (0..63; the darkest green is the
+ * background), k_menu_colour_set all the coloured one's */
 #define MENU_SIDE_W 128 /* the widest side (21:9) */
 #define MENU_PHOTO_N 48
+#define MENU_COLOUR_N 32
 static const unsigned char k_menu_photo[MENU_PHOTO_N][4] = {
     {16, 6, 21, 1},
     {17, 6, 21, 1},
@@ -52,5 +53,39 @@ static const unsigned char k_menu_photo[MENU_PHOTO_N][4] = {
     {236, 8, 26, 1},
     {237, 8, 27, 1},
     {238, 9, 27, 1},
+};
+static const unsigned char k_menu_colour[MENU_COLOUR_N][4] = {
+    {35, 0, 0, 0},
+    {60, 7, 6, 6},
+    {64, 25, 16, 21},
+    {65, 28, 17, 20},
+    {66, 30, 17, 17},
+    {80, 27, 18, 23},
+    {81, 30, 19, 25},
+    {82, 31, 17, 22},
+    {96, 10, 9, 6},
+    {97, 11, 10, 10},
+    {101, 22, 19, 19},
+    {105, 33, 20, 21},
+    {106, 34, 19, 24},
+    {107, 34, 21, 27},
+    {108, 36, 23, 29},
+    {113, 36, 22, 24},
+    {118, 48, 35, 34},
+    {119, 49, 38, 36},
+    {131, 26, 14, 18},
+    {132, 24, 12, 16},
+    {133, 20, 12, 15},
+    {134, 16, 12, 13},
+    {135, 15, 9, 12},
+    {136, 14, 8, 9},
+    {137, 12, 6, 7},
+    {138, 10, 4, 5},
+    {156, 21, 13, 18},
+    {197, 0, 4, 0},
+    {198, 1, 8, 0},
+    {203, 19, 9, 12},
+    {220, 14, 16, 11},
+    {221, 4, 3, 4},
 };
 static const unsigned char k_menu_colour_set[32] = {0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0xf0, 0xff, 0xff, 0xff, 0xff, 0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xef, 0xff, 0xff, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0x3f, 0x00, 0x00, 0x00, 0x00};

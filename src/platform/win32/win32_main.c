@@ -94,6 +94,17 @@ int host_city_gpu(void)
     return 1;
 }
 
+int host_menu_side_images(const uint32_t *const px[4], int w, int h)
+{
+    gpu_menu_side_images(px, w, h);
+    return 1;
+}
+
+void host_menu_sides(const HostMenuSides *s)
+{
+    gpu_menu_sides(s);
+}
+
 void host_city_reset(void)
 {
     gpu_city_reset();

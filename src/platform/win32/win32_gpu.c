@@ -52,6 +52,43 @@ static int g_tex_w, g_tex_h, g_city_vb_cap;
 static int g_win_w, g_win_h;
 /* offscreen (gpu_init(NULL): the headless tests): the picture is drawn into a texture and read back */
 static ID3D11Texture2D *g_off, *g_off_read;
+/* ---- the widescreen menus' sides (host_menu_sides): at the window's resolution, under the frame ---- */
+static const char k_side_shader[] =
+    "cbuffer S : register(b0) { uint4 rows[2]; float4 colour; float4 green; };\n"
+    "Texture2D ct : register(t0);\n"
+    "Texture2D gt : register(t1);\n"
+    "SamplerState s : register(s0);\n"
+    "struct V { float4 pos : SV_Position; float2 uv : TEXCOORD0; };\n"
+    "V vs(uint id : SV_VertexID) {\n"
+    "    V o;\n"
+    "    float2 uv = float2((id << 1) & 2, id & 2);\n"
+    "    o.uv = uv;\n"
+    "    o.pos = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);\n"
+    "    return o;\n"
+    "}\n"
+    /* each of the 200 rows in colour or green, as the game's picture beside it */
+    "float4 ps(V i) : SV_Target {\n"
+    "    uint row = min((uint)(i.uv.y * 200), 199u), k = (row >> 5) & 3;\n"
+    "    uint4 r = rows[row >> 7];\n"
+    "    uint w = k == 0 ? r.x : k == 1 ? r.y : k == 2 ? r.z : r.w;\n"
+    "    if ((w >> (row & 31)) & 1) return float4(gt.Sample(s, i.uv).rgb * green.rgb, 1);\n"
+    "    return float4(ct.Sample(s, i.uv).rgb * colour.rgb, 1);\n"
+    "}\n";
+
+typedef struct SideConsts {
+    uint32_t rows[8];
+    float colour[4], green[4];
+} SideConsts;
+
+static ID3D11VertexShader *g_side_vs;
+static ID3D11PixelShader *g_side_ps;
+static ID3D11Buffer *g_side_cb;
+static ID3D11Texture2D *g_side_tex[4];
+static ID3D11ShaderResourceView *g_side_srv[4];
+static uint32_t *g_side_px[4]; /* to upload (NULL once uploaded) */
+static int g_side_w, g_side_h;
+static HostMenuSides g_sides; /* under g_city_lock */
+
 /* a capture (a screenshot) of the next picture */
 static volatile LONG g_capture_wanted;
 static uint32_t *g_capture;
@@ -328,6 +365,27 @@ void gpu_city_frame(const HostCityQuad *quads, int n, int x0, int y0, int x1, in
     ReleaseSRWLockExclusive(&g_city_lock);
 }
 
+void gpu_menu_side_images(const uint32_t *const px[4], int w, int h)
+{
+    int k;
+    AcquireSRWLockExclusive(&g_city_lock);
+    for (k = 0; k < 4; k++) {
+        free(g_side_px[k]);
+        g_side_px[k] = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)w * (size_t)h);
+        if (g_side_px[k] != NULL) memcpy(g_side_px[k], px[k], sizeof(uint32_t) * (size_t)w * (size_t)h);
+    }
+    g_side_w = w;
+    g_side_h = h;
+    ReleaseSRWLockExclusive(&g_city_lock);
+}
+
+void gpu_menu_sides(const HostMenuSides *s)
+{
+    AcquireSRWLockExclusive(&g_city_lock);
+    g_sides = *s;
+    ReleaseSRWLockExclusive(&g_city_lock);
+}
+
 void gpu_city_off(void)
 {
     AcquireSRWLockExclusive(&g_city_lock);
@@ -576,7 +634,15 @@ shaders:
 
 void gpu_shutdown(void)
 {
+    int side;
     if (g_ctx != NULL) ID3D11DeviceContext_ClearState(g_ctx);
+    for (side = 0; side < 4; side++) {
+        RELEASE(g_side_srv[side]);
+        RELEASE(g_side_tex[side]);
+    }
+    RELEASE(g_side_vs);
+    RELEASE(g_side_ps);
+    RELEASE(g_side_cb);
     RELEASE(g_srv);
     RELEASE(g_tex);
     RELEASE(g_atlas_srv);
@@ -1038,6 +1104,98 @@ int gpu_capture_take(uint32_t **pixels, int *w, int *h)
     return 1;
 }
 
+/* the menu's sides, each in its columns of the frame (fw wide in `dst`), before the frame */
+static void draw_menu_sides(RECT dst, int fw)
+{
+    HostMenuSides s;
+    int k, side;
+    AcquireSRWLockExclusive(&g_city_lock);
+    s = g_sides;
+    for (k = 0; k < 4; k++)
+        if (g_side_px[k] != NULL) {
+            D3D11_TEXTURE2D_DESC td;
+            D3D11_SUBRESOURCE_DATA sd;
+            RELEASE(g_side_srv[k]);
+            RELEASE(g_side_tex[k]);
+            memset(&td, 0, sizeof td);
+            td.Width = (UINT)g_side_w;
+            td.Height = (UINT)g_side_h;
+            td.MipLevels = td.ArraySize = 1;
+            td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            td.SampleDesc.Count = 1;
+            td.Usage = D3D11_USAGE_IMMUTABLE;
+            td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            sd.pSysMem = g_side_px[k];
+            sd.SysMemPitch = (UINT)g_side_w * 4u;
+            sd.SysMemSlicePitch = 0;
+            if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, &sd, &g_side_tex[k])) ||
+                FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_side_tex[k], NULL,
+                                                             &g_side_srv[k])))
+                RELEASE(g_side_tex[k]);
+            free(g_side_px[k]);
+            g_side_px[k] = NULL;
+        }
+    ReleaseSRWLockExclusive(&g_city_lock);
+    if (!s.on || fw <= 0 || g_side_srv[0] == NULL || g_side_srv[1] == NULL || g_side_srv[2] == NULL ||
+        g_side_srv[3] == NULL)
+        return;
+    if (g_side_ps == NULL) {
+        ID3DBlob *vsb = compile(k_side_shader, sizeof k_side_shader - 1, "vs", "vs_4_0");
+        ID3DBlob *psb = compile(k_side_shader, sizeof k_side_shader - 1, "ps", "ps_4_0");
+        D3D11_BUFFER_DESC bd;
+        memset(&bd, 0, sizeof bd);
+        bd.ByteWidth = sizeof(SideConsts);
+        bd.Usage = D3D11_USAGE_DYNAMIC;
+        bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (vsb != NULL && psb != NULL &&
+            SUCCEEDED(ID3D11Device_CreateVertexShader(g_dev, ID3D10Blob_GetBufferPointer(vsb),
+                                                      ID3D10Blob_GetBufferSize(vsb), NULL, &g_side_vs)) &&
+            SUCCEEDED(ID3D11Device_CreateBuffer(g_dev, &bd, NULL, &g_side_cb)))
+            ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(psb), ID3D10Blob_GetBufferSize(psb),
+                                           NULL, &g_side_ps);
+        RELEASE(vsb);
+        RELEASE(psb);
+        if (g_side_ps == NULL) return;
+    }
+    for (side = 0; side < 2; side++) {
+        D3D11_MAPPED_SUBRESOURCE map;
+        D3D11_VIEWPORT vp;
+        ID3D11ShaderResourceView *srv[2];
+        SideConsts c;
+        float sx = (float)(dst.right - dst.left) / (float)fw;
+        memset(&c, 0, sizeof c);
+        memcpy(c.rows, s.green_rows[side], sizeof s.green_rows[side]);
+        for (k = 0; k < 3; k++) {
+            c.colour[k] = s.bright[0][k];
+            c.green[k] = s.bright[1][k];
+        }
+        if (FAILED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_side_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map)))
+            return;
+        memcpy(map.pData, &c, sizeof c);
+        ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_side_cb, 0);
+        vp.TopLeftX = (float)dst.left + (float)s.x0[side] * sx;
+        vp.TopLeftY = (float)dst.top;
+        vp.Width = (float)(s.x1[side] - s.x0[side]) * sx;
+        vp.Height = (float)(dst.bottom - dst.top);
+        vp.MinDepth = 0;
+        vp.MaxDepth = 1;
+        srv[0] = g_side_srv[side];
+        srv[1] = g_side_srv[2 + side];
+        ID3D11DeviceContext_RSSetViewports(g_ctx, 1, &vp);
+        ID3D11DeviceContext_RSSetState(g_ctx, NULL);
+        ID3D11DeviceContext_IASetPrimitiveTopology(g_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ID3D11DeviceContext_IASetInputLayout(g_ctx, NULL);
+        ID3D11DeviceContext_VSSetShader(g_ctx, g_side_vs, NULL, 0);
+        ID3D11DeviceContext_PSSetShader(g_ctx, g_side_ps, NULL, 0);
+        ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 2, srv);
+        ID3D11DeviceContext_PSSetSamplers(g_ctx, 0, 1, &g_linear);
+        ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_side_cb);
+        ID3D11DeviceContext_OMSetBlendState(g_ctx, NULL, NULL, 0xFFFFFFFFu);
+        ID3D11DeviceContext_Draw(g_ctx, 3, 0);
+    }
+}
+
 void gpu_present(const uint32_t *pixels, int w, int h, RECT dst, int sharp)
 {
     static const float black[4] = {0, 0, 0, 1};
@@ -1054,8 +1212,12 @@ void gpu_present(const uint32_t *pixels, int w, int h, RECT dst, int sharp)
     vp.MinDepth = 0;
     vp.MaxDepth = 1;
     ID3D11DeviceContext_RSSetViewports(g_ctx, 1, &vp);
-    /* the city first (when the frame is see-through over it) */
+    /* the city first (when the frame is see-through over it); a wide menu's sides */
     if (sharp && pixels != NULL && w > 0 && h > 0) draw_city(dst, w, h);
+    if (pixels != NULL && h == 200 && w > 320) {
+        draw_menu_sides(dst, w);
+        ID3D11DeviceContext_RSSetViewports(g_ctx, 1, &vp);
+    }
     if (pixels != NULL && w > 0 && h > 0 && texture(w, h) &&
         SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_tex, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
         Consts c;

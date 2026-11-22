@@ -220,6 +220,19 @@ int host_city_gpu(void)
     return 0;
 }
 
+int host_menu_side_images(const uint32_t *const px[4], int w, int h)
+{
+    (void)px;
+    (void)w;
+    (void)h;
+    return 0;
+}
+
+void host_menu_sides(const HostMenuSides *s)
+{
+    (void)s;
+}
+
 void host_city_reset(void)
 {
 }
