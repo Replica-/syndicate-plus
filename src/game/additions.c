@@ -1342,13 +1342,26 @@ static void config_grids(uint32_t *rgb, int w, int h, const uint8_t *index, cons
     config_pointer(rgb, w, h, index, pal);
 }
 
+/* the company an agent of the mission belongs to: the one whose agents (from the first, COMPANY_SQUAD) it is among */
+static int agent_company(int ped)
+{
+    int c;
+    for (c = 0; c < 8; c++) {
+        int first = M[g_addrs->companies + (uint32_t)c * g_addrs->company_size + COMPANY_SQUAD];
+        if (ped >= first && ped < first + AGENTS_A_COMPANY) return c;
+    }
+    return ped / AGENTS_A_COMPANY < 8 ? ped / AGENTS_A_COMPANY : -1;
+}
+
 static uint32_t hat_colour(int ped)
 {
     uint32_t company, c;
-    if (ped >= 8 * AGENTS_A_COMPANY || M[g_addrs->peds + (uint32_t)ped * PED_SIZE + PED_TYPE] != 2) return 0;
-    if (g_player_colour != 0 && ped / AGENTS_A_COMPANY == (int16_t)RD16(g_addrs->player))
-        return g_player_colour & 0xFFFFFFu;
-    company = g_addrs->companies + (uint32_t)(ped / AGENTS_A_COMPANY) * g_addrs->company_size;
+    int owner;
+    if (ped < 0 || ped >= NB_PEDS || M[g_addrs->peds + (uint32_t)ped * PED_SIZE + PED_TYPE] != 2) return 0;
+    owner = agent_company(ped);
+    if (owner < 0) return 0;
+    if (g_player_colour != 0 && owner == (int16_t)RD16(g_addrs->player)) return g_player_colour & 0xFFFFFFu;
+    company = g_addrs->companies + (uint32_t)owner * g_addrs->company_size;
     c = company_rgb(company, g_overlay_pal);
     return c == g_overlay_pal[HAT_COLOUR] ? 0 : c;
 }

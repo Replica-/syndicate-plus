@@ -129,8 +129,8 @@ static void write_bmp(const char *path, const uint32_t *pix, int w, int h)
     fclose(f);
 }
 
-/* the mission's menu: what the headless program can change (time of day and shadows with --gpu, the routes) */
-static int g_opt_time, g_opt_shadows = 1, g_opt_routes = 1, g_opt_hd = 1;
+/* the mission's menu: what the headless program can change (time of day with --gpu, the routes, HD) */
+static int g_opt_time, g_opt_routes = 1, g_opt_hd = 1;
 
 int host_options(HostOption *o, int max)
 {
@@ -138,14 +138,11 @@ int host_options(HostOption *o, int max)
     if (max < 3) return 0;
     snprintf(o[0].name, sizeof o[0].name, "TIME OF DAY");
     snprintf(o[0].value, sizeof o[0].value, "%s", times[g_opt_time % 5]);
-    snprintf(o[1].name, sizeof o[1].name, "SUN SHADOWS");
-    snprintf(o[1].value, sizeof o[1].value, "%s", g_opt_shadows ? "ON" : "OFF");
-    snprintf(o[2].name, sizeof o[2].name, "SQUAD ROUTES");
-    snprintf(o[2].value, sizeof o[2].value, "%s", g_opt_routes ? "ON" : "OFF");
-    if (max < 4) return 3;
-    snprintf(o[3].name, sizeof o[3].name, "HD TEXTURES");
-    snprintf(o[3].value, sizeof o[3].value, "%s", g_opt_hd ? "ON" : "OFF");
-    return 4;
+    snprintf(o[1].name, sizeof o[1].name, "SQUAD ROUTES");
+    snprintf(o[1].value, sizeof o[1].value, "%s", g_opt_routes ? "ON" : "OFF");
+    snprintf(o[2].name, sizeof o[2].name, "HD TEXTURES");
+    snprintf(o[2].value, sizeof o[2].value, "%s", g_opt_hd ? "ON" : "OFF");
+    return 3;
 }
 
 void host_option_step(int index, int dir)
@@ -156,14 +153,9 @@ void host_option_step(int index, int dir)
         gpu_set_time(g_opt_time);
 #endif
     } else if (index == 1) {
-        g_opt_shadows = !g_opt_shadows;
-#ifdef _WIN32
-        gpu_set_shadows(g_opt_shadows);
-#endif
-    } else if (index == 2) {
         g_opt_routes = !g_opt_routes;
         game_set_routes(g_opt_routes);
-    } else if (index == 3) {
+    } else if (index == 2) {
         g_opt_hd = !g_opt_hd;
         game_set_hd(g_opt_hd);
     }
@@ -514,7 +506,6 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--gpu") && sscanf(v, "%dx%d", &g_gpu_w, &g_gpu_h) == 2) i++;
 #ifdef _WIN32
         else if (!strcmp(a, "--screenshot") && strchr(v, ':')) g_shot_ms = (uint32_t)atoi(v), g_shot_file = strchr(v, ':') + 1, i++;
-        else if (!strcmp(a, "--shadows")) gpu_set_shadows(strcmp(v, "off") != 0), i++;
         else if (!strcmp(a, "--time"))
             gpu_set_time(!strcmp(v, "day") ? 1 : !strcmp(v, "dusk") ? 2 : !strcmp(v, "night") ? 3 : !strcmp(v, "dawn") ? 4 : 0), i++;
 #endif
