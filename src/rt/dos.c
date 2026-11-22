@@ -533,7 +533,6 @@ static int exec_program(const char *prog, const char *args)
     snprintf(tryp, sizeof tryp, "%s", prog);
     if (strchr(tryp, '.') == NULL) snprintf(tryp + strlen(tryp), sizeof tryp - strlen(tryp), ".EXE");
     dos_canon(tryp, canon, sizeof canon);
-    if (game_skip_program(canon)) return 0;
     def = game_find_module(canon);
     if (def == NULL) {
         rt_log("exec: no recompiled program for %s", canon);

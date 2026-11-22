@@ -1890,12 +1890,12 @@ static void load_menu_font(void)
     VFile *f;
     int i;
     g_font_loaded = 1;
-    snprintf(path, sizeof path, "%s/%s/DATA/MFNT-0.DAT", rt_game_dir, g_addrs->ar ? "DATADISK" : "SYNDICAT");
+    snprintf(path, sizeof path, "%s/%s/DATA/MFNT-0.DAT", rt_game_dir, g_addrs && g_addrs->ar ? "DATADISK" : "SYNDICAT");
     f = vfs_open(path, "rb");
     if (f == NULL) return;
     nd = vfs_read(f, dat, sizeof dat);
     vfs_close(f);
-    snprintf(path, sizeof path, "%s/%s/DATA/MFNT-0.TAB", rt_game_dir, g_addrs->ar ? "DATADISK" : "SYNDICAT");
+    snprintf(path, sizeof path, "%s/%s/DATA/MFNT-0.TAB", rt_game_dir, g_addrs && g_addrs->ar ? "DATADISK" : "SYNDICAT");
     f = vfs_open(path, "rb");
     if (f == NULL) return;
     nt = vfs_read(f, tab, sizeof tab);
@@ -2058,9 +2058,9 @@ static int cover_x(int k)
     return 160 - COVER_W - PICK_COVER_GAP / 2 + k * (COVER_W + PICK_COVER_GAP);
 }
 
-/* the choice on the game's picture (320 x 200), its keys and clicks acted on: the game run (it goes on to its main
- * menu) or the other one (game.c ends this one) */
-static void game_pick(uint32_t *pic)
+/* the choice, drawn as a 320 x 200 picture, its keys and clicks acted on: the game chosen (1 American Revolt, 0
+ * Syndicate), -1 while none is */
+static int game_pick(uint32_t *pic)
 {
     static const char *const names[2] = {"SYNDICATE", "AMERICAN REVOLT"};
     int k, x, y, mx, my, act = 0;
@@ -2068,7 +2068,6 @@ static void game_pick(uint32_t *pic)
     g_pick_key = 0;
     if (!g_covers_loaded) load_covers();
     if (!g_font_loaded) load_menu_font();
-    if (g_pick_sel < 0) g_pick_sel = g_addrs->ar != 0;
     if ((key & 0xFFu) == 0x4B || (key & 0xFFu) == 0x4D) g_pick_sel = !g_pick_sel;
     if ((key & 0xFFu) == 0x1C) act = 1;
     menu_mouse(&mx, &my);
@@ -2082,9 +2081,8 @@ static void game_pick(uint32_t *pic)
     g_pick_click = 0;
     if (act) {
         g_pick_active = 0;
-        g_menu_hold = g_menu_buttons != 0; /* the click is not the main menu's */
-        game_choice_made(g_pick_sel);      /* the other game: does not return */
-        return;
+        g_menu_hold = g_menu_buttons != 0; /* the click is not the game's */
+        return g_pick_sel;
     }
     /* over all of the game's picture (no game's menu yet), in the menus' frame */
     for (y = 0; y < 200; y++)
@@ -2117,6 +2115,38 @@ static void game_pick(uint32_t *pic)
                 if (px >= 0 && px < 320 && py >= 0 && py < 200) pic[py * 320 + px] = arrow[y][x] == '#' ? MENU_BRIGHT : 0;
             }
     }
+    return -1;
+}
+
+int game_pick_first(int revolt)
+{
+    static uint32_t pic[320 * 200], rgb[HOST_CANVAS_MAX * 200];
+    static uint8_t index[320 * 200];
+    static uint32_t pal[256];
+    int chosen = -1;
+    g_pick_sel = revolt != 0;
+    g_pick_active = 1;
+    g_pick_key = 0;
+    g_pick_click = 0;
+    while (chosen < 0 && !host_should_quit()) {
+        int w = host_menu_width();
+        w = w < 320 ? 320 : w > 320 + 2 * MENU_SIDE_W ? 320 + 2 * MENU_SIDE_W : w;
+        g_menu_w = w;
+        g_menu_off = (w - 320) / 2;
+        rt_mouse_window(g_menu_off * 65536 / w, (g_menu_off + 320) * 65536 / w);
+        chosen = game_pick(pic);
+        if (chosen >= 0) break;
+        if (w == 320) {
+            memcpy(rgb, pic, sizeof pic);
+        } else {
+            wide_menu(index, pal, pic, rgb, w);
+        }
+        host_present(rgb, w, 200);
+        host_sleep_us(16000);
+    }
+    g_pick_active = 0;
+    rt_mouse_window(0, 65536);
+    return host_should_quit() ? -1 : chosen;
 }
 
 /* drawn over the mission, its keys and clicks acted on (game thread) */
@@ -2280,8 +2310,6 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
             for (y = 0; y < 200; y++) memcpy(game + y * 320, rgb + y * w, sizeof *game * 320);
         menu_true_colour(index, palette, pic, 320, h);
         if (config_shown()) config_grids(pic, 320, h, index, palette);
-        if (!g_pick_active && game_choice_offered() && g_desk) g_pick_active = 1; /* before the main menu comes up */
-        if (g_pick_active) game_pick(pic);
         g_menu_w = w;
         g_menu_off = (w - 320) / 2;
         rt_mouse_window(g_menu_off * 65536 / w, (g_menu_off + 320) * 65536 / w);

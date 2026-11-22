@@ -144,11 +144,18 @@ def name(f):
 
 # ---- the launcher ----
 
+PICK = ['1000:enter']  # the game offered first, on the choice of game
+
+
 @test()
 def launcher(ctx):
-    """with the setup SYND.EXE made (SYND\\SYND.INF), the game chosen last starts at once, not the launcher:
-    Syndicate the first time"""
-    r = ctx.run('first', 6)
+    """with the setup SYND.EXE made (SYND\\SYND.INF), the choice of game comes first, not the launcher, and nothing
+    runs until it is made; Enter there starts Syndicate (offered first the first time) with the setup"""
+    w = ctx.run('wait', 4)
+    check(not w.ran('SYND.EXE') and not w.ran(r'SYNDICAT\MAIN.EXE') and not w.ran(r'DATADISK\MAIN.EXE'),
+          'a game started before the choice was made')
+    check(is_green_screen(w.last()), 'the choice of game is not on the screen (%s)' % name(w.last()))
+    r = ctx.run('first', 6, inputs=PICK)
     check(not r.ran('SYND.EXE'), 'SYND.EXE started')
     check(r.ran(r'SYNDICAT\MAIN.EXE') and '/c0 /iirq7 /idma1 /iio220' in r.log,
           'SYNDICAT\\MAIN.EXE did not start with the setup')
@@ -157,7 +164,7 @@ def launcher(ctx):
 @test()
 def launcher_syndicate(ctx):
     """Syndicate starts with its intro"""
-    r = ctx.run('first', 8)
+    r = ctx.run('first', 8, inputs=PICK)
     check(r.ran(r'SYNDICAT\MAIN.EXE'), 'SYNDICAT\\MAIN.EXE did not start')
     check(r.ran(r'SYNDICAT\INTRO.EXE'), 'the intro did not start')
 
@@ -170,20 +177,21 @@ def chosen_revolt(ctx):
 
 @test()
 def launcher_revolt(ctx):
-    """American Revolt chosen last (game.txt): it starts, with its intro"""
+    """American Revolt chosen last (game.txt): offered first, Enter starts it with its intro"""
     chosen_revolt(ctx)
-    r = ctx.run('first', 8)
+    r = ctx.run('first', 8, inputs=PICK)
     check(r.ran(r'DATADISK\MAIN.EXE'), 'DATADISK\\MAIN.EXE did not start')
     check(r.ran(r'DATADISK\INTRO.EXE'), 'the intro did not start')
 
 
 @test()
 def choose_game(ctx):
-    """the choice of game before the main menu: Right, Enter there end Syndicate and start American Revolt without
-    its intro, and it is remembered"""
-    r = ctx.run('pick', 20, inputs=['2000:esc', '5000:esc', '9000:esc', '13000:right', '14000:enter'])
+    """the choice of game before either starts: Right, Enter there start American Revolt with its intro (Syndicate
+    never runs), and it is remembered"""
+    r = ctx.run('pick', 8, inputs=['1000:right', '2000:enter'])
     check(r.ran(r'DATADISK\MAIN.EXE'), 'American Revolt did not start')
-    check(not r.ran(r'DATADISK\INTRO.EXE'), 'its intro played')
+    check(r.ran(r'DATADISK\INTRO.EXE'), 'its intro did not play')
+    check(not r.ran(r'SYNDICAT\MAIN.EXE'), 'Syndicate started')
     with open(os.path.join(ctx.user, 'game.txt')) as f:
         check(f.read().startswith('revolt'), 'the choice is not remembered')
 
@@ -194,7 +202,7 @@ def launcher_language(ctx, prefix, lang):
     with open(os.path.join(ctx.user, 'C', 'SYND', 'SYND.INF'), 'w') as f:
         f.write(prefix + 'main /c0 /iirq7 /idma1 /iio220')
     chosen_revolt(ctx)
-    r = ctx.run('run', 8)
+    r = ctx.run('run', 8, inputs=PICK)
     check(r.ran('DATADISK\\%sMAIN.EXE' % prefix.upper()), 'American Revolt (%s) did not start' % lang)
     check(r.ran('DATADISK\\%sINTRO.EXE' % prefix.upper()), 'the %s intro did not start' % lang)
 

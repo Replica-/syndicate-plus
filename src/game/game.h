@@ -33,11 +33,10 @@ void game_set_player_colour(uint32_t rgb);
 /* the squad's move orders walked as routes over the map's floors when the game's straight walk cannot do them
  * (on by default) */
 void game_set_routes(int on);
-/* the choice of Syndicate or American Revolt before the main menu (game_main runs the one chosen last): offered
- * (once, when the game was started without `start` and both are there); made (the other one: this game ends and
- * game_main runs it, without its introduction; does not return then) */
-int game_choice_offered(void);
-void game_choice_made(int revolt);
+/* the choice of Syndicate or American Revolt, before either starts (when the game was started without `start` and
+ * both are there): the screen until it is made, `revolt` the one offered first; 1 American Revolt, 0 Syndicate, -1
+ * the program is quitting */
+int game_pick_first(int revolt);
 
 #ifdef __cplusplus
 }
