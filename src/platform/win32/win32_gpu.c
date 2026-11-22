@@ -112,6 +112,12 @@ static const char k_city_shader[] =
     "}\n"
     /* the sun's shadow at a point of a tile: its top is a diamond, corners (32, 0), (64, 16), (32, 32), (0, 16) */
     "float texels(V i) { return (float)(1u << ((i.glow >> 4) & 3)); }\n" /* the image's texels a frame pixel */
+    /* a solid tile's face away from the sun (world +x: below the lower right edge of its top) */
+    "float face(V i) {\n"
+    "    float2 r = (i.tex - i.rect.xy) / texels(i);\n"
+    "    if (!(i.glow & 4) || r.x < 32 || r.y < 32 - (r.x - 32) / 2) return 1;\n"
+    "    return 1 - shadow * 0.45;\n"
+    "}\n"
     "float sun(V i) {\n"
     "    float2 r, w;\n"
     "    if (i.shade == 0) return 1;\n"
@@ -151,7 +157,7 @@ static const char k_city_shader[] =
     "    int2 q = (int2)b;\n"
     "    float4 c = lerp(lerp(texel(q, i), texel(q + int2(1, 0), i), f.x),\n"
     "                    lerp(texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f.x), f.y);\n"
-    "    c.rgb *= sun(i);\n"
+    "    c.rgb *= sun(i) * face(i);\n"
     "    if (i.glow & 128) c *= 60.0 / 255.0;\n" /* drawn see-through (B held) */
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
     "}\n"
@@ -166,7 +172,7 @@ static const char k_city_shader[] =
     "    float4 c00 = texel(q, i), c10 = texel(q + int2(1, 0), i), c01 = texel(q + int2(0, 1), i);\n"
     "    float4 c11 = texel(q + int2(1, 1), i);\n"
     "    o.c = lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);\n"
-    "    o.c.rgb *= sun(i);\n"
+    "    o.c.rgb *= sun(i) * face(i);\n"
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x),\n"
     "               lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"

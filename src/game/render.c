@@ -192,6 +192,7 @@ static int g_translucent; /* the tile being put is one of them */
 #define SEE_THROUGH_ALPHA 60 /* of 255, as FreeSynd's */
 static uint32_t g_shade; /* the shadow at the corners of the tile being put (HostCityQuad.shade) */
 static int g_shade_in;   /* the tile being put is in a shadow (its cell: the shadow's outline is the cells') */
+static int g_solid;      /* the tile being put is solid: its face away from the sun is darker */
 static uint32_t g_shade_nb; /* its 4 neighbours in a shadow: bits 1 x - 1, 2 x + 1, 4 y - 1, 8 y + 1 (HostCityQuad.hat) */
 
 #define HAT_INDEX 6  /* the hats' colour in the agents' sprites */
@@ -255,7 +256,8 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->flip = (uint8_t)(flipped != 0);
     q->shade = image < IMAGE_SPRITES || image >= IMAGE_GROUND ? g_shade : 0;
     q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0) |
-                        (g_shade_in && (image < IMAGE_SPRITES || image >= IMAGE_GROUND) ? HOST_GLOW_SHADOW : 0));
+                        (g_shade_in && (image < IMAGE_SPRITES || image >= IMAGE_GROUND) ? HOST_GLOW_SHADOW : 0) |
+                        (g_solid && (image < IMAGE_SPRITES || image >= IMAGE_GROUND) ? HOST_GLOW_SOLID : 0));
     q->hat = hat; /* its top byte: the rows of the image with the hat */
     if (image < IMAGE_SPRITES || image >= IMAGE_GROUND) q->hat = g_shade_nb; /* a tile: its neighbours' shadow */
 }
@@ -1232,11 +1234,12 @@ static int static_lights(uint32_t a, int frame, float ax, float ay)
     return RENDER_GLOW_NONE;
 }
 
-/* ---- the sun's shadows: the sun high at the top left of the screen (from world -x, 45 degrees up), as FreeSynd's:
- * a surface seen from above (a floor, a road, a slope, a roof) with a solid tile above it towards the sun is in its
- * shadow, the less the further away that tile is (up to SHADOW_LENGTH tiles); the shade of the 4 cells around
- * each corner of a tile's top is blended across it (on the GPU), so the shadows fade pixel by pixel ---- */
-#define SHADOW_LENGTH 8
+/* ---- the sun's shadows: the sun high at the top left of the screen (from world -x, 45 degrees up; a level is half
+ * a cell high, so a solid tile shades the cells up to twice its height above the surface away): a surface seen from
+ * above (a floor, a road, a slope, a roof) with a solid tile that high towards the sun is in its shadow, the less the
+ * further away that tile is (up to SHADOW_LENGTH cells); on the GPU the shadow is solid with soft edges and fades
+ * from the building.  The faces of solid tiles turned away from the sun (towards world +x) are darker ---- */
+#define SHADOW_LENGTH 5
 
 void render_set_tile_types(const uint8_t types[256])
 {
@@ -1267,8 +1270,9 @@ static int cell_shade(uint32_t cols, int mx, int my, int mz, int x, int y, int z
 {
     int d;
     if (!surface_type(type_at(cols, mx, my, mz, x, y, z)) || solid_type(type_at(cols, mx, my, mz, x, y, z + 1))) return 0;
-    for (d = 1; d <= SHADOW_LENGTH && z + d < mz; d++)
-        if (solid_type(type_at(cols, mx, my, mz, x - d, y, z + d))) return 255 * (SHADOW_LENGTH + 1 - d) / SHADOW_LENGTH;
+    for (d = 1; d <= SHADOW_LENGTH && z + 2 * d - 1 < mz; d++)
+        if (solid_type(type_at(cols, mx, my, mz, x - d, y, z + 2 * d - 1)))
+            return 255 * (SHADOW_LENGTH + 1 - d) / SHADOW_LENGTH;
     return 0;
 }
 
@@ -1525,6 +1529,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         g_shade = t.gpu ? sun_shade(cols, mx, my, mz, tx, ty, tz) : 0;
                         g_shade_in = g_shade != 0 && cell_shade(cols, mx, my, mz, tx, ty, tz) > 0;
                         g_shade_nb = 0;
+                        g_solid = t.gpu && g_have_types && solid_type(type_at(cols, mx, my, mz, tx, ty, tz));
                         if (g_shade != 0) {
                             static const int nb[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
                             int e;
@@ -1540,6 +1545,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                                 ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
                         g_shade = 0;
                         g_shade_in = 0;
+                        g_solid = 0;
                         g_translucent = 0;
                         if (t.gpu) tile_lights_at(tid, ffx + (float)render_tile_dx, ffy + (float)render_tile_dy);
                         if (g_ndrawn < NB_DRAWN) {

@@ -62,6 +62,7 @@ typedef struct HostCityQuad {
                        * corner clockwise (a byte each, the first the lowest); blended between them */
 } HostCityQuad;
 #define HOST_GLOW_SHADOW 0x40u /* HostCityQuad.glow: the tile is in the sun's shadow (`shade`: how deep) */
+#define HOST_GLOW_SOLID 0x04u  /* HostCityQuad.glow: a solid tile: its face away from the sun (world +x) is darker */
 /* a light in the city (a lamp): a soft ellipse of light, centre x, y, radii rx, ry (frame pixels) */
 typedef struct HostCityLight {
     float x, y, rx, ry;
