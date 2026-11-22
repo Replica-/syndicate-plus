@@ -4,10 +4,10 @@
  * are scaled with "sharp bilinear" filtering: each source pixel is a solid square, and only the one output pixel on
  * the border between two is blended, so the pixels keep the same size and sharp edges at any window size.
  *
- * In missions the city may come as a list of images instead (host_city_frame): the tiles and sprites, palette
- * indices, are packed in one atlas texture; each image is drawn at its exact place (between pixels) at the window's
- * resolution, through the frame's palette, with the same sharp filtering; the frame is drawn over it, see-through
- * where its pixels say so (their top byte: 255 the city shows).  Shown with vsync.
+ * In missions the city may come as a list of images instead (host_city_frame): the tiles and sprites, in true
+ * colour, are packed in one atlas texture; each image is drawn at its exact place (between pixels) at the window's
+ * resolution, with the same sharp filtering; the frame is drawn over it, see-through where its pixels say so (their
+ * top byte: 255 the city shows).  Shown with vsync.
  *
  * At dusk and at night (gpu_set_time) the city is drawn into a texture of its own, and its glowing pixels (the tiles
  * that glow: their brightest pixels or all of them) into another; a light map is cleared to the time's ambient
@@ -46,8 +46,8 @@ static ID3D11SamplerState *g_linear;
 static ID3D11BlendState *g_blend;
 static ID3D11RasterizerState *g_scissor;
 static ID3D11Buffer *g_cb, *g_city_cb, *g_city_vb;
-static ID3D11Texture2D *g_tex, *g_atlas, *g_paltex, *g_rgb_atlas;
-static ID3D11ShaderResourceView *g_srv, *g_atlas_srv, *g_pal_srv, *g_rgb_atlas_srv;
+static ID3D11Texture2D *g_tex, *g_atlas;
+static ID3D11ShaderResourceView *g_srv, *g_atlas_srv;
 static int g_tex_w, g_tex_h, g_city_vb_cap;
 static int g_win_w, g_win_h;
 /* offscreen (gpu_init(NULL): the headless tests): the picture is drawn into a texture and read back */
@@ -87,9 +87,7 @@ static const char k_shader[] =
 /* the city: an image's corner, its texels there, its rectangle in the atlas, its hat colour */
 static const char k_city_shader[] =
     "cbuffer C : register(b0) { float2 frame_size; float scale; float shadow; };\n"
-    "Texture2D<uint> atlas : register(t0);\n"
-    "Texture2D<float4> pal : register(t1);\n"
-    "Texture2D<float4> rgb_atlas : register(t2);\n"
+    "Texture2D<float4> atlas : register(t0);\n"
     "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2;"
     " uint glow : TEXCOORD3; uint shade : TEXCOORD4; };\n"
     "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1;"
@@ -102,17 +100,13 @@ static const char k_city_shader[] =
     "    return o;\n"
     "}\n"
     "float4 texel(int2 p, V i) {\n"
-    "    uint c;\n"
+    "    float4 t;\n"
     "    if (p.x < (int)i.rect.x || p.y < (int)i.rect.y || p.x >= (int)i.rect.z || p.y >= (int)i.rect.w) return 0;\n"
-    "    if (i.glow & 64) {\n" /* a true colour image */
-    "        float4 t = rgb_atlas.Load(int3(p, 0));\n"
-    "        return t.a > 0.5 ? float4(t.rgb, 1) : 0;\n"
-    "    }\n"
-    "    c = atlas.Load(int3(p, 0));\n"
-    "    if (c == 255) return 0;\n"
-    "    if (c == 6 && p.y - (int)i.rect.y < (int)(i.hat >> 24))\n"
+    "    t = atlas.Load(int3(p, 0));\n"
+    "    if (t.a < 0.5) return 0;\n"
+    "    if (t.a < 0.998 && p.y - (int)i.rect.y < (int)(i.hat >> 24))\n" /* alpha 254: the hat's colour */
     "        return float4(((i.hat >> 16) & 255) / 255.0, ((i.hat >> 8) & 255) / 255.0, (i.hat & 255) / 255.0, 1);\n"
-    "    return float4(pal.Load(int3(c, 0, 0)).rgb, 1);\n"
+    "    return float4(t.rgb, 1);\n"
     "}\n"
     /* the sun's shadow at a point of a tile: its top is a diamond, corners (32, 0), (64, 16), (32, 32), (0, 16) */
     "float sun(V i) {\n"
@@ -120,8 +114,9 @@ static const char k_city_shader[] =
     "    if (i.shade == 0) return 1;\n"
     "    r = i.tex - i.rect.xy - float2(32, 0);\n"
     "    w = saturate(float2(r.x / 32 + r.y / 16, r.y / 16 - r.x / 32) * 0.5);\n"
-    "    return 1 - shadow / 255.0 * lerp(lerp(i.shade & 255, (i.shade >> 8) & 255, w.x),\n"
-    "                                     lerp((i.shade >> 24) & 255, (i.shade >> 16) & 255, w.x), w.y);\n"
+    "    return 1 - shadow * smoothstep(0, 1, lerp(lerp(i.shade & 255, (i.shade >> 8) & 255, w.x),\n"
+    "                                            lerp((i.shade >> 24) & 255, (i.shade >> 16) & 255, w.x), w.y)\n"
+    "                                         / 255.0);\n" /* a firmer edge than a straight blend */
     "}\n"
     /* how much of a texel keeps its brightness in the dark (FreeSynd's): all of it (glow 2), its bright pixels by
      * their brightness (1), a road's white lights (3), nothing (0) */
@@ -224,30 +219,21 @@ static const struct {
 
 /* ---- the city's images and list, set on the game thread, drawn on the UI thread ---- */
 #define ATLAS 2048
-#define RGB_ATLAS 1024 /* the true colour images' */
-#define NB_IMAGES (256 + 4096 + 64)
-#define GLOW_RGB 64    /* a vertex's glow: the image is in the true colour atlas */
+#define NB_IMAGES (256 + 4096 + 64) /* the tiles, the sprites, the dirt ground's tiles (render.c) */
 
 typedef struct Image {
-    int w, h, ax, ay; /* size, place in its atlas (w 0: not defined) */
-    int rgb;          /* true colour (4 bytes a pixel, in the true colour atlas) */
-    uint8_t *pixels;  /* to upload (NULL once uploaded) */
+    int w, h, ax, ay; /* size, place in the atlas (w 0: not defined) */
+    uint32_t *pixels; /* to upload (NULL once uploaded) */
 } Image;
-
-/* an atlas packed in shelves, a transparent pixel between images */
-typedef struct Shelves {
-    int x, y, h, size;
-} Shelves;
 
 static SRWLOCK g_city_lock = SRWLOCK_INIT;
 static Image g_images[NB_IMAGES];
-static Shelves g_shelves = {0, 0, 0, ATLAS}, g_rgb_shelves = {0, 0, 0, RGB_ATLAS};
-static int g_atlas_reset;                    /* the atlases must be cleared */
+static int g_shelf_x, g_shelf_y, g_shelf_h; /* the atlas packer */
+static int g_atlas_reset;                    /* the atlas must be cleared */
 static HostCityQuad *g_city_quads;
 static int g_city_n, g_city_cap, g_city_on;
 static HostCityLight *g_city_lights;
 static int g_city_nl, g_city_lcap;
-static uint32_t g_city_pal[256];
 static int g_city_rect[4];
 static float g_city_scale = 1.0f;
 
@@ -268,52 +254,39 @@ void gpu_city_reset(void)
         free(g_images[i].pixels);
         memset(&g_images[i], 0, sizeof g_images[i]);
     }
-    g_shelves.x = g_shelves.y = g_shelves.h = 0;
-    g_rgb_shelves.x = g_rgb_shelves.y = g_rgb_shelves.h = 0;
+    g_shelf_x = g_shelf_y = g_shelf_h = 0;
     g_atlas_reset = 1;
     ReleaseSRWLockExclusive(&g_city_lock);
 }
 
-/* image `id`: w x h pixels of `bytes` bytes each (1: palette indices, 4: true colour) */
-static void define_image(int id, int w, int h, const void *pixels, int bytes)
+void gpu_city_image(int id, int w, int h, const uint32_t *pixels)
 {
     Image *im;
-    Shelves *sh = bytes == 4 ? &g_rgb_shelves : &g_shelves;
     if (id < 0 || id >= NB_IMAGES || w <= 0 || h <= 0 || w > 256 || h > 256) return;
     AcquireSRWLockExclusive(&g_city_lock);
     im = &g_images[id];
-    if (im->w == 0 || im->rgb != (bytes == 4)) {
-        if (sh->x + w + 1 > sh->size) {
-            sh->x = 0;
-            sh->y += sh->h + 1;
-            sh->h = 0;
+    if (im->w == 0) {
+        /* shelves, with a transparent pixel between images */
+        if (g_shelf_x + w + 1 > ATLAS) {
+            g_shelf_x = 0;
+            g_shelf_y += g_shelf_h + 1;
+            g_shelf_h = 0;
         }
-        if (sh->y + h + 1 > sh->size) {
+        if (g_shelf_y + h + 1 > ATLAS) {
             ReleaseSRWLockExclusive(&g_city_lock);
             return; /* full: not drawn */
         }
-        im->ax = sh->x;
-        im->ay = sh->y;
-        sh->x += w + 1;
-        if (h > sh->h) sh->h = h;
+        im->ax = g_shelf_x;
+        im->ay = g_shelf_y;
+        g_shelf_x += w + 1;
+        if (h > g_shelf_h) g_shelf_h = h;
     }
     im->w = w;
     im->h = h;
-    im->rgb = bytes == 4;
     free(im->pixels);
-    im->pixels = (uint8_t *)malloc((size_t)(w * h * bytes));
-    if (im->pixels != NULL) memcpy(im->pixels, pixels, (size_t)(w * h * bytes));
+    im->pixels = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)(w * h));
+    if (im->pixels != NULL) memcpy(im->pixels, pixels, sizeof(uint32_t) * (size_t)(w * h));
     ReleaseSRWLockExclusive(&g_city_lock);
-}
-
-void gpu_city_image(int id, int w, int h, const uint8_t *pixels)
-{
-    define_image(id, w, h, pixels, 1);
-}
-
-void gpu_city_image_rgb(int id, int w, int h, const uint32_t *pixels)
-{
-    define_image(id, w, h, pixels, 4);
 }
 
 void gpu_set_shadows(int on)
@@ -326,7 +299,7 @@ void gpu_set_time(int time)
     InterlockedExchange(&g_time, time < 0 || time >= NB_TIMES ? 0 : time);
 }
 
-void gpu_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
+void gpu_city_frame(const HostCityQuad *quads, int n, int x0, int y0, int x1, int y1,
                     float scale, const HostCityLight *lights, int nlights)
 {
     AcquireSRWLockExclusive(&g_city_lock);
@@ -350,7 +323,6 @@ void gpu_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, i
     }
     if (n > 0) memcpy(g_city_quads, quads, sizeof *quads * (size_t)n);
     g_city_n = n;
-    memcpy(g_city_pal, palette, sizeof g_city_pal);
     g_city_rect[0] = x0;
     g_city_rect[1] = y0;
     g_city_rect[2] = x1;
@@ -466,22 +438,12 @@ static int make_city(void)
     memset(&td, 0, sizeof td);
     td.Width = td.Height = ATLAS;
     td.MipLevels = td.ArraySize = 1;
-    td.Format = DXGI_FORMAT_R8_UINT;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     td.SampleDesc.Count = 1;
     td.Usage = D3D11_USAGE_DEFAULT;
     td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_atlas)) ||
         FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_atlas, NULL, &g_atlas_srv)))
-        return 0;
-    td.Width = td.Height = RGB_ATLAS;
-    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_rgb_atlas)) ||
-        FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_rgb_atlas, NULL, &g_rgb_atlas_srv)))
-        return 0;
-    td.Width = 256;
-    td.Height = 1;
-    if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_paltex)) ||
-        FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_paltex, NULL, &g_pal_srv)))
         return 0;
     memset(&bd, 0, sizeof bd);
     bd.ByteWidth = sizeof(CityConsts);
@@ -616,10 +578,6 @@ void gpu_shutdown(void)
     RELEASE(g_tex);
     RELEASE(g_atlas_srv);
     RELEASE(g_atlas);
-    RELEASE(g_rgb_atlas_srv);
-    RELEASE(g_rgb_atlas);
-    RELEASE(g_pal_srv);
-    RELEASE(g_paltex);
     RELEASE(g_city_vb);
     RELEASE(g_city_cb);
     RELEASE(g_light_vb);
@@ -801,21 +759,12 @@ static void draw_city(RECT dst, int fw, int fh)
     }
     if (g_atlas_reset) {
         /* everything transparent */
-        static uint8_t clear[ATLAS];
+        static uint32_t clear[ATLAS]; /* 0: transparent */
         D3D11_BOX box = {0, 0, 0, ATLAS, 1, 1};
-        memset(clear, 255, sizeof clear);
-        static uint32_t clear_rgb[RGB_ATLAS];
-        D3D11_BOX rbox = {0, 0, 0, RGB_ATLAS, 1, 1};
         for (i = 0; i < ATLAS; i++) {
             box.top = (UINT)i;
             box.bottom = (UINT)i + 1;
-            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_atlas, 0, &box, clear, ATLAS, 0);
-        }
-        for (i = 0; i < RGB_ATLAS; i++) {
-            rbox.top = (UINT)i;
-            rbox.bottom = (UINT)i + 1;
-            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_rgb_atlas, 0, &rbox, clear_rgb,
-                                                  RGB_ATLAS * 4, 0);
+            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_atlas, 0, &box, clear, ATLAS * 4, 0);
         }
         g_atlas_reset = 0;
     }
@@ -823,13 +772,12 @@ static void draw_city(RECT dst, int fw, int fh)
         Image *im = &g_images[i];
         if (im->pixels != NULL) {
             D3D11_BOX box = {(UINT)im->ax, (UINT)im->ay, 0, (UINT)(im->ax + im->w), (UINT)(im->ay + im->h), 1};
-            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)(im->rgb ? g_rgb_atlas : g_atlas), 0, &box,
-                                                  im->pixels, (UINT)(im->w * (im->rgb ? 4 : 1)), 0);
+            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_atlas, 0, &box, im->pixels,
+                                                  (UINT)im->w * 4, 0);
             free(im->pixels);
             im->pixels = NULL;
         }
     }
-    ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_paltex, 0, NULL, g_city_pal, 256 * 4, 0);
     n = g_city_n;
     zoom = g_city_scale;
     if (n * 6 > verts_cap) {
@@ -862,7 +810,7 @@ static void draw_city(RECT dst, int fw, int fh)
             c[k].rect[2] = (float)(im->ax + im->w);
             c[k].rect[3] = (float)(im->ay + im->h);
             c[k].hat = q->hat;
-            c[k].glow = q->glow | (im->rgb ? GLOW_RGB : 0u);
+            c[k].glow = q->glow;
             c[k].shade = q->shade;
         }
         verts[nv++] = c[0];
@@ -929,13 +877,13 @@ static void draw_city(RECT dst, int fw, int fh)
     cc.frame_size[0] = (float)fw;
     cc.frame_size[1] = (float)fh;
     cc.scale = sx * zoom > 1.0f ? sx * zoom : 1.0f; /* window pixels a texel */
-    cc.shadow = g_shadows ? 0.45f : 0.0f; /* how dark the sun's shadows are (FreeSynd's: 55% of the light) */
+    cc.shadow = g_shadows ? 0.65f : 0.0f; /* how dark the sun's shadows are (35% of the light left) */
     if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_city_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
         memcpy(map.pData, &cc, sizeof cc);
         ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_city_cb, 0);
     }
     {
-        ID3D11ShaderResourceView *srv[3] = {g_atlas_srv, g_pal_srv, g_rgb_atlas_srv};
+        ID3D11ShaderResourceView *srv[1] = {g_atlas_srv};
         int lit = time >= 0 && lit_targets(dst.right - dst.left, dst.bottom - dst.top);
         ID3D11DeviceContext_IASetInputLayout(g_ctx, g_city_layout);
         ID3D11DeviceContext_IASetVertexBuffers(g_ctx, 0, 1, &g_city_vb, &stride, &offset);
@@ -944,7 +892,7 @@ static void draw_city(RECT dst, int fw, int fh)
         ID3D11DeviceContext_VSSetConstantBuffers(g_ctx, 0, 1, &g_city_cb);
         ID3D11DeviceContext_PSSetShader(g_ctx, lit ? g_city_lit_ps : g_city_ps, NULL, 0);
         ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_city_cb);
-        ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 3, srv);
+        ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 1, srv);
         ID3D11DeviceContext_RSSetState(g_ctx, g_scissor);
         ID3D11DeviceContext_OMSetBlendState(g_ctx, g_blend, NULL, 0xFFFFFFFFu);
         if (!lit) {

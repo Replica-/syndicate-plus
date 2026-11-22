@@ -47,16 +47,16 @@ int host_display_timing(uint64_t *vblank_us, uint64_t *period_us);
 /* ---- the city on the GPU (optional) ----
  * In missions the core can hand the platform the city as a list of images to draw, at the display's resolution,
  * under the frame: the frame's pixels then carry a transparency in their top byte (0 opaque, 255: the city shows
- * through).  Images are palette indices (255 transparent), defined once; positions are in the frame's pixels
- * (640 x 480), with fractions. */
+ * through).  Images are in true colour, defined once; positions are in the frame's pixels (640 x 480), with
+ * fractions. */
 typedef struct HostCityQuad {
     float x, y;       /* the image's top left corner in the frame */
     uint16_t image;
     uint8_t flip;     /* drawn mirrored */
     uint8_t glow;     /* in the dark: 0 nothing shines, 1 its brightest pixels, 2 all of it, 3 a road's white lights;
                        * bit 7: drawn almost see-through */
-    uint32_t hat;     /* a colour for the pixels of colour 6 (0x00RRGGBB) in the image's top rows (the top byte: how
-                       * many; 0: none) */
+    uint32_t hat;     /* a colour (0x00RRGGBB) for the image's hat pixels (alpha 254) in its top rows (the top byte:
+                       * how many; 0: none) */
     uint32_t shade;   /* a tile: how deep in the sun's shadow (0..255) the corners of its top are, from its top
                        * corner clockwise (a byte each, the first the lowest); blended between them */
 } HostCityQuad;
@@ -68,16 +68,15 @@ typedef struct HostCityLight {
 #define HOST_LIGHT_GLOW 0x01000000u
 /* 1 when the platform draws the city now (it may decline, e.g. while it records a video) */
 int host_city_gpu(void);
-/* forget every image (new data); then define image `image` (w x h palette indices, row stride w) */
+/* forget every image (new data); then define image `image`: w x h pixels 0xAARRGGBB, row stride w; alpha 255
+ * opaque, 254 opaque and a hat pixel (HostCityQuad.hat), 0 transparent */
 void host_city_reset(void);
-void host_city_image(int image, int w, int h, const uint8_t *pixels);
-/* or image `image` in true colour (w x h of 0xFFRRGGBB; 0: transparent) */
-void host_city_image_rgb(int image, int w, int h, const uint32_t *pixels);
-/* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, with the
- * frame's palette, each image `scale` times its size (the zoom); the lights show when the platform lights the city
- * for a time of day darker than the mission's own look */
-void host_city_frame(const HostCityQuad *quads, int n, const uint32_t *palette, int x0, int y0, int x1, int y1,
-                     float scale, const HostCityLight *lights, int nlights);
+void host_city_image(int image, int w, int h, const uint32_t *pixels);
+/* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, each image
+ * `scale` times its size (the zoom); the lights show when the platform lights the city for a time of day darker
+ * than the mission's own look */
+void host_city_frame(const HostCityQuad *quads, int n, int x0, int y0, int x1, int y1, float scale,
+                     const HostCityLight *lights, int nlights);
 
 /* ---- the options a mission's menu (Escape) shows: the platform's settings ----
  * host_options fills `o` with the options (at most `max`) and returns how many: a name, the value now; any thread.

@@ -69,8 +69,8 @@ static uint16_t rd16(uint32_t a)
 static uint8_t g_types[256]; /* the tiles' types (COL01.DAT), render_set_tile_types */
 static int g_have_types;
 
-/* the images the GPU has (host_city_image): the tiles 0-255, the sprites from 256, then the dirt ground's tiles in
- * true colour (host_city_image_rgb: 2 tiles, each in GROUND_PLACES places of its texture) */
+/* the images the GPU has (host_city_image, in true colour): the tiles 0-255, the sprites from 256, then the dirt
+ * ground's tiles (2 tiles, each in GROUND_PLACES places of its texture) */
 #define IMAGE_SPRITES 256
 #define IMAGE_GROUND (IMAGE_SPRITES + 4096)
 #define GROUND_PLACES 16
@@ -192,11 +192,25 @@ static int g_translucent; /* the tile being put is one of them */
 #define SEE_THROUGH_ALPHA 60 /* of 255, as FreeSynd's */
 static uint32_t g_shade; /* the shadow at the corners of the tile being put (HostCityQuad.shade) */
 
+#define HAT_INDEX 6 /* the hats' colour in the agents' sprites */
+static uint32_t g_image_pal[256]; /* the palette the GPU's images were made with */
+
+/* an image (palette indices, 255 transparent) to the GPU in true colour: colour 6 marked as a hat's (alpha 254) */
+static void define_image(int image, const uint8_t *px, int w, int h)
+{
+    static uint32_t rgb[256 * 256];
+    int i;
+    if (w * h > 256 * 256) return;
+    for (i = 0; i < w * h; i++)
+        rgb[i] = px[i] == 255 ? 0 : (px[i] == HAT_INDEX ? 0xFE000000u : 0xFF000000u) | (g_image_pal[px[i]] & 0xFFFFFFu);
+    host_city_image(image, w, h, rgb);
+}
+
 static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat, int glow)
 {
     HostCityQuad *q;
     if (!g_defined[image]) {
-        host_city_image(image, w, h, px);
+        if (px != NULL) define_image(image, px, w, h);
         g_defined[image] = 1;
     }
     if (g_nquads == g_quads_cap) {
@@ -216,7 +230,6 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->hat = hat; /* its top byte: the rows of the image with the hat */
 }
 
-#define HAT_INDEX 6 /* the hats' colour in the agents' sprites */
 
 /* `hat`: a colour for the pixels of colour HAT_INDEX (0: as they are) */
 static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, int dy, int flipped, uint32_t hat);
@@ -430,7 +443,7 @@ static void put_ground(const Target *t, int slot, const uint8_t *tl, int tx, int
     float x = g_zoom == 1.0 ? fx : zoom_x(fx), y = g_zoom == 1.0 ? fy : zoom_y(fy);
     if (t->gpu) {
         if (!g_defined[image]) {
-            host_city_image_rgb(image, TILE_W, TILE_H, px);
+            host_city_image(image, TILE_W, TILE_H, px);
             g_defined[image] = 1;
         }
         emit(image, NULL, TILE_W, TILE_H, x, y, 0, 0, tile_glow(image));
@@ -1339,6 +1352,12 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     static Obj objs[2048];
     uint32_t map, cols;
     if (g_ra.map == 0) return;
+    if (rgb == NULL && memcmp(g_image_pal, pal, sizeof g_image_pal) != 0) {
+        /* another palette: the GPU's images are made again in its colours */
+        memcpy(g_image_pal, pal, sizeof g_image_pal);
+        memset(g_defined, 0, sizeof g_defined);
+        host_city_reset();
+    }
     map = rd32(P_MAP);
     cols = map + 12u;
     int mx = (int)rd32(map), my = (int)rd32(map + 4u), mz = (int)rd32(map + 8u), nobj = 0, li, s, k = 0, n = 0, t256;
@@ -1481,6 +1500,6 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         for (i = 0; i < n; i++) hash = (hash ^ b[i]) * 16777619u;
         render_gpu_changed = hash != prev_hash;
         prev_hash = hash;
-        host_city_frame(g_quads, g_nquads, pal, x0, y0, x1, y1, (float)g_zoom, g_lights, g_nlights);
+        host_city_frame(g_quads, g_nquads, x0, y0, x1, y1, (float)g_zoom, g_lights, g_nlights);
     }
 }
