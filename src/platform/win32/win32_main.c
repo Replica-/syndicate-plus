@@ -2,10 +2,10 @@
  * keyboard and the mouse and plays its sound.  The portable core (game_main) runs on its own thread; this file
  * is the UI thread.
  *
- * The picture is drawn on the GPU (Direct3D 11, win32_gpu.c), with GDI only when Direct3D cannot start.  The
- * window follows the system's colour preference (dark or light title bar and menus, changing at once when
- * the preference changes); its system menu has "Full screen" (also Alt+Enter), "CRT scanlines" (also Alt+S;
- * off at first, remembered in Syndicate64.ini), the music and sound volumes (remembered), "Record video" (also
+ * The picture is drawn on the GPU (Direct3D 11, win32_gpu.c; its software rasterizer when the graphics card has
+ * none): there is no other way to draw it.  The window follows the system's colour preference (dark or light title
+ * bar and menus, changing at once when the preference changes); its system menu has "Full screen" (also
+ * Alt+Enter), the music and sound volumes (remembered in Syndicate64.ini), "Record video" (also
  * F12; an MP4 with the sound, made by ffmpeg, in the Videos folder beside the settings), "Screenshot" (also F11;
  * a PNG in Screenshots) and the About box, which has the same layout and behaviour as Civ64's
  * (platform/win32/host_win32.c of that project).
@@ -43,7 +43,6 @@
 
 #include "../../game/game.h"
 #include "../../rt/host.h"
-#include "../../video/crt.h"
 #include "../../video/record.h"
 #include "win32_gpu.h"
 
@@ -52,7 +51,6 @@
 #define ABOUT_URL L"https://github.com/Buyukcaglar/synd"
 #define SC_APP_ABOUT 0x1080u
 #define SC_APP_FULLSCREEN 0x1090u
-#define SC_APP_CRT 0x10A0u
 #define SC_APP_RECORD 0x10B0u
 #define SC_APP_SCREENSHOT 0x10C0u
 #define SC_APP_FPS 0x10D0u
@@ -77,7 +75,6 @@ static char g_game_dir_u8[1024], g_user_dir_u8[1024];
 static int g_minimized, g_modal;
 static int g_in_menu, g_clipped;
 static wchar_t g_ini[MAX_PATH * 2]; /* Syndicate64.ini: next to the program, else in %LOCALAPPDATA%/Syndicate64 */
-static int g_gpu; /* the picture is drawn with Direct3D 11 (win32_gpu.c); else with GDI */
 
 /* ==== the picture ======================================================================================= */
 #define FRAME_MAX_W HOST_CANVAS_MAX
@@ -85,15 +82,13 @@ static int g_gpu; /* the picture is drawn with Direct3D 11 (win32_gpu.c); else w
 static SRWLOCK g_frame_lock = SRWLOCK_INIT;
 static uint32_t g_frame[FRAME_MAX_W * FRAME_MAX_H];
 static int g_fw, g_fh;
-static int g_crt_on;
 static int g_frame_city;            /* the frame being made has the city on the GPU */
-#define WM_APP_SHOT (WM_APP + 7)
 #define WM_APP_OPTION (WM_APP + 8) /* the mission's menu changed option wParam by lParam (1, -1) */
 
-/* the city on the GPU: not while the frame must hold all of the picture (the CRT filter) or without Direct3D */
+/* the city is always on the GPU */
 int host_city_gpu(void)
 {
-    return g_gpu && !g_crt_on;
+    return 1;
 }
 
 void host_city_reset(void)
@@ -116,14 +111,12 @@ void host_city_frame(const HostCityQuad *quads, int n, int x0, int y0, int x1, i
 void host_present(const uint32_t *pixels, int w, int h)
 {
     if (w <= 0 || h <= 0 || w > FRAME_MAX_W || h > FRAME_MAX_H) return;
-    if (!g_frame_city && g_gpu) gpu_city_off();
+    if (!g_frame_city) gpu_city_off();
     g_frame_city = 0;
     AcquireSRWLockExclusive(&g_frame_lock);
     memcpy(g_frame, pixels, sizeof(uint32_t) * (size_t)(w * h));
     g_fw = w;
     g_fh = h;
-    /* with Direct3D the video is of the picture shown (gpu_paint) */
-    if (!g_gpu || g_crt_on) record_frame(g_frame, w, h, host_time_us());
     ReleaseSRWLockExclusive(&g_frame_lock);
     if (g_hwnd != NULL) InvalidateRect(g_hwnd, NULL, FALSE);
 }
@@ -160,77 +153,6 @@ static RECT picture_rect(HWND h)
     return r;
 }
 
-/* ---- the CRT scanline filter (src/video/crt.c), off unless chosen in the system menu ---- */
-static CrtFilter *g_crt;
-static uint32_t *g_crt_buf;
-static size_t g_crt_cap;
-static int g_crt_w, g_crt_h;
-static volatile LONG g_crt_next;
-static int g_crt_chunks;
-static PTP_WORK g_crt_work;
-#define CRT_CHUNK_ROWS 32
-
-static void CALLBACK crt_work(PTP_CALLBACK_INSTANCE inst, PVOID ctx, PTP_WORK work)
-{
-    LONG i;
-    (void)inst;
-    (void)ctx;
-    (void)work;
-    while ((i = InterlockedIncrement(&g_crt_next) - 1) < g_crt_chunks) {
-        int y0 = i * CRT_CHUNK_ROWS, y1 = y0 + CRT_CHUNK_ROWS < g_crt_h ? y0 + CRT_CHUNK_ROWS : g_crt_h;
-        crt_render_rows(g_crt, g_crt_buf + (size_t)y0 * g_crt_w, g_crt_w, y0, y1);
-    }
-}
-
-/* called with g_frame_lock held shared; on success it releases the lock, leaves the filtered picture of the size
- * of `r` in g_crt_buf and returns 1; otherwise returns 0 with the lock still held */
-static int crt_filter(RECT r)
-{
-    int dw = r.right - r.left, dh = r.bottom - r.top, n, i;
-    size_t need = (size_t)dw * (size_t)dh;
-    SYSTEM_INFO si;
-    if (dw <= 0 || dh <= 0) return 0;
-    if (g_crt == NULL && (g_crt = crt_create()) == NULL) return 0;
-    if (need > g_crt_cap) {
-        uint32_t *b = (uint32_t *)realloc(g_crt_buf, need * sizeof *b);
-        if (b == NULL) return 0;
-        g_crt_buf = b;
-        g_crt_cap = need;
-    }
-    if (!crt_prepare(g_crt, g_frame, g_fw, g_fh, dw, dh)) return 0;
-    ReleaseSRWLockShared(&g_frame_lock);
-    /* the rows in chunks over the thread pool */
-    if (g_crt_work == NULL) g_crt_work = CreateThreadpoolWork(crt_work, NULL, NULL);
-    g_crt_w = dw;
-    g_crt_h = dh;
-    g_crt_chunks = (dh + CRT_CHUNK_ROWS - 1) / CRT_CHUNK_ROWS;
-    g_crt_next = 0;
-    GetSystemInfo(&si);
-    n = (int)si.dwNumberOfProcessors;
-    if (n > 16) n = 16;
-    if (g_crt_work != NULL) {
-        for (i = 1; i < n; i++) SubmitThreadpoolWork(g_crt_work);
-    }
-    crt_work(NULL, NULL, NULL); /* this thread helps too */
-    if (g_crt_work != NULL) WaitForThreadpoolWorkCallbacks(g_crt_work, FALSE);
-    return 1;
-}
-
-static void gdi_image(HDC dc, const uint32_t *pixels, int w, int h, RECT r)
-{
-    BITMAPINFO bi;
-    memset(&bi, 0, sizeof bi);
-    bi.bmiHeader.biSize = sizeof bi.bmiHeader;
-    bi.bmiHeader.biWidth = w;
-    bi.bmiHeader.biHeight = -h;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    SetStretchBltMode(dc, COLORONCOLOR);
-    StretchDIBits(dc, r.left, r.top, r.right - r.left, r.bottom - r.top, 0, 0, w, h, pixels, &bi, DIB_RGB_COLORS,
-                  SRCCOPY);
-}
-
 static void save_capture(void);
 static void follow_picture(HWND h);
 
@@ -244,10 +166,6 @@ static void gpu_paint(HWND h)
     int w, hh;
     ValidateRect(h, NULL);
     AcquireSRWLockShared(&g_frame_lock);
-    if (g_fw > 0 && g_crt_on && crt_filter(r)) { /* crt_filter released the lock */
-        gpu_present(g_crt_buf, r.right - r.left, r.bottom - r.top, r, 0);
-        return;
-    }
     w = g_fw;
     hh = g_fh;
     if (w > 0) memcpy(copy, g_frame, sizeof(uint32_t) * (size_t)(w * hh));
@@ -260,46 +178,7 @@ static void gpu_paint(HWND h)
 
 static void paint(HWND h)
 {
-    PAINTSTRUCT ps;
-    HDC dc;
-    RECT c, r = picture_rect(h);
-    HBRUSH black = (HBRUSH)GetStockObject(BLACK_BRUSH);
-    RECT bar;
-    if (g_gpu) {
-        gpu_paint(h);
-        return;
-    }
-    follow_picture(h);
-    dc = BeginPaint(h, &ps);
-    GetClientRect(h, &c);
-    /* the bars around the picture */
-    bar = c;
-    bar.bottom = r.top;
-    FillRect(dc, &bar, black);
-    bar = c;
-    bar.top = r.bottom;
-    FillRect(dc, &bar, black);
-    bar = c;
-    bar.top = r.top;
-    bar.bottom = r.bottom;
-    bar.right = r.left;
-    FillRect(dc, &bar, black);
-    bar.left = r.right;
-    bar.right = c.right;
-    FillRect(dc, &bar, black);
-    AcquireSRWLockShared(&g_frame_lock);
-    if (g_fw > 0 && g_crt_on && crt_filter(r)) { /* crt_filter released the lock */
-        gdi_image(dc, g_crt_buf, r.right - r.left, r.bottom - r.top, r);
-        EndPaint(h, &ps);
-        return;
-    }
-    if (g_fw > 0) {
-        gdi_image(dc, g_frame, g_fw, g_fh, r);
-    } else {
-        FillRect(dc, &r, black);
-    }
-    ReleaseSRWLockShared(&g_frame_lock);
-    EndPaint(h, &ps);
+    gpu_paint(h);
 }
 
 /* the display's timing from the desktop compositor (its clock is QueryPerformanceCounter's, as host_time_us's) */
@@ -909,14 +788,6 @@ static void mouse_buttons(HWND h, WPARAM w)
     rt_mouse_buttons(b);
 }
 
-static void toggle_crt(HWND h)
-{
-    g_crt_on = !g_crt_on;
-    CheckMenuItem(GetSystemMenu(h, FALSE), SC_APP_CRT, g_crt_on ? MF_CHECKED : MF_UNCHECKED);
-    if (g_ini[0]) WritePrivateProfileStringW(L"video", L"crt", g_crt_on ? L"1" : L"0", g_ini);
-    InvalidateRect(h, NULL, FALSE);
-}
-
 /* ==== volumes, video recording and screenshots ========================================================== */
 static int g_music_vol = 100, g_sound_vol = 100;
 static int g_fps_on;
@@ -1024,27 +895,16 @@ static void toggle_record(void)
     update_title();
 }
 
-/* a screenshot: with Direct3D the picture as it is shown (the window's resolution, the city lit), taken from the
- * next picture drawn (save_capture); else the frame */
-static uint32_t g_shot[FRAME_MAX_W * FRAME_MAX_H];
-static int g_shot_w, g_shot_h;
+/* a screenshot: the picture as it is shown (the window's resolution, the city lit), taken from the next picture
+ * drawn (save_capture) */
 
 static volatile LONG g_shot_wanted;
 
 static void screenshot(void)
 {
-    if (g_gpu) {
-        InterlockedExchange(&g_shot_wanted, 1);
-        gpu_capture();
-        InvalidateRect(g_hwnd, NULL, FALSE);
-        return;
-    }
-    AcquireSRWLockShared(&g_frame_lock);
-    if (g_fw > 0) memcpy(g_shot, g_frame, sizeof(uint32_t) * (size_t)(g_fw * g_fh));
-    g_shot_w = g_fw;
-    g_shot_h = g_fh;
-    ReleaseSRWLockShared(&g_frame_lock);
-    PostMessageW(g_hwnd, WM_APP_SHOT, 0, 0);
+    InterlockedExchange(&g_shot_wanted, 1);
+    gpu_capture();
+    InvalidateRect(g_hwnd, NULL, FALSE);
 }
 
 static void save_png(const uint32_t *pixels, int w, int h)
@@ -1072,22 +932,14 @@ static void save_capture(void)
     free(pixels);
 }
 
-static void save_screenshot(void)
-{
-    int w = g_shot_w, h = g_shot_h;
-    const uint32_t *copy = g_shot;
-    if (w <= 0) return;
-    save_png(copy, w, h);
-}
-
 /* ==== the options of the mission's menu (Escape): the window menu's, changed on the window's thread ======== */
-enum { OPT_TIME, OPT_SHADOWS, OPT_FULL, OPT_FPS, OPT_CRT, OPT_MUSIC, OPT_SOUND, OPT_ROUTES, NB_OPTS };
+enum { OPT_TIME, OPT_SHADOWS, OPT_FULL, OPT_FPS, OPT_MUSIC, OPT_SOUND, OPT_ROUTES, NB_OPTS };
 
 
 int host_options(HostOption *o, int max)
 {
     static const char *const names[NB_OPTS] = {"TIME OF DAY", "SUN SHADOWS", "FULL SCREEN", "FRAMES A SECOND",
-                                               "CRT SCANLINES", "MUSIC VOLUME", "SOUND VOLUME", "SQUAD ROUTES"};
+                                               "MUSIC VOLUME", "SOUND VOLUME", "SQUAD ROUTES"};
     static const char *const times[5] = {"MISSION", "DAY", "DUSK", "NIGHT", "DAWN"};
     int k, n = max < NB_OPTS ? max : NB_OPTS;
     for (k = 0; k < n; k++) {
@@ -1097,7 +949,6 @@ int host_options(HostOption *o, int max)
         case OPT_SHADOWS: snprintf(o[k].value, sizeof o[k].value, "%s", g_shadows ? "ON" : "OFF"); break;
         case OPT_FULL: snprintf(o[k].value, sizeof o[k].value, "%s", g_full ? "ON" : "OFF"); break;
         case OPT_FPS: snprintf(o[k].value, sizeof o[k].value, "%s", g_fps_on ? "ON" : "OFF"); break;
-        case OPT_CRT: snprintf(o[k].value, sizeof o[k].value, "%s", g_crt_on ? "ON" : "OFF"); break;
         case OPT_MUSIC: snprintf(o[k].value, sizeof o[k].value, "%d%%", g_music_vol); break;
         case OPT_SOUND: snprintf(o[k].value, sizeof o[k].value, "%d%%", g_sound_vol); break;
         case OPT_ROUTES: snprintf(o[k].value, sizeof o[k].value, "%s", g_routes ? "ON" : "OFF"); break;
@@ -1118,7 +969,6 @@ static void option_step(int index, int dir)
     case OPT_SHADOWS: toggle_shadows(); break;
     case OPT_FULL: set_fullscreen(!g_full); break;
     case OPT_FPS: toggle_fps(); break;
-    case OPT_CRT: toggle_crt(g_hwnd); break;
     case OPT_MUSIC: set_volumes((g_music_vol / 25 + 5 + dir) % 5 * 25, g_sound_vol); break;
     case OPT_SOUND: set_volumes(g_music_vol, (g_sound_vol / 25 + 5 + dir) % 5 * 25); break;
     case OPT_ROUTES: toggle_routes(); break;
@@ -1136,7 +986,6 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         theme_apply(0);
         AppendMenuW(sm, MF_SEPARATOR, 0, NULL);
         AppendMenuW(sm, MF_STRING, SC_APP_FULLSCREEN, L"&Full screen\tAlt+Enter");
-        AppendMenuW(sm, MF_STRING | (g_crt_on ? MF_CHECKED : MF_UNCHECKED), SC_APP_CRT, L"&CRT scanlines\tAlt+S");
         {
             static const wchar_t *const steps[5] = {L"Off", L"25%", L"50%", L"75%", L"100%"};
             HMENU music = CreatePopupMenu(), sound = CreatePopupMenu();
@@ -1181,7 +1030,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             InterlockedExchange(&g_client_w, LOWORD(l));
             InterlockedExchange(&g_client_h, HIWORD(l));
         }
-        if (g_gpu && !g_minimized) gpu_resize(LOWORD(l), HIWORD(l));
+        if (!g_minimized) gpu_resize(LOWORD(l), HIWORD(l));
         update_pause();
         InvalidateRect(h, NULL, FALSE);
         return 0;
@@ -1213,9 +1062,6 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             return 0;
         case SC_APP_FULLSCREEN:
             set_fullscreen(!g_full);
-            return 0;
-        case SC_APP_CRT:
-            toggle_crt(h);
             return 0;
         case SC_APP_RECORD:
             toggle_record();
@@ -1262,17 +1108,12 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             }
             return 0;
         }
-        if (w == VK_RETURN || w == 'S') {
-            /* Alt+Enter: full screen; Alt+S: the CRT scanline filter.  Neither the key nor the Alt reaches the
-             * game (a key press would skip the intro). */
+        if (w == VK_RETURN) {
+            /* Alt+Enter: full screen.  Neither the key nor the Alt reaches the game (a key press would skip the
+             * intro). */
             g_alt_used = 1;
             g_swallow[w & 0xFF] = 1;
-            if (!(l & (1 << 30))) {
-                if (w == VK_RETURN)
-                    set_fullscreen(!g_full);
-                else
-                    toggle_crt(h);
-            }
+            if (!(l & (1 << 30))) set_fullscreen(!g_full);
             return 0;
         }
         if (w == VK_F4) break; /* Alt+F4: close */
@@ -1366,9 +1207,6 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
     case WM_APP_GAME_DONE:
         DestroyWindow(h);
         return 0;
-    case WM_APP_SHOT:
-        save_screenshot();
-        return 0;
     case WM_APP_OPTION:
         option_step((int)w, (int)l);
         return 0;
@@ -1379,8 +1217,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
         ExitProcess(3);
         return 0;
     case WM_DESTROY:
-        if (g_gpu) gpu_shutdown();
-        g_gpu = 0;
+        gpu_shutdown();
         if (g_clipped) ClipCursor(NULL); /* a clip outlives the window that set it */
         g_clipped = 0;
         PostQuitMessage(0);
@@ -1611,7 +1448,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
         }
     }
     if (user_dir[0] == 0) save_dir(user_dir, sizeof user_dir / sizeof user_dir[0]);
-    g_crt_on = GetPrivateProfileIntW(L"video", L"crt", 0, g_ini) != 0;
     g_music_vol = (int)GetPrivateProfileIntW(L"sound", L"music_volume", 100, g_ini);
     g_sound_vol = (int)GetPrivateProfileIntW(L"sound", L"sound_volume", 100, g_ini);
     rt_set_volumes(g_music_vol, g_sound_vol);
@@ -1676,7 +1512,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, APP_CAPTIONW, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                              wr.right - wr.left, wr.bottom - wr.top, NULL, NULL, inst, NULL);
     if (g_hwnd == NULL) return 1;
-    g_gpu = gpu_init(g_hwnd);
+    if (!gpu_init(g_hwnd)) {
+        MessageBoxW(g_hwnd, L"Direct3D 11 could not start, and the game is drawn only with it.", APP_CAPTIONW,
+                    MB_OK | MB_ICONERROR);
+        return 1;
+    }
     {
         /* a frame for each refresh of the display */
         DEVMODEW dm;

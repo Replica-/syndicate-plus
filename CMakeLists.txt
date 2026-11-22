@@ -65,7 +65,7 @@ else()
 endif()
 
 # ---- the portable presentation code the front ends share (no OS calls) -----------------------------------
-add_library(synvideo STATIC src/video/crt.c src/video/record.c)
+add_library(synvideo STATIC src/video/record.c)
 target_include_directories(synvideo PUBLIC src)
 if(MSVC)
   target_compile_options(synvideo PRIVATE /W3 /O2 /utf-8)

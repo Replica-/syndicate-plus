@@ -4,8 +4,8 @@
  * ways a Mac does things:
  *
  * - the window and its About box follow the system's dark or light appearance (AppKit does this by itself);
- * - the View menu has "Full Screen" (Ctrl+Cmd+F, native macOS full screen on the window's own display) and
- *   "CRT Scanlines" (Cmd+Shift+S; off at first, remembered in Syndicate64.ini); the app menu has the About box;
+ * - the View menu has "Full Screen" (Ctrl+Cmd+F, native macOS full screen on the window's own display); the app
+ *   menu has the About box;
  * - in full screen the pointer stays on the picture while the game has the focus (free in menus, dialogs and
  *   when another app is active);
  * - Option is the game's Alt; Cmd shortcuts belong to the app and no key of a shortcut reaches the game;
@@ -37,7 +37,6 @@
 
 #include "../../game/game.h"
 #include "../../rt/host.h"
-#include "../../video/crt.h"
 
 #ifdef SYN_DEVTEST
 #include "macos_devtest.h"
@@ -257,11 +256,6 @@ void host_present(const uint32_t *pixels, int w, int h)
           [g_view showFrame];
         }, 0);
 }
-
-/* ---- the CRT scanline filter (src/video/crt.c), off unless chosen in the View menu ---- */
-static int g_crt_on;
-static CrtFilter *g_crt;
-#define CRT_CHUNK_ROWS 32
 
 static void release_pixels(void *info, const void *data, size_t size)
 {
@@ -718,7 +712,7 @@ static void update_capture(void)
     return [self backingAlignedRect:r options:NSAlignAllEdgesNearest];
 }
 
-/* --verbose 2: how long showing a frame takes (with the CRT filter it is the most work the UI thread does) */
+/* --verbose 2: how long showing a frame takes */
 static uint64_t g_show_us, g_show_max, g_show_from;
 static int g_show_n;
 
@@ -731,9 +725,9 @@ static void show_stats(uint64_t t0, int dw, int dh)
     if (g_show_from == 0) g_show_from = t;
     if (t - g_show_from >= 5000000u) {
         char line[160];
-        snprintf(line, sizeof line, "video: %d frames in %.1f s, %.2f ms each (at most %.2f), %dx%d px, crt %d",
+        snprintf(line, sizeof line, "video: %d frames in %.1f s, %.2f ms each (at most %.2f), %dx%d px",
                  g_show_n, (double)(t - g_show_from) / 1e6, (double)g_show_us / g_show_n / 1000.0,
-                 (double)g_show_max / 1000.0, dw, dh, g_crt_on);
+                 (double)g_show_max / 1000.0, dw, dh);
         host_log(line);
         g_show_us = g_show_max = 0;
         g_show_n = 0;
@@ -757,24 +751,7 @@ static void show_stats(uint64_t t0, int dw, int dh)
     if (src != NULL) memcpy(src, g_frame, (size_t)fw * (size_t)fh * 4u);
     os_unfair_lock_unlock(&g_frame_lock);
     if (src == NULL) return;
-    if (g_crt_on && dw > 0 && dh > 0) {
-        uint32_t *dst;
-        if (g_crt == NULL) g_crt = crt_create();
-        if (g_crt != NULL && crt_prepare(g_crt, src, fw, fh, dw, dh) &&
-            (dst = (uint32_t *)malloc((size_t)dw * (size_t)dh * 4u)) != NULL) {
-            /* the rows in chunks over all cores: about 35 ms a full-screen frame on one */
-            size_t chunks = (size_t)(dh + CRT_CHUNK_ROWS - 1) / CRT_CHUNK_ROWS;
-            CrtFilter *crt = g_crt;
-            dispatch_apply(chunks, DISPATCH_APPLY_AUTO, ^(size_t i) {
-              int y0 = (int)i * CRT_CHUNK_ROWS, y1 = y0 + CRT_CHUNK_ROWS < dh ? y0 + CRT_CHUNK_ROWS : dh;
-              crt_render_rows(crt, dst + (size_t)y0 * (size_t)dw, dw, y0, y1);
-            });
-            img = make_image(dst, dw, dh);
-            free(src);
-            src = NULL;
-        }
-    }
-    if (img == NULL) img = make_image(src, fw, fh);
+    img = make_image(src, fw, fh);
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _picture.frame = r;
@@ -959,9 +936,9 @@ static void show_stats(uint64_t t0, int dw, int dh)
 #ifdef SYN_DEVTEST
 void macos_state(char *out, size_t n)
 {
-    snprintf(out, n, "gamemouse=%d full=%d captured=%d modal=%d minimized=%d menu=%d crt=%d buttons=%d active=%d key=%d",
+    snprintf(out, n, "gamemouse=%d full=%d captured=%d modal=%d minimized=%d menu=%d buttons=%d active=%d key=%d",
              g_game_mouse, g_full,
-             g_captured, g_modal, g_minimized, g_in_menu, g_crt_on, g_buttons, NSApp.isActive ? 1 : 0,
+             g_captured, g_modal, g_minimized, g_in_menu, g_buttons, NSApp.isActive ? 1 : 0,
              g_window.isKeyWindow ? 1 : 0);
 }
 #endif
@@ -1096,18 +1073,9 @@ static void about(void)
     [g_window toggleFullScreen:nil];
 }
 
-- (void)toggleCrt:(id)sender
-{
-    (void)sender;
-    g_crt_on = !g_crt_on;
-    ini_set("video", "crt", g_crt_on ? "1" : "0");
-    [g_view showFrame];
-}
-
 - (BOOL)validateMenuItem:(NSMenuItem *)item
 {
     if (item.action == @selector(toggleFull:)) item.state = g_full ? NSControlStateValueOn : NSControlStateValueOff;
-    if (item.action == @selector(toggleCrt:)) item.state = g_crt_on ? NSControlStateValueOn : NSControlStateValueOff;
     return YES;
 }
 
@@ -1261,7 +1229,6 @@ static void build_menus(AppDelegate *d)
     [bar addItem:m];
 
     [view addItem:item(@"Full Screen", @selector(toggleFull:), @"f", cmd | NSEventModifierFlagControl, d)];
-    [view addItem:item(@"CRT Scanlines", @selector(toggleCrt:), @"s", cmd | NSEventModifierFlagShift, d)];
     m = [[NSMenuItem alloc] init];
     m.submenu = view;
     [bar addItem:m];
@@ -1425,7 +1392,6 @@ static void start_game_thread(void)
 {
     NSString *game = g_arg_game_dir, *user = g_arg_user_dir;
     NSRect vis = NSScreen.mainScreen.visibleFrame;
-    char v[16];
     size_t pack_size;
     int scale;
     (void)n;
@@ -1443,7 +1409,6 @@ static void start_game_thread(void)
         }
     }
     if (user == nil) user = save_dir();
-    g_crt_on = ini_get("video", "crt", v, sizeof v) && atoi(v) != 0;
     [NSFileManager.defaultManager createDirectoryAtPath:user withIntermediateDirectories:YES attributes:nil error:nil];
     snprintf(g_game_dir, sizeof g_game_dir, "%s", game != nil ? game.fileSystemRepresentation : "");
     snprintf(g_user_dir, sizeof g_user_dir, "%s", user.fileSystemRepresentation);

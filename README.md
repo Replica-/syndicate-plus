@@ -73,7 +73,6 @@ written to, both go to `%LOCALAPPDATA%\Syndicate64` (Windows) or `~/Library/Appl
 | | Windows | macOS |
 |---|---|---|
 | Full screen (on the display the window is on) | Alt+Enter, or the window menu | Ctrl+Cmd+F, the green button, or View > Full Screen |
-| CRT scanlines (off at first, remembered) | Alt+S, or the window menu | Cmd+Shift+S, or View > CRT Scanlines |
 | Music and sound volumes (remembered) | the window menu | |
 | Record a video (again to stop) | F12, or the window menu | |
 | Screenshot | F11, or the window menu | |
@@ -134,7 +133,7 @@ edges of the floor the squad walks on.
 Configure Company shows every colour and logo in grids under its panel, one click each: the game's 8 colours and
 16 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world
 map and its menus), and the 40 logos in the colour chosen.  Escape in a mission opens a menu in the game's
-briefing look while the mission waits: Resume, time of day, sun shadows, full screen, frames a second, CRT,
+briefing look while the mission waits: Resume, time of day, sun shadows, full screen, frames a second,
 the volumes, squad routes, and Abort mission (the game's Escape).  *Squad finds routes* (on by default): a move order the game's straight walk
 cannot do (another level, a gap or a wall between) is walked as a route over the map's floors and stairs (A* on
 the tiles, with the game's own tile types); an agent stuck on the way gets the order as the game had it.  Only the
@@ -178,7 +177,8 @@ Started directly, the games need the sound card's arguments the launcher gives t
 The game is shown in true colour on the GPU (Direct3D 11 on Windows): the core turns each frame of the original
 into 32-bit colour, this version draws its additions over it with any colour and transparency, and the window
 scales it with sharp bilinear filtering (every pixel of the game stays a sharp square, of the same size, at any
-window size), with vsync.  GDI is only used when Direct3D cannot start.
+window size), with vsync.  There is no other way to draw it: without a usable graphics card Direct3D uses its
+software rasterizer (WARP), and if Direct3D 11 cannot start at all the game says so and stops.
 
 ### Smooth motion
 
@@ -216,7 +216,7 @@ They need the game files in `_references/dos`.
 | `tools/` | `find_equiv.py` (a function of one program in the others, for the hooks), `le.py` (LE/LX loader), `discover.py` (code discovery), `recomp.py` (x86 to C translator), `gen_all.py` (writes `gen/`), `pack_game.py` (the built-in game files), icon and notarization helpers |
 | `src/rt/` | the portable runtime: CPU state, DOS/DPMI/BIOS, VGA, timer, keyboard, mouse, Sound Blaster and OPL2 |
 | `src/game/` | which recompiled DOS programs make up the game and how it starts; the hooks on the game's functions (`hooks.c`) and what they add (`additions.c`) |
-| `src/video/` | the CRT scanline filter, the video recorder and screenshots |
+| `src/video/` | the video recorder and screenshots |
 | `src/platform/` | the front ends: `win32/`, `macos/`, `posix/` (shared POSIX services), `headless/` (tests) |
 | `src/third_party/` | dr_mp3, dr_flac, dr_wav, stb_vorbis and stb_image_write (public domain / MIT-0) |
 | `dev/`, `.vscode/` | the development build and the VS Code setup (Windows) |

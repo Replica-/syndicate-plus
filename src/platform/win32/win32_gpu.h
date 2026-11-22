@@ -8,7 +8,7 @@
 
 #include "../../rt/host.h"
 
-/* 0 when Direct3D 11 cannot be used (the window then draws with GDI); hwnd NULL: offscreen, as big as gpu_resize
+/* 0 when Direct3D 11 cannot be used (the game then cannot run); hwnd NULL: offscreen, as big as gpu_resize
  * said before, read with gpu_read (the headless tests) */
 int gpu_init(HWND hwnd);
 /* offscreen: the last picture presented (w x h of gpu_resize, 0x??RRGGBB); 0 if there is none */
