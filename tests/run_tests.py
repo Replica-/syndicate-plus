@@ -146,49 +146,68 @@ def name(f):
 
 @test()
 def launcher(ctx):
-    """SYND.EXE shows the two games"""
+    """with the setup SYND.EXE made (SYND\\SYND.INF), the game chosen last starts at once, not the launcher:
+    Syndicate the first time"""
     r = ctx.run('first', 6)
-    check(r.ran('SYND.EXE'), 'SYND.EXE did not start')
-    f = r.last()
-    check((f.w, f.h) == (320, 200), 'launcher frame is %dx%d' % (f.w, f.h))
-    check(f.colour_count() > 64 and f.mean_brightness() > 15, 'launcher looks empty: ' + name(f))
+    check(not r.ran('SYND.EXE'), 'SYND.EXE started')
+    check(r.ran(r'SYNDICAT\MAIN.EXE') and '/c0 /iirq7 /idma1 /iio220' in r.log,
+          'SYNDICAT\\MAIN.EXE did not start with the setup')
 
 
 @test()
 def launcher_syndicate(ctx):
-    """Enter in the launcher starts Syndicate and its intro"""
-    r = ctx.run('first', 8, inputs=['4000:enter'])
+    """Syndicate starts with its intro"""
+    r = ctx.run('first', 8)
     check(r.ran(r'SYNDICAT\MAIN.EXE'), 'SYNDICAT\\MAIN.EXE did not start')
     check(r.ran(r'SYNDICAT\INTRO.EXE'), 'the intro did not start')
 
 
+def chosen_revolt(ctx):
+    os.makedirs(ctx.user, exist_ok=True)
+    with open(os.path.join(ctx.user, 'game.txt'), 'w') as f:
+        f.write('revolt\n')
+
+
 @test()
 def launcher_revolt(ctx):
-    """Right, Enter in the launcher starts American Revolt and its intro"""
-    r = ctx.run('first', 8, inputs=['2500:right', '4000:enter'])
+    """American Revolt chosen last (game.txt): it starts, with its intro"""
+    chosen_revolt(ctx)
+    r = ctx.run('first', 8)
     check(r.ran(r'DATADISK\MAIN.EXE'), 'DATADISK\\MAIN.EXE did not start')
     check(r.ran(r'DATADISK\INTRO.EXE'), 'the intro did not start')
 
 
+@test()
+def choose_game(ctx):
+    """the choice of game before the main menu: Right, Enter there end Syndicate and start American Revolt without
+    its intro, and it is remembered"""
+    r = ctx.run('pick', 20, inputs=['2000:esc', '5000:esc', '9000:esc', '13000:right', '14000:enter'])
+    check(r.ran(r'DATADISK\MAIN.EXE'), 'American Revolt did not start')
+    check(not r.ran(r'DATADISK\INTRO.EXE'), 'its intro played')
+    with open(os.path.join(ctx.user, 'game.txt')) as f:
+        check(f.read().startswith('revolt'), 'the choice is not remembered')
+
+
 def launcher_language(ctx, prefix, lang):
-    """the installer writes the program name for the language to SYND\\SYND.INF; the launcher follows it"""
+    """the installer writes the program name for the language to SYND\\SYND.INF; the game started follows it"""
     os.makedirs(os.path.join(ctx.user, 'C', 'SYND'))
     with open(os.path.join(ctx.user, 'C', 'SYND', 'SYND.INF'), 'w') as f:
         f.write(prefix + 'main /c0 /iirq7 /idma1 /iio220')
-    r = ctx.run('run', 8, inputs=['2500:right', '4000:enter'])
+    chosen_revolt(ctx)
+    r = ctx.run('run', 8)
     check(r.ran('DATADISK\\%sMAIN.EXE' % prefix.upper()), 'American Revolt (%s) did not start' % lang)
     check(r.ran('DATADISK\\%sINTRO.EXE' % prefix.upper()), 'the %s intro did not start' % lang)
 
 
 @test()
 def launcher_german(ctx):
-    """with "gmain" in SYND.INF the launcher starts the German programs"""
+    """with "gmain" in SYND.INF the German programs start"""
     launcher_language(ctx, 'g', 'German')
 
 
 @test()
 def launcher_spanish(ctx):
-    """with "smain" in SYND.INF the launcher starts the Spanish programs"""
+    """with "smain" in SYND.INF the Spanish programs start"""
     launcher_language(ctx, 's', 'Spanish')
 
 

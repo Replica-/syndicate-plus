@@ -10,7 +10,8 @@ extern "C" {
 typedef struct GameOptions {
     const char *game_dir;  /* folder with SYND.EXE, DATA, SYNDICAT, DATADISK */
     const char *user_dir;  /* writable folder (saves, setup, files the game writes) */
-    const char *start;     /* NULL: the original launcher (SYND.EXE); else a DOS command line to run first */
+    const char *start;     /* NULL: the game chosen last, with the setup the original launcher (SYND.EXE) made, or
+                            * the launcher when it made none; else a DOS command line to run first */
     int verbose;
     int fixed_clock;       /* the guest's date and time start at a fixed point (repeatable test runs) */
     const char *music_dir; /* songs played from files instead of the FM music (src/rt/music.c); NULL: the
@@ -32,6 +33,11 @@ void game_set_player_colour(uint32_t rgb);
 /* the squad's move orders walked as routes over the map's floors when the game's straight walk cannot do them
  * (on by default) */
 void game_set_routes(int on);
+/* the choice of Syndicate or American Revolt before the main menu (game_main runs the one chosen last): offered
+ * (once, when the game was started without `start` and both are there); made (the other one: this game ends and
+ * game_main runs it, without its introduction; does not return then) */
+int game_choice_offered(void);
+void game_choice_made(int revolt);
 
 #ifdef __cplusplus
 }

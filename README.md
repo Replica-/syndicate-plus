@@ -61,8 +61,11 @@ sign it with a Developer ID and notarize it:
 
 ## Playing
 
-The original launcher comes first: pick *Syndicate* or *American Revolt* with the arrow keys and Enter (the
-launcher has no mouse pointer, as on DOS).  Without game files built in, the program looks for the game next to
+The game chosen last starts at once (Syndicate the first time), with the language and sound card setup the
+original launcher made (`SYND\SYND.INF`); the launcher only comes up when there is none.  Before the first main
+menu a *Select game* screen in the menus' green shows the two box covers: click one, or the arrow keys and Enter.
+Choosing the other game ends this one and starts that one at its title screen, without its introduction; the choice
+is kept in `game.txt` beside the saves.  Without game files built in, the program looks for the game next to
 itself, in `_references/dos` of a source checkout and in the folder chosen last time; otherwise it asks.
 
 Saved games go to `Save/Syndicate` and `Save/American Revolt` next to the program (on macOS: next to

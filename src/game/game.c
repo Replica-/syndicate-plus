@@ -89,6 +89,116 @@ const char *game_check_dir(const char *dir)
     return NULL;
 }
 
+/* ---- the game chosen before the main menu (additions.c), not in the launcher: SYND.EXE once made the setup
+ * (C:\SYND\SYND.INF: the command it gives, "main /c0 /iirq7 /idma1 /iio220"), the game chosen last (game.txt beside
+ * the saves) is run with it at once; the other one is chosen on a screen of this program's before its main menu,
+ * which ends this one and runs the other, without its introduction ---- */
+static int g_revolt;      /* the game run: American Revolt (DATADISK), else Syndicate (SYNDICAT) */
+static int g_switch;      /* the other one asked for */
+static int g_skip_intro;  /* its introduction not played again */
+static int g_offer;       /* the choice is offered before the main menu (not yet made) */
+
+int game_choice_offered(void)
+{
+    return g_offer;
+}
+
+void game_choice_made(int revolt)
+{
+    char path[1200];
+    FILE *f;
+    g_offer = 0;
+    snprintf(path, sizeof path, "%s/game.txt", rt_user_dir);
+    f = fopen(path, "w");
+    if (f != NULL) {
+        fputs(revolt ? "revolt\n" : "syndicate\n", f);
+        fclose(f);
+    }
+    if (revolt != g_revolt) {
+        g_revolt = revolt;
+        g_switch = 1;
+        rt_exit_process(0); /* the game run ends: game_main runs the other one */
+    }
+}
+
+int game_revolt_present(void)
+{
+    char path[1100];
+    VFile *f;
+    snprintf(path, sizeof path, "%s/DATADISK/MAIN.EXE", rt_game_dir);
+    f = vfs_open(path, "rb");
+    if (f != NULL) vfs_close(f);
+    return f != NULL;
+}
+
+int game_skip_program(const char *canon)
+{
+    const char *b = strrchr(canon, '\\');
+    return g_skip_intro && b != NULL && strstr(b, "INTRO.EXE") != NULL;
+}
+
+/* the setup SYND.EXE made: C:\SYND\SYND.INF, as DOS finds it (the user's, else the game folder's) */
+static int read_setup(char *cmd, size_t n)
+{
+    char path[1200];
+    const char *dirs[2];
+    int k;
+    size_t got;
+    dirs[0] = rt_user_dir;
+    dirs[1] = rt_game_dir;
+    for (k = 0; k < 2; k++) {
+        VFile *f;
+        snprintf(path, sizeof path, k == 0 ? "%s/C/SYND/SYND.INF" : "%s/SYND/SYND.INF", dirs[k]);
+        f = vfs_open(path, "rb");
+        if (f == NULL) continue;
+        got = vfs_read(f, cmd, n - 1);
+        vfs_close(f);
+        cmd[got] = 0;
+        while (got > 0 && (cmd[got - 1] == '\n' || cmd[got - 1] == '\r' || cmd[got - 1] == ' ')) cmd[--got] = 0;
+        return got > 0;
+    }
+    return 0;
+}
+
+/* the game chosen last, with the setup's command (its program in the game's folder); 0 when there is no setup */
+static int run_chosen(void)
+{
+    char cmd[256], prog[64], canon[300], path[1200];
+    const char *args;
+    const RtModuleDef *def;
+    size_t k;
+    FILE *f;
+    int rc = 0;
+    extern void dos_chdir_host(const char *canon_dir);
+    if (!read_setup(cmd, sizeof cmd)) return -1;
+    snprintf(path, sizeof path, "%s/game.txt", rt_user_dir);
+    f = fopen(path, "r");
+    if (f != NULL) {
+        char line[32] = "";
+        if (fgets(line, sizeof line, f) != NULL) g_revolt = strncmp(line, "revolt", 6) == 0;
+        fclose(f);
+    }
+    if (!game_revolt_present()) g_revolt = 0;
+    for (k = 0; cmd[k] && cmd[k] != ' ' && k < sizeof prog - 5; k++) prog[k] = (char)toupper((unsigned char)cmd[k]);
+    prog[k] = 0;
+    args = cmd + k;
+    if (strchr(prog, '.') == NULL) strcat(prog, ".EXE");
+    g_offer = game_revolt_present();
+    do {
+        g_switch = 0;
+        snprintf(canon, sizeof canon, "D:\\%s\\%s", g_revolt ? "DATADISK" : "SYNDICAT", prog);
+        def = game_find_module(canon);
+        if (def == NULL) {
+            rt_log("no recompiled program %s", canon);
+            return 1;
+        }
+        dos_chdir_host(g_revolt ? "D:\\DATADISK" : "D:\\SYNDICAT");
+        rc = rt_run_module(def, canon, args);
+        g_skip_intro = 1;
+    } while (g_switch);
+    return rc;
+}
+
 int game_main(const GameOptions *opt)
 {
     int rc;
@@ -152,7 +262,9 @@ int game_main(const GameOptions *opt)
         }
         rc = rt_run_module(def, canon, sp ? opt->start + (sp - prog) : "");
     } else {
-        rc = rt_run_module(&synd_module, "D:\\SYND.EXE", "");
+        /* the game chosen last at once when SYND.EXE made its setup, else SYND.EXE (it asks the language) */
+        rc = run_chosen();
+        if (rc < 0) rc = rt_run_module(&synd_module, "D:\\SYND.EXE", "");
     }
     game_hooks_end();
     music_shutdown();

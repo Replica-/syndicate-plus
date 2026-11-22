@@ -43,6 +43,7 @@
 
 #include "../rt/rt.h"
 #include "../rt/vfs.h"
+#include "game.h"
 #include "hooks.h"
 #include "menu_sides.h"
 #include "path.h"
@@ -401,6 +402,8 @@ static uint64_t g_press_us[4];
 static uint8_t g_down[256], g_moved[256]; /* keys held; held keys that scroll in place of an arrow key */
 
 static volatile int g_menu; /* the mission's menu (Escape) is open: the mission waits */
+static volatile int g_pick_active, g_pick_click; /* the choice of game is on screen (game_pick), a click on it */
+static volatile uint32_t g_pick_key;
 
 static int in_mission(void)
 {
@@ -431,6 +434,10 @@ uint32_t game_key_filter(uint32_t sc, int down)
 {
     uint32_t k = sc & 0xFFu;
     int was_down;
+    if (g_pick_active) { /* the choice of game has the keys */
+        if (down) g_pick_key = sc;
+        return 0;
+    }
     if (k == SC_ESC && !(sc & 0xE000u)) {
         static uint8_t esc_down;
         int was = esc_down;
@@ -1835,13 +1842,25 @@ static int menu_text_width(const char *t)
     return w;
 }
 
+static void menu_text_scaled(uint32_t *rgb, int w, int x, int y, const char *t, uint32_t body, int scale);
+
 static void menu_text(uint32_t *rgb, int w, int x, int y, const char *t, uint32_t body)
+{
+    menu_text_scaled(rgb, w, x, y, t, body, MENU_SCALE);
+}
+
+static int text_width_scaled(const char *t, int scale)
+{
+    return menu_text_width(t) / MENU_SCALE * scale;
+}
+
+static void menu_text_scaled(uint32_t *rgb, int w, int x, int y, const char *t, uint32_t body, int scale)
 {
     for (; *t; t++) {
         int i = (uint8_t)(*t >= 'a' && *t <= 'z' ? *t - 32 : *t) - 32, gx, gy, a, b;
         const Glyph *g;
         if (i <= 0 || i >= NB_GLYPHS || g_font[i].w == 0) {
-            x += 4 * MENU_SCALE;
+            x += 4 * scale;
             continue;
         }
         g = &g_font[i];
@@ -1849,11 +1868,11 @@ static void menu_text(uint32_t *rgb, int w, int x, int y, const char *t, uint32_
             for (gx = 0; gx < g->w; gx++) {
                 uint8_t v = g->px[gy][gx];
                 if (v == 0) continue;
-                for (b = 0; b < MENU_SCALE; b++)
-                    for (a = 0; a < MENU_SCALE; a++)
-                        plot_any(rgb, w, x + gx * MENU_SCALE + a, y + gy * MENU_SCALE + b, v == 2 ? body : MENU_SHADE);
+                for (b = 0; b < scale; b++)
+                    for (a = 0; a < scale; a++)
+                        plot_any(rgb, w, x + gx * scale + a, y + gy * scale + b, v == 2 ? body : MENU_SHADE);
             }
-        x += g->w * MENU_SCALE;
+        x += g->w * scale;
     }
 }
 
@@ -1885,6 +1904,10 @@ int game_mouse_buttons(int buttons)
         }
     }
     if (pressed && g_addrs != NULL && config_shown()) config_click();
+    if (g_pick_active) {
+        if (pressed) g_pick_click = 1;
+        return 1;
+    }
     if (g_menu) {
         if (pressed) g_menu_click = 1;
         return 1;
@@ -1900,6 +1923,88 @@ static void menu_close(void)
 {
     g_menu = 0;
     g_menu_hold = g_menu_buttons != 0; /* the click that closed it is not the game's */
+}
+
+/* ---- Syndicate or American Revolt, chosen before the main menu (game.c): the CD launcher's two box covers
+ * (SELECT.DAT of the CD's DATA folder: 320 x 200, its palette after it, 0..63) on the green menu ---- */
+#define COVER_W 65
+#define COVER_H 90
+#define COVER_Y 63          /* in SELECT.DAT, at x 86 and 160 */
+#define PICK_COVER_Y 46     /* on the screen, either side of its middle */
+#define PICK_COVER_GAP 30
+static uint32_t g_covers[2][COVER_H][COVER_W];
+static int g_covers_loaded, g_pick_sel = -1, g_pick_mx = -1, g_pick_my = -1;
+
+static void load_covers(void)
+{
+    static const int k_x[2] = {86, 160};
+    static uint8_t d[64768];
+    char path[1200];
+    VFile *f;
+    int k, x, y;
+    g_covers_loaded = 1;
+    snprintf(path, sizeof path, "%s/DATA/SELECT.DAT", rt_game_dir);
+    f = vfs_open(path, "rb");
+    if (f == NULL) return;
+    if (vfs_read(f, d, sizeof d) == sizeof d)
+        for (k = 0; k < 2; k++)
+            for (y = 0; y < COVER_H; y++)
+                for (x = 0; x < COVER_W; x++) {
+                    const uint8_t *c = d + 64000 + 3 * d[(COVER_Y + y) * 320 + k_x[k] + x];
+                    g_covers[k][y][x] = (uint32_t)(c[0] << 2 | c[0] >> 4) << 16 |
+                                        (uint32_t)(c[1] << 2 | c[1] >> 4) << 8 | (uint32_t)(c[2] << 2 | c[2] >> 4);
+                }
+    vfs_close(f);
+}
+
+static int cover_x(int k)
+{
+    return 160 - COVER_W - PICK_COVER_GAP / 2 + k * (COVER_W + PICK_COVER_GAP);
+}
+
+/* the choice on the game's picture (320 x 200), its keys and clicks acted on: the game run (it goes on to its main
+ * menu) or the other one (game.c ends this one) */
+static void game_pick(uint32_t *pic)
+{
+    static const char *const names[2] = {"SYNDICATE", "AMERICAN REVOLT"};
+    int k, x, y, mx, my, act = 0;
+    uint32_t key = g_pick_key;
+    g_pick_key = 0;
+    if (!g_covers_loaded) load_covers();
+    if (!g_font_loaded) load_menu_font();
+    if (g_pick_sel < 0) g_pick_sel = g_addrs->ar != 0;
+    if ((key & 0xFFu) == 0x4B || (key & 0xFFu) == 0x4D) g_pick_sel = !g_pick_sel;
+    if ((key & 0xFFu) == 0x1C) act = 1;
+    menu_mouse(&mx, &my);
+    for (k = 0; k < 2; k++) {
+        int over = mx >= cover_x(k) && mx < cover_x(k) + COVER_W && my >= PICK_COVER_Y && my < PICK_COVER_Y + COVER_H;
+        if (over && (mx != g_pick_mx || my != g_pick_my)) g_pick_sel = k;
+        if (over && g_pick_click) g_pick_sel = k, act = 1;
+    }
+    g_pick_mx = mx;
+    g_pick_my = my;
+    g_pick_click = 0;
+    if (act) {
+        g_pick_active = 0;
+        g_menu_hold = g_menu_buttons != 0; /* the click is not the main menu's */
+        game_choice_made(g_pick_sel);      /* the other game: does not return */
+        return;
+    }
+    for (y = 6; y < 194; y++)
+        for (x = 6; x < 314; x++) plot_any_blend(pic, 320, x, y, MENU_BG, 235);
+    menu_text_scaled(pic, 320, 160 - text_width_scaled("SELECT GAME", 2) / 2, 14, "SELECT GAME", MENU_BRIGHT, 2);
+    for (k = 0; k < 2; k++) {
+        int x0 = cover_x(k), i;
+        for (y = 0; y < COVER_H; y++)
+            for (x = 0; x < COVER_W; x++) pic[(PICK_COVER_Y + y) * 320 + x0 + x] = g_covers[k][y][x];
+        for (i = 1; i <= 2; i++)
+            frame_box(pic, 320, 200, x0 - i, PICK_COVER_Y - i, x0 + COVER_W + i, PICK_COVER_Y + COVER_H + i,
+                      k == g_pick_sel ? PICK_BRIGHT : MENU_FRAME);
+        menu_text_scaled(pic, 320, x0 + COVER_W / 2 - text_width_scaled(names[k], 1) / 2, PICK_COVER_Y + COVER_H + 8,
+                         names[k], k == g_pick_sel ? MENU_BRIGHT : MENU_TEXT, 1);
+    }
+    menu_text_scaled(pic, 320, 160 - text_width_scaled("CLICK ONE OR PRESS ENTER", 1) / 2, 176,
+                     "CLICK ONE OR PRESS ENTER", MENU_TEXT, 1);
 }
 
 /* drawn over the mission, its keys and clicks acted on (game thread) */
@@ -2059,6 +2164,8 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
             for (y = 0; y < 200; y++) memcpy(game + y * 320, rgb + y * w, sizeof *game * 320);
         menu_true_colour(index, palette, pic, 320, h);
         if (config_shown()) config_grids(pic, 320, h, index, palette);
+        if (!g_pick_active && game_choice_offered() && g_desk && menu_framed(index)) g_pick_active = 1;
+        if (g_pick_active) game_pick(pic);
         g_menu_w = w;
         g_menu_off = (w - 320) / 2;
         rt_mouse_window(g_menu_off * 65536 / w, (g_menu_off + 320) * 65536 / w);
