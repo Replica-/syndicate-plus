@@ -357,7 +357,7 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
  * every GROUND_REPEAT x GROUND_REPEAT tiles, so each tile is made for each place in it ---- */
 #define GROUND_REPEAT 4
 #define GROUND_TOP 32     /* a tile's top: a diamond 64 x 32, a square of GROUND_TOP x GROUND_TOP of the texture */
-#define GROUND_STEP 0.16f /* a shade: 16% darker or lighter than the dirt's colour */
+#define GROUND_STEP 0.08f /* a shade: 8% darker or lighter than the dirt's colour */
 int render_ground = 1;
 static uint32_t g_ground[2][GROUND_PLACES][TILE_H * TILE_W]; /* 0xFFRRGGBB, 0: transparent */
 static uint8_t g_ground_made[2][GROUND_PLACES];
