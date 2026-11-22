@@ -85,9 +85,3 @@ extern int render_tile_dx, render_tile_dy, render_obj_dx, render_obj_dy;
 extern int render_gpu_changed;
 /* the colour of the hat of a person (0: as drawn), for agents */
 extern uint32_t (*render_hat_colour)(int ped);
-/* the HD texture pack (rt_user_dir/hd: tile_NNN.png 4 times a tile's size, tile_NNN_n.png its normals,
- * tile_NNN_orig.png the tile it was made from): its tiles instead of the game's, on the GPU (on by default) */
-void render_set_hd(int on);
-/* the tiles in the next mission's palette (256 x 64 x 48 pixels 0xAARRGGBB, 0 transparent) and their types (256
- * bytes) written to `path` once (tools/hd_pack.py makes the HD pack from them) */
-void render_dump_tiles(const char *path);

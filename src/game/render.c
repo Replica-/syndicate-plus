@@ -68,8 +68,7 @@ static uint16_t rd16(uint32_t a)
 static uint8_t g_types[256]; /* the tiles' types (COL01.DAT), render_set_tile_types */
 static int g_have_types;
 
-/* the images the GPU has (host_city_image, in true colour): the tiles 0-255 (from the HD pack, when it has them),
- * the sprites from 256 */
+/* the images the GPU has (host_city_image, in true colour): the tiles 0-255, the sprites from 256 */
 #define IMAGE_SPRITES 256
 static uint8_t g_defined[IMAGE_SPRITES + 4096];
 
@@ -210,14 +209,11 @@ static uint32_t shine(uint32_t c)
 
 /* an image (palette indices, 255 transparent) to the GPU in true colour: the hat's colours marked (alpha 254 its
  * colour, 253 its shine) */
-static int hd_define(int image, const uint8_t *px);
-
 static void define_image(int image, const uint8_t *px, int w, int h)
 {
     static uint32_t rgb[256 * 256];
     int i, head = image >= IMAGE_SPRITES && is_head(image - IMAGE_SPRITES);
     if (w * h > 256 * 256) return;
-    if (image < IMAGE_SPRITES && hd_define(image, px)) return;
     for (i = 0; i < w * h; i++) {
         uint32_t a = px[i] == HAT_INDEX ? 0xFE000000u : head && px[i] == HAT_SHINE ? 0xFD000000u : 0xFF000000u;
         rgb[i] = px[i] == 255 ? 0 : a | (g_image_pal[px[i]] & 0xFFFFFFu);
@@ -354,117 +350,6 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
             put_pixel(t, tx, ty, sprite_colour(t->pal, c, y, hat, g_put_head));
         }
     }
-}
-
-/* ---- the HD texture pack (render.h) ---- */
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_PNG
-#define STBI_NO_HDR
-#define STBI_NO_LINEAR
-#include "../third_party/stb_image.h"
-#define HD_SCALE 4
-#define HD_W (TILE_W * HD_SCALE)
-#define HD_H (TILE_H * HD_SCALE)
-static int g_hd = 1;
-static volatile int g_hd_want = 1; /* render_set_hd (any thread); g_hd follows it at the next city drawn */
-typedef struct HdTile {
-    int state;          /* 0 not looked for, 1 loaded, 2 none */
-    uint8_t *rgba;      /* HD_W x HD_H */
-    uint8_t *normals;   /* HD_W x HD_H RGB(A) */
-    uint8_t *orig;      /* TILE_W x TILE_H RGBA: the colours it was made in */
-} HdTile;
-static HdTile g_hd_tiles[NB_TILES];
-
-static uint8_t *hd_load(int id, const char *suffix, int w, int h)
-{
-    char path[1200];
-    int iw, ih, n;
-    uint8_t *p;
-    snprintf(path, sizeof path, "%s/hd/tile_%03d%s.png", rt_user_dir, id, suffix);
-    p = stbi_load(path, &iw, &ih, &n, 4);
-    if (p != NULL && (iw != w || ih != h)) {
-        stbi_image_free(p);
-        p = NULL;
-    }
-    return p;
-}
-
-static const char *g_dump_tiles;
-
-void render_dump_tiles(const char *path)
-{
-    g_dump_tiles = path;
-}
-
-static void dump_tiles(const uint32_t *pal)
-{
-    FILE *f = fopen(g_dump_tiles, "wb");
-    int i, k;
-    g_dump_tiles = NULL;
-    if (f == NULL) return;
-    for (i = 0; i < NB_TILES; i++) {
-        const uint8_t *t = tile(i);
-        for (k = 0; k < TILE_W * TILE_H; k++) {
-            uint32_t c = t != NULL && t[k] != 255 ? 0xFF000000u | pal[t[k]] : 0;
-            fwrite(&c, 4, 1, f);
-        }
-    }
-    fwrite(g_types, 1, sizeof g_types, f);
-    fclose(f);
-}
-
-void render_set_hd(int on)
-{
-    g_hd_want = on != 0;
-}
-
-/* tile `image` (its pixels px, palette indices) from the pack: its colours brought to the tile's (its mean colour, each
- * channel, the tile's mean colour in this palette: as bright and tinted as the game draws it), with its normals; 0 if
- * not in the pack */
-static int hd_define(int image, const uint8_t *px)
-{
-    static uint32_t rgb[HD_W * HD_H], nrm[HD_W * HD_H];
-    HdTile *t = &g_hd_tiles[image];
-    float now[3] = {0, 0, 0}, was[3] = {0, 0, 0}, f[3];
-    int x, y, ch;
-    if (!g_hd) return 0;
-    if (t->state == 0) {
-        t->rgba = hd_load(image, "", HD_W, HD_H);
-        t->normals = t->rgba != NULL ? hd_load(image, "_n", HD_W, HD_H) : NULL;
-        t->orig = t->rgba != NULL ? hd_load(image, "_orig", TILE_W, TILE_H) : NULL;
-        t->state = t->rgba != NULL && t->orig != NULL ? 1 : 2;
-    }
-    if (t->state != 1) return 0;
-    for (y = 0; y < TILE_H * TILE_W; y++)
-        if (px[y] != 255)
-            for (ch = 0; ch < 3; ch++)
-                now[ch] += (float)((g_image_pal[px[y]] >> (16 - 8 * ch)) & 255) * (HD_SCALE * HD_SCALE);
-    for (y = 0; y < HD_H; y++)
-        for (x = 0; x < HD_W; x++)
-            if (t->rgba[(y * HD_W + x) * 4 + 3] >= 128 && px[(y / HD_SCALE) * TILE_W + x / HD_SCALE] != 255)
-                for (ch = 0; ch < 3; ch++) was[ch] += (float)t->rgba[(y * HD_W + x) * 4 + ch];
-    for (ch = 0; ch < 3; ch++) f[ch] = was[ch] > 0 ? now[ch] / was[ch] : 1.0f;
-    for (y = 0; y < HD_H; y++)
-        for (x = 0; x < HD_W; x++) {
-            const uint8_t *h = t->rgba + (y * HD_W + x) * 4;
-            uint32_t out = 0;
-            if (h[3] < 128 || px[(y / HD_SCALE) * TILE_W + x / HD_SCALE] == 255) {
-                rgb[y * HD_W + x] = 0;
-                continue;
-            }
-            for (ch = 0; ch < 3; ch++) {
-                float v = (float)h[ch] * f[ch];
-                out |= (uint32_t)(v > 255.0f ? 255.0f : v) << (16 - 8 * ch);
-            }
-            rgb[y * HD_W + x] = 0xFF000000u | out;
-            if (t->normals != NULL) {
-                const uint8_t *n = t->normals + (y * HD_W + x) * 4;
-                nrm[y * HD_W + x] = 0xFF000000u | (uint32_t)n[0] << 16 | (uint32_t)n[1] << 8 | n[2];
-            }
-        }
-    host_city_image(image, HD_W, HD_H, HD_SCALE, rgb);
-    if (t->normals != NULL) host_city_normals(image, HD_W, HD_H, nrm);
-    return 1;
 }
 
 /* `hat`: the colour of the hat: colour 6 of the sprites that are heads, whose colour 6 is all in their top
@@ -1321,13 +1206,6 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     static Obj objs[2048];
     uint32_t map, cols;
     if (g_ra.map == 0) return;
-    if (g_dump_tiles != NULL && g_have_types) dump_tiles(pal);
-    if (g_hd != g_hd_want) {
-        /* HD textures on or off: the GPU's images made again */
-        g_hd = g_hd_want;
-        memset(g_defined, 0, sizeof g_defined);
-        host_city_reset();
-    }
     if (rgb == NULL && memcmp(g_image_pal, pal, sizeof g_image_pal) != 0) {
         /* another palette: the GPU's images are made again in its colours */
         memcpy(g_image_pal, pal, sizeof g_image_pal);

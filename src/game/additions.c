@@ -1943,11 +1943,6 @@ void game_set_routes(int on)
     g_routes_on = on != 0;
 }
 
-void game_set_hd(int on)
-{
-    render_set_hd(on);
-}
-
 /* a file of the game's DATA folder, unpacked (RNC) by the game's own unpacker in a block of DOS memory: its bytes
  * (at most `max`), or 0 */
 static size_t load_packed(const char *name, uint8_t *out, size_t max)

@@ -131,15 +131,10 @@ settings are saved in `tile_lights.ini` beside the saves.
 Traffic lights and other small coloured lights in the objects glow at dusk and
 night.  Held B also outlines in cyan the edges of the floor the squad walks on.
 
-*HD textures* (window menu and the Escape menu; on by default) draws the ground tiles from an HD pack in
-`hd` beside the saves when it is there: 4 times the detail, with normal maps that pick out their relief in the
-sun's light, re-tinted to each mission's colours.  `tools/hd_pack.py` makes the pack with Fooocus from the
-game's own tiles (`synd_headless --dump-tiles`); the pack is not part of this repository.
-
 Configure Company shows every colour and logo in grids under its panel, one click each: the game's 8 colours and
 16 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world
 map and its menus), and the 40 logos in the colour chosen.  Escape in a mission opens a menu in the game's
-briefing look while the mission waits: Resume, time of day, HD textures, full screen, frames a second,
+briefing look while the mission waits: Resume, time of day, full screen, frames a second,
 the volumes, squad routes, and Abort mission (the game's Escape).  *Squad finds routes* (on by default): a move order the game's straight walk
 cannot do (another level, a gap or a wall between) is walked as a route over the map's floors and stairs (A* on
 the tiles, with the game's own tile types); an agent stuck on the way gets the order as the game had it.  Only the
