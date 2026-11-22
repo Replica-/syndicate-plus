@@ -525,7 +525,6 @@ uint32_t game_key_filter(uint32_t sc, int down)
 #define PAN_PX_S 480.0      /* scrolling speed, pixels of the city a second */
 #define EDGE_PX 2           /* the pointer this close to an edge of the screen scrolls */
 #define FOLLOW_UNITS 3      /* the game moved its camera this far itself (camera units): the view goes there */
-#define VIEW_LIMITS 0x1be32u /* from the view: the camera's limits (16 bits min x, min y, max x, max y) */
 
 static double g_view_x, g_view_y;     /* the view (world units) */
 static int g_view_on;                 /* set for this mission */
@@ -632,17 +631,16 @@ static void move_view(void)
          * screen at any zoom) */
         double px = sx * PAN_PX_S * dt / g_zoom, py = sy * PAN_PX_S * dt / g_zoom;
         double nx = g_view_x + px * 2.0 + py * 4.0, ny = g_view_y - px * 2.0 + py * 4.0;
-        /* not beyond the game's limits for its camera (as the game stops scrolling there) */
-        int32_t cx, cy;
+        /* the middle of the view on the map, as far as its edges (past the game's own limits for its camera: it
+         * stays at the nearest it can be) */
+        int tw, th, tz;
         centre_shift(&shx, &shy);
-        cx = (int32_t)((nx + shx + 64.0) / 128.0);
-        cy = (int32_t)((ny + shy + 64.0) / 128.0);
-        uint32_t lim = g_addrs->view + VIEW_LIMITS;
-        if (cx >= (int16_t)RD16(lim) && cx <= (int16_t)RD16(lim + 4u) && cy >= (int16_t)RD16(lim + 2u) &&
-            cy <= (int16_t)RD16(lim + 6u)) {
-            g_view_x = nx;
-            g_view_y = ny;
+        if (render_map_size(&tw, &th, &tz)) {
+            nx = clampd(nx + shx, 0.0, tw * 256.0) - shx;
+            ny = clampd(ny + shy, 0.0, th * 256.0) - shy;
         }
+        g_view_x = nx;
+        g_view_y = ny;
         g_gliding = 0;
     } else if (g_gliding) {
         double k = dt * 12.0 > 1.0 ? 1.0 : dt * 12.0;
