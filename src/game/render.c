@@ -192,19 +192,45 @@ static int g_translucent; /* the tile being put is one of them */
 #define SEE_THROUGH_ALPHA 60 /* of 255, as FreeSynd's */
 static uint32_t g_shade; /* the shadow at the corners of the tile being put (HostCityQuad.shade) */
 
-#define HAT_INDEX 6 /* the hats' colour in the agents' sprites */
+#define HAT_INDEX 6  /* the hats' colour in the agents' sprites */
+#define HAT_SHINE 14 /* the hats' bright red, where the light catches them (in the heads only) */
 static uint32_t g_image_pal[256]; /* the palette the GPU's images were made with */
+static int is_head(int id);
 
-/* an image (palette indices, 255 transparent) to the GPU in true colour: colour 6 marked as a hat's (alpha 254) */
+/* a hat's colour where the light catches it */
+static uint32_t shine(uint32_t c)
+{
+    uint32_t r = 0;
+    int k;
+    for (k = 0; k < 24; k += 8) {
+        int v = (int)((c >> k) & 255) * 3 / 2 + 20;
+        r |= (uint32_t)(v > 255 ? 255 : v) << k;
+    }
+    return r;
+}
+
+/* an image (palette indices, 255 transparent) to the GPU in true colour: the hat's colours marked (alpha 254 its
+ * colour, 253 its shine) */
 static void define_image(int image, const uint8_t *px, int w, int h)
 {
     static uint32_t rgb[256 * 256];
-    int i;
+    int i, head = image >= IMAGE_SPRITES && is_head(image - IMAGE_SPRITES);
     if (w * h > 256 * 256) return;
-    for (i = 0; i < w * h; i++)
-        rgb[i] = px[i] == 255 ? 0 : (px[i] == HAT_INDEX ? 0xFE000000u : 0xFF000000u) | (g_image_pal[px[i]] & 0xFFFFFFu);
+    for (i = 0; i < w * h; i++) {
+        uint32_t a = px[i] == HAT_INDEX ? 0xFE000000u : head && px[i] == HAT_SHINE ? 0xFD000000u : 0xFF000000u;
+        rgb[i] = px[i] == 255 ? 0 : a | (g_image_pal[px[i]] & 0xFFFFFFu);
+    }
     host_city_image(image, w, h, rgb);
 }
+
+/* a pixel of a sprite drawn on the CPU: the hat's colours in `hat`'s top rows (head: a head sprite) */
+static uint32_t sprite_colour(const uint32_t *pal, uint8_t c, int row, uint32_t hat, int head)
+{
+    if (row < (int)(hat >> 24) && c == HAT_INDEX) return hat & 0xFFFFFFu;
+    if (row < (int)(hat >> 24) && head && c == HAT_SHINE) return shine(hat & 0xFFFFFFu);
+    return pal[c];
+}
+static int g_put_head; /* the sprite being put is a head (sprite_colour) */
 
 static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat, int glow)
 {
@@ -291,7 +317,7 @@ static void blit_scaled(const Target *t, const uint8_t *src, int sw, int sh, flo
             if (sx < 0 || sx >= sw) continue;
             c = src[sy * sw + (flipped ? sw - 1 - sx : sx)];
             if (c == 255) continue;
-            put_pixel(t, x, y, c == HAT_INDEX && sy < (int)(hat >> 24) ? hat & 0xFFFFFFu : t->pal[c]);
+            put_pixel(t, x, y, sprite_colour(t->pal, c, sy, hat, g_put_head));
         }
     }
 }
@@ -321,7 +347,7 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
             int tx = dx + x;
             uint8_t c = src[y * sw + (flipped ? sw - 1 - x : x)];
             if (c == 255 || tx < t->x0 || tx >= t->x1) continue;
-            put_pixel(t, tx, ty, c == HAT_INDEX && y < (int)(hat >> 24) ? hat & 0xFFFFFFu : t->pal[c]);
+            put_pixel(t, tx, ty, sprite_colour(t->pal, c, y, hat, g_put_head));
         }
     }
 }
@@ -492,8 +518,10 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
         const uint8_t *s = sprite(id, &sw, &sh);
         if (s != NULL) {
             int rows = hat != 0 ? hat_rows(id, s, sw, sh) : 0;
+            g_put_head = is_head(id);
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
                 rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
+            g_put_head = 0;
         }
         e = rd16(ea + 8u);
         if (e == 0 || ++guard > 64) break;

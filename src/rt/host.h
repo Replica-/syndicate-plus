@@ -69,7 +69,7 @@ typedef struct HostCityLight {
 /* 1 when the platform draws the city now (it may decline, e.g. while it records a video) */
 int host_city_gpu(void);
 /* forget every image (new data); then define image `image`: w x h pixels 0xAARRGGBB, row stride w; alpha 255
- * opaque, 254 opaque and a hat pixel (HostCityQuad.hat), 0 transparent */
+ * opaque, 254 a hat pixel (HostCityQuad.hat's colour), 253 a hat's shine (its colour brighter), 0 transparent */
 void host_city_reset(void);
 void host_city_image(int image, int w, int h, const uint32_t *pixels);
 /* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, each image

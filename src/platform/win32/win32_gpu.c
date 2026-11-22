@@ -104,8 +104,10 @@ static const char k_city_shader[] =
     "    if (p.x < (int)i.rect.x || p.y < (int)i.rect.y || p.x >= (int)i.rect.z || p.y >= (int)i.rect.w) return 0;\n"
     "    t = atlas.Load(int3(p, 0));\n"
     "    if (t.a < 0.5) return 0;\n"
-    "    if (t.a < 0.998 && p.y - (int)i.rect.y < (int)(i.hat >> 24))\n" /* alpha 254: the hat's colour */
-    "        return float4(((i.hat >> 16) & 255) / 255.0, ((i.hat >> 8) & 255) / 255.0, (i.hat & 255) / 255.0, 1);\n"
+    "    if (t.a < 0.998 && p.y - (int)i.rect.y < (int)(i.hat >> 24)) {\n" /* alpha 254: the hat's colour, 253 */
+    "        float3 h = float3((i.hat >> 16) & 255, (i.hat >> 8) & 255, i.hat & 255) / 255.0;\n" /* its shine */
+    "        return float4(t.a > 0.994 ? h : saturate(h * 1.5 + 20.0 / 255), 1);\n"
+    "    }\n"
     "    return float4(t.rgb, 1);\n"
     "}\n"
     /* the sun's shadow at a point of a tile: its top is a diamond, corners (32, 0), (64, 16), (32, 32), (0, 16) */

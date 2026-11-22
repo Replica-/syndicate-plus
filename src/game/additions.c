@@ -1122,11 +1122,6 @@ static int renderer_on(void)
 /* the player's company in a colour of the player's choice (0: the game's own) */
 static volatile uint32_t g_player_colour;
 
-void game_set_player_colour(uint32_t rgb)
-{
-    g_player_colour = rgb;
-}
-
 /* ---- Configure Company: every colour and logo in two grids under the game's panel, one click each ----
  * The game's 8 company colours (as its preview draws them), then 16 more: one of these is shown in true colour
  * (the agents' hats), the game keeping the nearest of its own (the world map, its menus). */
@@ -1144,6 +1139,15 @@ static uint32_t g_config_logos;   /* the game's logos (32 x 32, 254 the colour) 
 static int g_config_logo, g_config_colour = -1; /* the game's, as it edits them */
 static volatile int g_pick_logo = -1, g_pick_colour = -1;
 static int g_player_pick;         /* the colour chosen (0..23) */
+
+/* --colour (headless): the hats in `rgb`, and the menus too when it is one of the colours to choose from */
+void game_set_player_colour(uint32_t rgb)
+{
+    int k;
+    g_player_colour = rgb;
+    for (k = 0; k < NB_PICK_COLOURS; k++)
+        if (k_pick_colours[k] == (rgb & 0xFFFFFFu)) g_player_pick = k;
+}
 
 static void player_colour_save(void)
 {
@@ -1271,15 +1275,19 @@ static int player_colour_index(void)
     return M[g_addrs->colours + (uint32_t)(M[company + COMPANY_COLOUR] & 7u)];
 }
 
-/* Configure Company in true colour: what the game draws there in the player's company colour (the logos; its palette
- * entry for the game's colour nearest the one chosen) is in the colour chosen */
-static void menu_true_colour(const uint8_t *index, uint32_t *rgb, int w, int h)
+/* the menus in true colour: what the game draws in the player's company colour (its logo on the world map and the
+ * team screens, its countries, the logos of Configure Company: the palette entry of the game's colour nearest the
+ * one chosen) is in the colour chosen.  Only where that entry holds that colour: the videos and other pictures
+ * have their own colours there */
+static void menu_true_colour(const uint8_t *index, const uint32_t *pal, uint32_t *rgb, int w, int h)
 {
-    int i, near, idx;
-    uint32_t c;
+    int i, game, idx;
+    uint32_t c, company;
     if (g_player_pick < NB_GAME_COLOURS) return;
-    near = config_shown() && g_config_colour >= 0 ? g_config_colour : -1; /* Configure Company: the one it edits */
-    idx = near >= 0 ? M[g_addrs->colours + (uint32_t)near] : player_colour_index();
+    company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+    game = config_shown() && g_config_colour >= 0 ? g_config_colour : (int)(M[company + COMPANY_COLOUR] & 7u);
+    idx = M[g_addrs->colours + (uint32_t)game];
+    if ((pal[idx] & 0xFFFFFFu) != k_pick_colours[game]) return;
     c = k_pick_colours[g_player_pick];
     for (i = 0; i < w * h; i++)
         if (index[i] == idx) rgb[i] = c;
@@ -1775,13 +1783,11 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     int fx, fy, hw, alpha;
     render_gpu_changed = 0;
     if (g_addrs != NULL && w == 320 && h == 200) {
-        /* Configure Company only: elsewhere (the videos, other screens) the same palette entry is other colours */
-        if (config_shown()) {
-            menu_true_colour(index, rgb, w, h);
-            config_grids(rgb, w, h, index, palette);
-        }
+        menu_true_colour(index, palette, rgb, w, h);
+        if (config_shown()) config_grids(rgb, w, h, index, palette);
         return 0;
     }
+    if (g_addrs != NULL && !in_mission()) menu_true_colour(index, palette, rgb, w, h);
     if (g_addrs == NULL || w < 640 || h != 480 || !in_mission()) return 0;
     g_cw = w;
     panel_true_colour(index, rgb, w);
