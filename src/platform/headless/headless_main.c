@@ -19,6 +19,9 @@
  * with x, y fractions 0..65535 of the picture; "wheel@N" turns the mouse wheel N notches (negative: towards the
  * user).  --wide W makes missions W pixels wide (as a wide window does).
  *
+ * --hd on|off uses the HD texture pack (USER_DIR/hd) or not; --dump-tiles FILE writes the tiles and their types for
+ * tools/hd_pack.py.
+ *
  * --cycles N limits the emulated CPU to N instructions a ms, as the window does (8000; without it the game runs as
  * fast as it can, as the tests want); --fps shows the frames a second at the top right.
  *
@@ -38,6 +41,7 @@
 #include "../win32/win32_gpu.h"
 #endif
 #include "../../game/game.h"
+#include "../../game/render.h"
 #include "../../rt/host.h"
 #include "../../video/record.h"
 
@@ -126,7 +130,7 @@ static void write_bmp(const char *path, const uint32_t *pix, int w, int h)
 }
 
 /* the mission's menu: what the headless program can change (time of day and shadows with --gpu, the routes) */
-static int g_opt_time, g_opt_shadows = 1, g_opt_routes = 1;
+static int g_opt_time, g_opt_shadows = 1, g_opt_routes = 1, g_opt_hd = 1;
 
 int host_options(HostOption *o, int max)
 {
@@ -138,7 +142,10 @@ int host_options(HostOption *o, int max)
     snprintf(o[1].value, sizeof o[1].value, "%s", g_opt_shadows ? "ON" : "OFF");
     snprintf(o[2].name, sizeof o[2].name, "SQUAD ROUTES");
     snprintf(o[2].value, sizeof o[2].value, "%s", g_opt_routes ? "ON" : "OFF");
-    return 3;
+    if (max < 4) return 3;
+    snprintf(o[3].name, sizeof o[3].name, "HD TEXTURES");
+    snprintf(o[3].value, sizeof o[3].value, "%s", g_opt_hd ? "ON" : "OFF");
+    return 4;
 }
 
 void host_option_step(int index, int dir)
@@ -156,6 +163,9 @@ void host_option_step(int index, int dir)
     } else if (index == 2) {
         g_opt_routes = !g_opt_routes;
         game_set_routes(g_opt_routes);
+    } else if (index == 3) {
+        g_opt_hd = !g_opt_hd;
+        game_set_hd(g_opt_hd);
     }
 }
 
@@ -196,6 +206,18 @@ void host_city_image(int image, int w, int h, int scale, const uint32_t *pixels)
     (void)w;
     (void)h;
     (void)scale;
+    (void)pixels;
+#endif
+}
+
+void host_city_normals(int image, int w, int h, const uint32_t *pixels)
+{
+#ifdef _WIN32
+    if (g_gpu_on) gpu_city_normals(image, w, h, pixels);
+#else
+    (void)image;
+    (void)w;
+    (void)h;
     (void)pixels;
 #endif
 }
@@ -496,6 +518,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--time"))
             gpu_set_time(!strcmp(v, "day") ? 1 : !strcmp(v, "dusk") ? 2 : !strcmp(v, "night") ? 3 : !strcmp(v, "dawn") ? 4 : 0), i++;
 #endif
+        else if (!strcmp(a, "--dump-tiles")) render_dump_tiles(v), i++;
+        else if (!strcmp(a, "--hd")) g_opt_hd = strcmp(v, "off") != 0, game_set_hd(g_opt_hd), i++;
         else if (!strcmp(a, "--wide")) g_canvas_w = atoi(v) < 640 ? 640 : atoi(v) > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : atoi(v) & ~1, i++;
         else if (!strcmp(a, "--fps")) rt_set_show_fps(1);
         else if (!strcmp(a, "--mem-dump") && g_ndumps < 16 && strchr(v, ':')) {

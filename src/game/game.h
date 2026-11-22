@@ -32,6 +32,8 @@ void game_set_player_colour(uint32_t rgb);
 /* the squad's move orders walked as routes over the map's floors when the game's straight walk cannot do them
  * (on by default) */
 void game_set_routes(int on);
+/* the HD texture pack (rt_user_dir/hd) instead of the game's tiles, where it has them (on by default) */
+void game_set_hd(int on);
 
 #ifdef __cplusplus
 }

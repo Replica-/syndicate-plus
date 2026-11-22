@@ -15,7 +15,6 @@
 #include <string.h>
 
 #include "../rt/rt.h"
-#include "ground_texture.h"
 
 /* ---- the game's data in memory (the running program's addresses: render_set_addrs) ---- */
 static RenderAddrs g_ra;
@@ -69,12 +68,10 @@ static uint16_t rd16(uint32_t a)
 static uint8_t g_types[256]; /* the tiles' types (COL01.DAT), render_set_tile_types */
 static int g_have_types;
 
-/* the images the GPU has (host_city_image, in true colour): the tiles 0-255, the sprites from 256, then the dirt
- * ground's tiles (2 tiles, each in GROUND_PLACES places of its texture) */
+/* the images the GPU has (host_city_image, in true colour): the tiles 0-255 (from the HD pack, when it has them),
+ * the sprites from 256 */
 #define IMAGE_SPRITES 256
-#define IMAGE_GROUND (IMAGE_SPRITES + 4096)
-#define GROUND_PLACES 16
-static uint8_t g_defined[IMAGE_GROUND + 2 * GROUND_PLACES];
+static uint8_t g_defined[IMAGE_SPRITES + 4096];
 
 /* ---- tiles: decoded once per tile set (palette indices, 255 transparent) ---- */
 static uint8_t g_tiles[NB_TILES][TILE_H][TILE_W];
@@ -218,11 +215,14 @@ static uint32_t shine(uint32_t c)
 
 /* an image (palette indices, 255 transparent) to the GPU in true colour: the hat's colours marked (alpha 254 its
  * colour, 253 its shine) */
+static int hd_define(int image, const uint8_t *px);
+
 static void define_image(int image, const uint8_t *px, int w, int h)
 {
     static uint32_t rgb[256 * 256];
     int i, head = image >= IMAGE_SPRITES && is_head(image - IMAGE_SPRITES);
     if (w * h > 256 * 256) return;
+    if (image < IMAGE_SPRITES && hd_define(image, px)) return;
     for (i = 0; i < w * h; i++) {
         uint32_t a = px[i] == HAT_INDEX ? 0xFE000000u : head && px[i] == HAT_SHINE ? 0xFD000000u : 0xFF000000u;
         rgb[i] = px[i] == 255 ? 0 : a | (g_image_pal[px[i]] & 0xFFFFFFu);
@@ -261,10 +261,10 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->flip = (uint8_t)(flipped != 0);
     q->z = g_quad_z;
     q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0) |
-                        (image < IMAGE_SPRITES || image >= IMAGE_GROUND
+                        (image < IMAGE_SPRITES
                              ? HOST_GLOW_TILE | (g_solid ? HOST_GLOW_SOLID : 0) | (g_tile_shadow ? HOST_GLOW_SHADOW : 0)
                              : (g_obj_shadow ? HOST_GLOW_SHADOW : 0)));
-    q->hat = image < IMAGE_SPRITES || image >= IMAGE_GROUND ? g_tile_nb : hat; /* a sprite: its hat's rows, colour */
+    q->hat = image < IMAGE_SPRITES ? g_tile_nb : hat; /* a sprite: its hat's rows, colour */
 }
 
 
@@ -363,154 +363,112 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
     }
 }
 
-/* ---- the dirt ground (tiles 13 and 14): their tops in a texture of their own (ground_texture.h), in true colour and
- * GROUND_RES times the game's detail.  The texture repeats every GROUND_REPEAT x GROUND_REPEAT tiles, so each tile is
- * made for each place in it ---- */
-#define GROUND_REPEAT 4
-#define GROUND_TOP 32 /* a tile's top: a diamond 64 x 32, a square of GROUND_TOP x GROUND_TOP game pixels */
-#define GROUND_EDGE 1.08f /* the top's upper edges reach this far, over the tiles behind (their sides would show as
-                           * lines between the tops: the finer top leaves a sliver of them) */
-#define GROUND_W (TILE_W * GROUND_RES)
-#define GROUND_H (TILE_H * GROUND_RES)
-int render_ground = 1;
-static uint32_t g_ground[2][GROUND_PLACES][GROUND_W * GROUND_H]; /* 0xFFRRGGBB, 0: transparent */
-static uint8_t g_ground_made[2][GROUND_PLACES];
-static uint32_t g_ground_pal[256];
+/* ---- the HD texture pack (render.h) ---- */
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_NO_HDR
+#define STBI_NO_LINEAR
+#include "../third_party/stb_image.h"
+#define HD_SCALE 4
+#define HD_W (TILE_W * HD_SCALE)
+#define HD_H (TILE_H * HD_SCALE)
+static int g_hd = 1;
+static volatile int g_hd_want = 1; /* render_set_hd (any thread); g_hd follows it at the next city drawn */
+typedef struct HdTile {
+    int state;          /* 0 not looked for, 1 loaded, 2 none */
+    uint8_t *rgba;      /* HD_W x HD_H */
+    uint8_t *normals;   /* HD_W x HD_H RGB(A) */
+    uint8_t *orig;      /* TILE_W x TILE_H RGBA: the colours it was made in */
+} HdTile;
+static HdTile g_hd_tiles[NB_TILES];
 
-static int ground_slot(int tid)
+static uint8_t *hd_load(int id, const char *suffix, int w, int h)
 {
-    return tid == 13 ? 0 : tid == 14 ? 1 : -1;
+    char path[1200];
+    int iw, ih, n;
+    uint8_t *p;
+    snprintf(path, sizeof path, "%s/hd/tile_%03d%s.png", rt_user_dir, id, suffix);
+    p = stbi_load(path, &iw, &ih, &n, 4);
+    if (p != NULL && (iw != w || ih != h)) {
+        stbi_image_free(p);
+        p = NULL;
+    }
+    return p;
 }
 
-/* the point x, y of a tile (its pixels) in the diamond of its top, `s` times its size */
-static int in_top(float x, float y, float s)
+static const char *g_dump_tiles;
+
+void render_dump_tiles(const char *path)
 {
-    return fabsf(x - 32.0f) / 32.0f + fabsf(y - 16.0f) / 16.0f <= s;
+    g_dump_tiles = path;
 }
 
-/* the 4 commonest colours of the middle of a dirt tile's top (its dirt), into dirt[]; their use added to count[] */
-static void dirt_colours(const uint8_t *tl, int dirt[4], int count[256])
+static void dump_tiles(const uint32_t *pal)
 {
-    int own[256], x, y, n, j;
-    memset(own, 0, sizeof own);
-    for (y = 0; y < GROUND_TOP; y++)
-        for (x = 0; x < TILE_W; x++)
-            if (in_top((float)x + 0.5f, (float)y + 0.5f, 0.8f)) own[tl[y * TILE_W + x]]++;
-    own[255] = 0;
-    for (n = 0; n < 4; n++) {
-        int best = 0;
-        for (j = 1; j < 256; j++)
-            if (own[j] > own[best]) best = j;
-        dirt[n] = best;
-        count[best] += own[best];
-        own[best] = -1;
-    }
-}
-
-/* the texture's colours for this palette: mission 1's, scaled by the dirt's mean colour (both dirt tiles', by use)
- * over mission 1's, so another mission's dirt keeps its own tint */
-static uint32_t g_ground_colours[NB_GROUND_COLOURS];
-
-static void ground_colours(const uint32_t *pal)
-{
-    int count[256], dirt[4], i, n = 0, ch, t;
-    float sum[3] = {0, 0, 0}, scale[3];
-    memset(count, 0, sizeof count);
-    for (t = 13; t <= 14; t++)
-        if (tile(t) != NULL) dirt_colours(tile(t), dirt, count);
-    for (i = 0; i < 255; i++) {
-        for (ch = 0; ch < 3; ch++) sum[ch] += (float)((pal[i] >> (16 - 8 * ch)) & 255) * (float)count[i];
-        n += count[i];
-    }
-    for (ch = 0; ch < 3; ch++) {
-        scale[ch] = n > 0 ? sum[ch] / (float)n / k_ground_ref[ch] : 1.0f;
-        if (scale[ch] < 0.5f) scale[ch] = 0.5f;
-        if (scale[ch] > 2.0f) scale[ch] = 2.0f;
-    }
-    for (i = 0; i < NB_GROUND_COLOURS; i++) {
-        g_ground_colours[i] = 0xFF000000u;
-        for (ch = 0; ch < 3; ch++) {
-            float v = (float)((k_ground_colours[i] >> (16 - 8 * ch)) & 255) * scale[ch];
-            g_ground_colours[i] |= (uint32_t)(v > 255.0f ? 255.0f : v) << (16 - 8 * ch);
+    FILE *f = fopen(g_dump_tiles, "wb");
+    int i, k;
+    g_dump_tiles = NULL;
+    if (f == NULL) return;
+    for (i = 0; i < NB_TILES; i++) {
+        const uint8_t *t = tile(i);
+        for (k = 0; k < TILE_W * TILE_H; k++) {
+            uint32_t c = t != NULL && t[k] != 255 ? 0xFF000000u | pal[t[k]] : 0;
+            fwrite(&c, 4, 1, f);
         }
     }
+    fwrite(g_types, 1, sizeof g_types, f);
+    fclose(f);
 }
 
-/* a dirt tile (pixels tl) at map place tx, ty: its pixels in true colour, GROUND_RES times as many each way; its top's
- * dirt from the texture */
-static const uint32_t *ground_image(int slot, const uint8_t *tl, int tx, int ty, const uint32_t *pal)
+void render_set_hd(int on)
 {
-    int k = (tx % GROUND_REPEAT) + (ty % GROUND_REPEAT) * GROUND_REPEAT, x, y;
-    uint32_t *out = g_ground[slot][k];
-    if (memcmp(g_ground_pal, pal, sizeof g_ground_pal) != 0) {
-        /* another palette: every tile made again */
-        memcpy(g_ground_pal, pal, sizeof g_ground_pal);
-        memset(g_ground_made, 0, sizeof g_ground_made);
-        memset(g_defined + IMAGE_GROUND, 0, 2 * GROUND_PLACES);
-        ground_colours(pal);
+    g_hd_want = on != 0;
+}
+
+/* tile `image` (its pixels px, palette indices) from the pack: its colours re-tinted to this palette (by the tile's
+ * mean colour now over the mean colour it was made in, each channel), with its normals; 0 if not in the pack */
+static int hd_define(int image, const uint8_t *px)
+{
+    static uint32_t rgb[HD_W * HD_H], nrm[HD_W * HD_H];
+    HdTile *t = &g_hd_tiles[image];
+    float now[3] = {0, 0, 0}, was[3] = {0, 0, 0}, f[3];
+    int x, y, ch;
+    if (!g_hd) return 0;
+    if (t->state == 0) {
+        t->rgba = hd_load(image, "", HD_W, HD_H);
+        t->normals = t->rgba != NULL ? hd_load(image, "_n", HD_W, HD_H) : NULL;
+        t->orig = t->rgba != NULL ? hd_load(image, "_orig", TILE_W, TILE_H) : NULL;
+        t->state = t->rgba != NULL && t->orig != NULL ? 1 : 2;
     }
-    if (g_ground_made[slot][k]) return out;
-    for (y = 0; y < GROUND_H; y++)
-        for (x = 0; x < GROUND_W; x++) {
-            /* the tile's own pixel here; on its top the texture instead */
-            float fx = ((float)x + 0.5f) / GROUND_RES, fy = ((float)y + 0.5f) / GROUND_RES;
-            uint8_t c = tl[(y / GROUND_RES) * TILE_W + x / GROUND_RES];
-            uint32_t px;
-            if (in_top(fx, fy, fy < 16.0f ? GROUND_EDGE : 1.0f) && (c != 255 || fy < 16.0f)) {
-                /* down the tile is along both of its edges, across it along one and back along the other */
-                int u = (int)floorf((float)(GROUND_TOP * GROUND_RES * (tx % GROUND_REPEAT)) +
-                                    (fy + (fx - 32.0f) / 2.0f) * GROUND_RES) & (GROUND_SIZE - 1);
-                int v = (int)floorf((float)(GROUND_TOP * GROUND_RES * (ty % GROUND_REPEAT)) +
-                                    (fy - (fx - 32.0f) / 2.0f) * GROUND_RES) & (GROUND_SIZE - 1);
-                char d = k_ground[v][u];
-                px = g_ground_colours[d <= '9' ? d - '0' : d - 'a' + 10];
-            } else if (c == 255) {
-                px = 0;
-            } else {
-                px = 0xFF000000u | (pal[c] & 0xFFFFFFu);
+    if (t->state != 1) return 0;
+    for (y = 0; y < TILE_H * TILE_W; y++)
+        if (px[y] != 255)
+            for (ch = 0; ch < 3; ch++) {
+                now[ch] += (float)((g_image_pal[px[y]] >> (16 - 8 * ch)) & 255);
+                was[ch] += (float)t->orig[y * 4 + ch];
             }
-            out[y * GROUND_W + x] = px;
+    for (ch = 0; ch < 3; ch++) f[ch] = was[ch] > 0 ? now[ch] / was[ch] : 1.0f;
+    for (y = 0; y < HD_H; y++)
+        for (x = 0; x < HD_W; x++) {
+            const uint8_t *h = t->rgba + (y * HD_W + x) * 4;
+            uint32_t out = 0;
+            if (h[3] < 128 || px[(y / HD_SCALE) * TILE_W + x / HD_SCALE] == 255) {
+                rgb[y * HD_W + x] = 0;
+                continue;
+            }
+            for (ch = 0; ch < 3; ch++) {
+                float v = (float)h[ch] * f[ch];
+                out |= (uint32_t)(v > 255.0f ? 255.0f : v) << (16 - 8 * ch);
+            }
+            rgb[y * HD_W + x] = 0xFF000000u | out;
+            if (t->normals != NULL) {
+                const uint8_t *n = t->normals + (y * HD_W + x) * 4;
+                nrm[y * HD_W + x] = 0xFF000000u | (uint32_t)n[0] << 16 | (uint32_t)n[1] << 8 | n[2];
+            }
         }
-    g_ground_made[slot][k] = 1;
-    return out;
-}
-
-/* a true colour image (0: transparent) drawn `z` times its size with its top left corner at ox, oy */
-static void blit_rgb(const Target *t, const uint32_t *src, int sw, int sh, float ox, float oy, float z)
-{
-    int x, y, xa = (int)floorf(ox), ya = (int)floorf(oy), xb = (int)ceilf(ox + sw * z), yb = (int)ceilf(oy + sh * z);
-    if (xa < t->x0) xa = t->x0;
-    if (ya < t->y0) ya = t->y0;
-    if (xb > t->x1) xb = t->x1;
-    if (yb > t->y1) yb = t->y1;
-    for (y = ya; y < yb; y++) {
-        int sy = (int)(((float)y + 0.5f - oy) / z);
-        if (sy < 0 || sy >= sh) continue;
-        for (x = xa; x < xb; x++) {
-            int sx = (int)(((float)x + 0.5f - ox) / z);
-            uint32_t c;
-            if (sx < 0 || sx >= sw) continue;
-            c = src[sy * sw + sx];
-            if (c != 0) put_pixel(t, x, y, c & 0xFFFFFFu);
-        }
-    }
-}
-
-/* a dirt tile at map place tx, ty, its top left corner at fx, fy of the unzoomed picture: as put() puts a tile */
-static void put_ground(const Target *t, int slot, const uint8_t *tl, int tx, int ty, float fx, float fy)
-{
-    const uint32_t *px = ground_image(slot, tl, tx, ty, t->pal);
-    int image = IMAGE_GROUND + slot * GROUND_PLACES + (tx % GROUND_REPEAT) + (ty % GROUND_REPEAT) * GROUND_REPEAT;
-    float x = g_zoom == 1.0 ? fx : zoom_x(fx), y = g_zoom == 1.0 ? fy : zoom_y(fy);
-    if (t->gpu) {
-        if (!g_defined[image]) {
-            host_city_image(image, GROUND_W, GROUND_H, GROUND_RES, px);
-            g_defined[image] = 1;
-        }
-        emit(image, NULL, TILE_W, TILE_H, x, y, 0, 0, tile_glow(image));
-    } else {
-        blit_rgb(t, px, GROUND_W, GROUND_H, x, y, (float)g_zoom / GROUND_RES);
-    }
+    host_city_image(image, HD_W, HD_H, HD_SCALE, rgb);
+    if (t->normals != NULL) host_city_normals(image, HD_W, HD_H, nrm);
+    return 1;
 }
 
 /* `hat`: the colour of the hat: colour 6 of the sprites that are heads, whose colour 6 is all in their top
@@ -1013,7 +971,6 @@ static int g_obj_glow; /* how the object being drawn glows */
 
 static int tile_glow(int image)
 {
-    if (image >= IMAGE_GROUND) image = (image - IMAGE_GROUND) / GROUND_PLACES == 0 ? 13 : 14;
     return image < IMAGE_SPRITES ? tile_light(image)->glow : g_obj_glow;
 }
 
@@ -1396,6 +1353,13 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     static Obj objs[2048];
     uint32_t map, cols;
     if (g_ra.map == 0) return;
+    if (g_dump_tiles != NULL && g_have_types) dump_tiles(pal);
+    if (g_hd != g_hd_want) {
+        /* HD textures on or off: the GPU's images made again */
+        g_hd = g_hd_want;
+        memset(g_defined, 0, sizeof g_defined);
+        host_city_reset();
+    }
     if (rgb == NULL && memcmp(g_image_pal, pal, sizeof g_image_pal) != 0) {
         /* another palette: the GPU's images are made again in its colours */
         memcpy(g_image_pal, pal, sizeof g_image_pal);
@@ -1526,12 +1490,8 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         }
                         g_solid = t.gpu && g_have_types && solid_type(type_at(cols, mx, my, mz, tx, ty, tz));
                         g_translucent = g_cut >= 0 && tz >= g_cut;
-                        if (ground_slot(tid) >= 0 && render_ground)
-                            put_ground(&t, ground_slot(tid), tl, tx, ty, ffx + (float)render_tile_dx,
-                                       ffy + (float)render_tile_dy);
-                        else
-                            put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
-                                ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
+                        put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
+                            ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
                         g_solid = 0;
                         g_tile_shadow = 0;
                         g_tile_nb = 0;

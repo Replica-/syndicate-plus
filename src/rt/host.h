@@ -78,6 +78,9 @@ int host_city_gpu(void);
  * hat's shine (its colour brighter), 0 transparent */
 void host_city_reset(void);
 void host_city_image(int image, int w, int h, int scale, const uint32_t *pixels);
+/* the normals of image `image` (defined just before; w x h 0x??XXYYZZ, x right, y down, z out of the picture, 128 0):
+ * the light picks out its relief.  Without: flat */
+void host_city_normals(int image, int w, int h, const uint32_t *pixels);
 /* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, each image
  * `scale` times its size (the zoom); the lights show when the platform lights the city for a time of day darker
  * than the mission's own look */

@@ -47,8 +47,8 @@ static ID3D11BlendState *g_blend;
 static ID3D11BlendState *g_blend_lit; /* the city into the picture, its glows and its heights */
 static ID3D11RasterizerState *g_scissor;
 static ID3D11Buffer *g_cb, *g_city_cb, *g_city_vb;
-static ID3D11Texture2D *g_tex, *g_atlas;
-static ID3D11ShaderResourceView *g_srv, *g_atlas_srv;
+static ID3D11Texture2D *g_tex, *g_atlas, *g_natlas;
+static ID3D11ShaderResourceView *g_srv, *g_atlas_srv, *g_natlas_srv; /* the images, their normals */
 static int g_tex_w, g_tex_h, g_city_vb_cap;
 static int g_win_w, g_win_h;
 /* offscreen (gpu_init(NULL): the headless tests): the picture is drawn into a texture and read back */
@@ -89,6 +89,7 @@ static const char k_shader[] =
 static const char k_city_shader[] =
     "cbuffer C : register(b0) { float2 frame_size; float scale; float shadow; };\n"
     "Texture2D<float4> atlas : register(t0);\n"
+    "Texture2D<float4> normals : register(t1);\n"
     "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2; uint glow : TEXCOORD3; float z : TEXCOORD4; };\n"
     "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1; nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3; nointerpolation float z : TEXCOORD4; };\n"
     "V vs(VI i) {\n"
@@ -158,13 +159,20 @@ static const char k_city_shader[] =
     "    else if (glow == 3 && l >= 0.8 && max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b)) < 60.0 / 255) s = 0.6;\n"
     "    return float4(s, s, s, 1) * c.a;\n"
     "}\n"
+    /* the relief (the image's normals, x right, y down, z out of the picture) in the sun's light, from the top
+     * left: brighter facing it, darker away; a flat normal changes nothing */
+    "float relief(V i) {\n"
+    "    float3 n = normals.Load(int3((int2)floor(i.tex), 0)).rgb * 2 - 1;\n"
+    "    float3 l = normalize(float3(-0.45, -0.55, 0.7));\n"
+    "    return lerp(1, saturate(dot(normalize(n), l)) / l.z, 0.6);\n"
+    "}\n"
     "float4 ps(V i) : SV_Target {\n"
     "    float2 p = i.tex - 0.5;\n"
     "    float2 b = floor(p);\n"
     "    float2 f = saturate((p - b - 0.5) * scale / texels(i) + 0.5);\n"
     "    int2 q = (int2)b;\n"
     "    float4 c = lerp(lerp(texel(q, i), texel(q + int2(1, 0), i), f.x), lerp(texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f.x), f.y);\n"
-    "    c.rgb *= lerp(face(i), 1, glowing(c, i.glow).r / max(c.a, 1e-4));\n" /* light is not shaded */
+    "    c.rgb *= lerp(face(i) * relief(i), 1, glowing(c, i.glow).r / max(c.a, 1e-4));\n" /* light is not shaded */
     "    if (i.glow & 128) c *= 60.0 / 255.0;\n" /* drawn see-through (B held) */
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
     "}\n"
@@ -180,7 +188,7 @@ static const char k_city_shader[] =
     "    float4 c00 = texel(q, i), c10 = texel(q + int2(1, 0), i), c01 = texel(q + int2(0, 1), i);\n"
     "    float4 c11 = texel(q + int2(1, 1), i);\n"
     "    o.c = lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);\n"
-    "    o.c.rgb *= lerp(face(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
+    "    o.c.rgb *= lerp(face(i) * relief(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
     /* its height and the light the sun's shadow takes there (none where it glows) */
     "    o.h = float4(height(i), loss(i) * (1 - glowing(o.c, i.glow).r / max(o.c.a, 1e-4)), 0, (i.glow & 128) ? 0 : o.c.a);\n"
@@ -276,6 +284,7 @@ typedef struct Image {
     int w, h, ax, ay; /* size, place in the atlas (w 0: not defined) */
     int scale;        /* its pixels to a frame pixel each way: 1, 2 or 4 */
     uint32_t *pixels; /* to upload (NULL once uploaded) */
+    uint32_t *normals; /* its normals to upload (NULL: none, or uploaded) */
 } Image;
 
 static SRWLOCK g_city_lock = SRWLOCK_INIT;
@@ -304,6 +313,7 @@ void gpu_city_reset(void)
     AcquireSRWLockExclusive(&g_city_lock);
     for (i = 0; i < NB_IMAGES; i++) {
         free(g_images[i].pixels);
+        free(g_images[i].normals);
         memset(&g_images[i], 0, sizeof g_images[i]);
     }
     g_shelf_x = g_shelf_y = g_shelf_h = 0;
@@ -339,6 +349,20 @@ void gpu_city_image(int id, int w, int h, int scale, const uint32_t *pixels)
     free(im->pixels);
     im->pixels = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)(w * h));
     if (im->pixels != NULL) memcpy(im->pixels, pixels, sizeof(uint32_t) * (size_t)(w * h));
+    ReleaseSRWLockExclusive(&g_city_lock);
+}
+
+void gpu_city_normals(int id, int w, int h, const uint32_t *pixels)
+{
+    Image *im;
+    if (id < 0 || id >= NB_IMAGES) return;
+    AcquireSRWLockExclusive(&g_city_lock);
+    im = &g_images[id];
+    if (im->w == w && im->h == h) {
+        free(im->normals);
+        im->normals = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)(w * h));
+        if (im->normals != NULL) memcpy(im->normals, pixels, sizeof(uint32_t) * (size_t)(w * h));
+    }
     ReleaseSRWLockExclusive(&g_city_lock);
 }
 
@@ -496,7 +520,9 @@ static int make_city(void)
     td.Usage = D3D11_USAGE_DEFAULT;
     td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_atlas)) ||
-        FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_atlas, NULL, &g_atlas_srv)))
+        FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_atlas, NULL, &g_atlas_srv)) ||
+        FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_natlas)) ||
+        FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_natlas, NULL, &g_natlas_srv)))
         return 0;
     memset(&bd, 0, sizeof bd);
     bd.ByteWidth = sizeof(CityConsts);
@@ -638,6 +664,8 @@ void gpu_shutdown(void)
     RELEASE(g_tex);
     RELEASE(g_atlas_srv);
     RELEASE(g_atlas);
+    RELEASE(g_natlas_srv);
+    RELEASE(g_natlas);
     RELEASE(g_city_vb);
     RELEASE(g_city_cb);
     RELEASE(g_light_vb);
@@ -820,12 +848,15 @@ static void draw_city(RECT dst, int fw, int fh)
     }
     if (g_atlas_reset) {
         /* everything transparent */
-        static uint32_t clear[ATLAS]; /* 0: transparent */
+        static uint32_t clear[ATLAS], flat[ATLAS]; /* 0: transparent; the normal out of the picture */
         D3D11_BOX box = {0, 0, 0, ATLAS, 1, 1};
+        if (flat[0] == 0)
+            for (i = 0; i < ATLAS; i++) flat[i] = 0xFF8080FFu;
         for (i = 0; i < ATLAS; i++) {
             box.top = (UINT)i;
             box.bottom = (UINT)i + 1;
             ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_atlas, 0, &box, clear, ATLAS * 4, 0);
+            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_natlas, 0, &box, flat, ATLAS * 4, 0);
         }
         g_atlas_reset = 0;
     }
@@ -837,6 +868,13 @@ static void draw_city(RECT dst, int fw, int fh)
                                                   (UINT)im->w * 4, 0);
             free(im->pixels);
             im->pixels = NULL;
+        }
+        if (im->normals != NULL && im->pixels == NULL) {
+            D3D11_BOX box = {(UINT)im->ax, (UINT)im->ay, 0, (UINT)(im->ax + im->w), (UINT)(im->ay + im->h), 1};
+            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_natlas, 0, &box, im->normals,
+                                                  (UINT)im->w * 4, 0);
+            free(im->normals);
+            im->normals = NULL;
         }
     }
     n = g_city_n;
@@ -944,7 +982,7 @@ static void draw_city(RECT dst, int fw, int fh)
         ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_city_cb, 0);
     }
     {
-        ID3D11ShaderResourceView *srv[1] = {g_atlas_srv};
+        ID3D11ShaderResourceView *srv[2] = {g_atlas_srv, g_natlas_srv};
         int lit = (time >= 0 || g_shadows) && lit_targets(dst.right - dst.left, dst.bottom - dst.top);
         ID3D11DeviceContext_IASetInputLayout(g_ctx, g_city_layout);
         ID3D11DeviceContext_IASetVertexBuffers(g_ctx, 0, 1, &g_city_vb, &stride, &offset);
@@ -953,7 +991,7 @@ static void draw_city(RECT dst, int fw, int fh)
         ID3D11DeviceContext_VSSetConstantBuffers(g_ctx, 0, 1, &g_city_cb);
         ID3D11DeviceContext_PSSetShader(g_ctx, lit ? g_city_lit_ps : g_city_ps, NULL, 0);
         ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_city_cb);
-        ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 1, srv);
+        ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 2, srv);
         ID3D11DeviceContext_RSSetState(g_ctx, g_scissor);
         ID3D11DeviceContext_OMSetBlendState(g_ctx, g_blend, NULL, 0xFFFFFFFFu);
         if (!lit) {
