@@ -1498,6 +1498,64 @@ static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t 
     host_menu_sides(&sides);
 }
 
+/* the pointer on a wide menu: the game draws it into its picture, which ends at the game's edges, so with the mouse
+ * on a side it stays at the edge, cut by it.  The picture without it is kept (away from it): what differs near the
+ * game's pointer is the pointer, its shape learnt while it is well inside the picture; past an edge the picture is
+ * put back under the game's and the shape drawn where the mouse is */
+#define POINTER_MAX 1200
+typedef struct PointerPx {
+    int16_t x, y;
+    uint32_t c;
+} PointerPx;
+static PointerPx g_pointer[POINTER_MAX]; /* its shape, from the mouse's point */
+static int g_pointer_n, g_pointer_x, g_pointer_y; /* and where it is drawn (the game's columns: past them on a side) */
+
+/* 1 when the pointer is to be drawn on a side (pointer_draw); `out`: the game's picture (index) without its pointer
+ * then */
+static int pointer_past_edge(const uint8_t *index, const uint32_t *pal, uint32_t *game, uint8_t *out)
+{
+    static uint8_t ref[320 * 200];
+    static PointerPx seen[POINTER_MAX];
+    int mx, my, gx, gy, x, y, n = 0;
+    menu_mouse(&mx, &my);
+    gx = mx < 0 ? 0 : mx > 319 ? 319 : mx;
+    gy = my < 0 ? 0 : my > 199 ? 199 : my;
+    memcpy(out, index, 320 * 200);
+    for (y = 0; y < 200; y++)
+        for (x = 0; x < 320; x++) {
+            int near = x >= gx - 24 && x < gx + 24 && y >= gy - 24 && y < gy + 28;
+            int i = y * 320 + x;
+            if (!near) {
+                ref[i] = index[i];
+            } else if (index[i] != ref[i] && n < POINTER_MAX) {
+                seen[n].x = (int16_t)(x - gx);
+                seen[n].y = (int16_t)(y - gy);
+                seen[n].c = pal[index[i]] & 0xFFFFFFu;
+                n++;
+                if (mx != gx) { /* the game's, at the edge, away */
+                    game[i] = pal[ref[i]] & 0xFFFFFFu;
+                    out[i] = ref[i];
+                }
+            }
+        }
+    if (n > 0 && gx >= 24 && gx < 296 && gy >= 24 && gy < 172) {
+        memcpy(g_pointer, seen, sizeof seen[0] * (size_t)n);
+        g_pointer_n = n;
+    }
+    g_pointer_x = mx;
+    g_pointer_y = gy;
+    return mx != gx && g_pointer_n > 0;
+}
+
+static void pointer_draw(uint32_t *rgb, int w, int on)
+{
+    int k;
+    for (k = 0; on && k < g_pointer_n; k++) {
+        int x = g_menu_off + g_pointer_x + g_pointer[k].x, y = g_pointer_y + g_pointer[k].y;
+        if (x >= 0 && x < w && y >= 0 && y < 200) rgb[y * w + x] = g_pointer[k].c;
+    }
+}
+
 static int config_shown(void)
 {
     return g_config_logos != 0 && (uint32_t)(host_time_us() / 1000u) - g_config_us < 300u;
@@ -2212,7 +2270,12 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
         g_menu_w = w;
         g_menu_off = (w - 320) / 2;
         rt_mouse_window(g_menu_off * 65536 / w, (g_menu_off + 320) * 65536 / w);
-        if (w > 320) wide_menu(index, palette, game, rgb, w);
+        if (w > 320) {
+            static uint8_t bare[320 * 200];
+            int on = pointer_past_edge(index, palette, game, bare);
+            wide_menu(bare, palette, game, rgb, w);
+            pointer_draw(rgb, w, on);
+        }
         return 0;
     }
     rt_mouse_window(0, 65536);
