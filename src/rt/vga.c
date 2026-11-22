@@ -402,14 +402,6 @@ int vga_mode(void)
 }
 
 /* ---- rendering ------------------------------------------------------------------------------------------ */
-/* the colour (index into the 256) that the 16-colour modes show for colour c of the planes */
-uint8_t vga_colour16(int c)
-{
-    uint8_t a = g_attr[c & g_attr[0x12] & 0x0F] & 0x3F;
-    return (g_attr[0x10] & 0x80) ? (uint8_t)((a & 0x0F) | ((g_attr[0x14] & 0x0F) << 4))
-                                 : (uint8_t)(a | ((g_attr[0x14] & 0x0C) << 4));
-}
-
 int vga_render(uint8_t *pixels, int *w, int *h, uint32_t *palette)
 {
     int i, chars, vdisp, row_h, rows, y, x;
