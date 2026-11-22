@@ -5,9 +5,9 @@ tools/menu_outpaint.py.
 
 The green menus are the game's 320 x 200 picture over a desk photo (the last frame of MSCRENUP.DAT, an FLC file);
 the outpainted photo is 576 x 200 at that pixel shape (shown 3 times larger, square pixels: 1728 x 720).  Its two
-sides (128 columns each) are brought back to the photo's own 48 colours of the menus' palette (they are the same in
-every menu) and written as palette indices, so that the game's palette colours them as it does the rest (its fades
-too).  Only the new sides are written, nothing of the game's picture."""
+sides (128 columns each) are written in true colour as they are, scaled to the menus' pixels, with the palette
+entries of the photo (the same in every menu) to follow the game's fades by.  Only the new sides are written,
+nothing of the game's picture."""
 import struct
 import sys
 
@@ -115,29 +115,27 @@ def main():
     data, outpainted, out = sys.argv[1:4]
     px, pal = last_frame(data + '/MSCRENUP.DAT')
     used = sorted(set(px[y * CW + x] for y in range(5, 195) for x in range(6, 314)))
-    rgb = lambda i: tuple((pal[i * 3 + k] << 2 | pal[i * 3 + k] >> 4) for k in range(3))
-    palimg = Image.new('P', (1, 1))
-    flat = []
-    for i in used:
-        flat += rgb(i)
-    palimg.putpalette(flat + list(rgb(used[0])) * (256 - len(used)))
+    six = lambda i: tuple(pal[i * 3 + k] for k in range(3))
     wide = Image.open(outpainted).convert('RGB').resize((W, H), Image.LANCZOS)
-    sides = []
-    for x0 in (0, W - SIDE):
-        q = wide.crop((x0, 0, x0 + SIDE, H)).quantize(palette=palimg, dither=Image.Dither.FLOYDSTEINBERG)
-        sides.append([used[v] if v < len(used) else used[0] for v in q.getdata()])
+    sides = [wide.crop((x0, 0, x0 + SIDE, H)) for x0 in (0, W - SIDE)]
+    lines = ['/* menu_sides.h - the sides of the widescreen menus: the desk photo outpainted, in true colour (made by',
+             ' * tools/menu_sides.py).  k_menu_sides[side: 0 left, 1 right][row][column]: 0xRRGGBB; k_menu_photo: the',
+             ' * palette entries of the photo and their colours (0..63) as the menus have them, the sides as bright as',
+             ' * those are (the game fades its menus in and out with the palette) */',
+             '#define MENU_SIDE_W %d' % SIDE, '#define MENU_SIDE_H %d' % H, '#define MENU_PHOTO_N %d' % len(used),
+             'static const unsigned char k_menu_photo[MENU_PHOTO_N][4] = {']
+    lines += ['    {%d, %d, %d, %d},' % ((i,) + six(i)) for i in used]
+    lines += ['};', 'static const unsigned int k_menu_sides[2][MENU_SIDE_H][MENU_SIDE_W] = {']
+    for s in sides:
+        lines.append('    {')
+        for y in range(H):
+            row = [s.getpixel((x, y)) for x in range(SIDE)]
+            lines.append('        {' + ','.join('0x%06x' % (r << 16 | g << 8 | b) for r, g, b in row) + '},')
+        lines.append('    },')
+    lines.append('};')
     with open(out, 'w', newline='\n') as f:
-        f.write('/* menu_sides.h - the sides of the widescreen menus: the desk photo outpainted, in the palette indices of\n'
-                ' * the menus (made by tools/menu_sides.py).  [side: 0 left, 1 right][row][column] */\n')
-        f.write('#define MENU_SIDE_W %d\n#define MENU_SIDE_H %d\n' % (SIDE, H))
-        f.write('static const unsigned char k_menu_sides[2][MENU_SIDE_H][MENU_SIDE_W] = {\n')
-        for s in sides:
-            f.write('    {\n')
-            for y in range(H):
-                f.write('        {' + ','.join(str(v) for v in s[y * SIDE:(y + 1) * SIDE]) + '},\n')
-            f.write('    },\n')
-        f.write('};\n')
-    print('%s: %d colours' % (out, len(used)))
+        f.write('\n'.join(lines) + '\n')
+    print(out)
 
 
 if __name__ == '__main__':

@@ -125,8 +125,8 @@ highest agent (walls, roofs) is not drawn.
 
 The menus fill a wide window too (up to 21:9): the game's 320 x 200 picture stays in the middle, the green menus'
 desk photo goes on to the window's edges and their frame goes round all of it.  The sides are the photo outpainted
-with Fooocus (`tools/menu_outpaint.py`, then `tools/menu_sides.py` brings them to the menus' own colours, as palette
-indices, into `src/game/menu_sides.h`); the title screen, the videos and the screens' opening animations keep black
+with Fooocus (`tools/menu_outpaint.py`, then `tools/menu_sides.py` scales them to the menus' pixels, in true colour as they
+are, into `src/game/menu_sides.h`; they dim with the game's palette while it fades a menu in or out); the title screen, the videos and the screens' opening animations keep black
 sides.
 
 The window menu's *Time of day* lights the city at dusk or at night (the side panel stays as it is): the city is

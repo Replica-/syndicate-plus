@@ -1288,7 +1288,8 @@ static int on_draw_logo(uint32_t addr)
 
 /* ---- the menus as wide as the window: the game's 320 x 200 picture in the middle of a wider one; on the green menus
  * (the desk photo and the frame round it, in all of them: its bright line, palette entry FRAME_INDEX, at columns 3
- * and 317, rows 2 and 197) the photo goes on to the sides (menu_sides.h, outpainted), the frame round all of it ---- */
+ * and 317, rows 2 and 197) the photo goes on to the sides (menu_sides.h, outpainted, in true colour), the frame round
+ * all of it ---- */
 #define FRAME_INDEX 252
 static int g_menu_w = 320, g_menu_off; /* the menu's picture, and where the game's is in it */
 
@@ -1310,10 +1311,27 @@ static int menu_framed(const uint8_t *index)
     return n >= (192 + 312) * 9 / 10;
 }
 
+static uint32_t faded(uint32_t rgb, const uint32_t fade[3])
+{
+    if (fade[0] == 256u && fade[1] == 256u && fade[2] == 256u) return rgb;
+    return (((rgb >> 16) & 255u) * fade[0] >> 8) << 16 | (((rgb >> 8) & 255u) * fade[1] >> 8) << 8 |
+           ((rgb & 255u) * fade[2] >> 8);
+}
+
 /* `game`, the game's picture (320 x 200, what this version draws on it included), into the menu's `rgb` (w wide) */
 static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t *game, uint32_t *rgb, int w)
 {
-    int off = (w - 320) / 2, x, y, framed = menu_framed(index);
+    int off = (w - 320) / 2, x, y, framed = menu_framed(index), k, c;
+    uint32_t fade[3]; /* the palette's brightness (256: as the menus have it; less while the game fades them) */
+    for (c = 0; c < 3; c++) {
+        uint32_t now = 0, was = 0;
+        for (k = 0; k < MENU_PHOTO_N; k++) {
+            uint32_t v = k_menu_photo[k][1 + c];
+            now += (pal[k_menu_photo[k][0]] >> (16 - 8 * c)) & 255u;
+            was += v << 2 | v >> 4;
+        }
+        fade[c] = was == 0 || now * 256u >= was * 250u ? 256u : now * 256u / was;
+    }
     for (y = 0; y < 200; y++) {
         uint32_t *row = rgb + y * w;
         const uint32_t *g = game + y * 320;
@@ -1322,8 +1340,8 @@ static void wide_menu(const uint8_t *index, const uint32_t *pal, const uint32_t 
         memcpy(row + off, g, sizeof *g * 320);
         if (!framed) continue;
         for (x = 0; x < off; x++) {
-            row[x] = pal[k_menu_sides[0][y][MENU_SIDE_W - off + x]];
-            row[off + 320 + x] = pal[k_menu_sides[1][y][x]];
+            row[x] = faded(k_menu_sides[0][y][MENU_SIDE_W - off + x], fade);
+            row[off + 320 + x] = faded(k_menu_sides[1][y][x], fade);
         }
         /* the game's frame at its sides: the photo beside it, the top and bottom lines going on */
         for (x = 0; x < 6; x++) {
