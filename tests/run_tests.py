@@ -514,13 +514,15 @@ def menu_company(ctx):
 @test()
 def save_name_colour(ctx):
     """a save left named EMPTY is named SAVE dd/mm hh:mm; the colour chosen (one of the 18 the game has not got:
-    cyan) is kept beside it (03.COL), shows as its logo's on the Load/Save screen in a run without it, and is the
-    player's again when it is loaded"""
-    ctx.run('save', 16, start=SYN, extra=['--colour', '00E5FF'], inputs=SKIP_INTRO + [
-        '10000:f3', '12000:click@19600;%d' % LINE4, '13500:click@19600;58700'])   # line 4, SAVE
+    cyan) is in it (this version's part at its end: S64X, 1, 14), shows as its logo's on the Load/Save screen in
+    a run without it, and is the player's again when it is loaded"""
+    for run in ('save', 'again'):   # (saved over: still one part of this version's at its end)
+        ctx.run(run, 16, start=SYN, extra=['--colour', '00E5FF'], inputs=SKIP_INTRO + [
+            '10000:f3', '12000:click@19600;%d' % LINE4, '13500:click@19600;58700'])   # line 4, SAVE
     folder = os.path.join(ctx.user, 'Syndicate')
-    check(open(os.path.join(folder, '03.GAM'), 'rb').read(5) == b'SAVE ', 'the save is not named SAVE ...')
-    check(os.path.exists(os.path.join(folder, '03.COL')), 'no colour beside the save')
+    data = open(os.path.join(folder, '03.GAM'), 'rb').read()
+    check(data[:5] == b'SAVE ', 'the save is not named SAVE ...')
+    check(len(data) == 28247 + 6 and data[-6:] == b'S64X\x01\x0e', 'the colour is not in the save: %r' % data[-6:])
     r = ctx.run('load', 18, start=SYN, every=500, inputs=SKIP_INTRO + [
         '10000:f3', '12000:click@19600;%d' % LINE4, '13500:click@8500;58700'])    # line 4, LOAD
     f = r.at(13000)
@@ -556,7 +558,8 @@ def auto_save(ctx):
         auto = f.read()
     with open(os.path.join(folder, '03.GAM'), 'rb') as f:
         moved = f.read()
-    check(auto[:5] == b'AUTO ' and len(auto) == 28247, 'line 1 is not an auto save: %r' % auto[:20])
+    check(auto[:5] == b'AUTO ' and len(auto) == 28247 + 6 and auto[-6:-1] == b'S64X\x01',
+          'line 1 is not an auto save (with this version\'s part): %r' % auto[:20])
     check(moved[:1] == b'X', 'line 4 is not the save of the player: %r' % moved[:20])
 
 

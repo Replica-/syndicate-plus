@@ -110,7 +110,8 @@ shows the company: its logo in its colour, its name and the player's, its funds,
 holds and how complete that is (in percent), and the auto save loaded.  On the Load/Save screen each save shows
 its logo in its colour and its completion on its line, and the chosen line's company, funds and countries show
 between the buttons.  The colour chosen in Configure Company (the game's saves only hold the nearest of its own 8)
-is kept beside each save (`NN.COL`) and is the player's again when the save is loaded.  A save left named as an
+is in each save (this version adds a part of its own at the end of a save file, which the game does not read:
+`S64X`, its version, then the colour) and is the player's again when the save is loaded.  A save left named as an
 empty line ("EMPTY") or with no name is named `SAVE <day>/<month> <hour>:<minute>`.
 
 ### In missions

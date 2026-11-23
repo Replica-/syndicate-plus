@@ -6,7 +6,8 @@
  * the player found in those lines is first moved to a free line further down.  A save the player makes in one of
  * the auto save lines goes to the first free line from the fourth on instead (none free: not saved).  The newest
  * auto save is loaded when the main menu first comes up; the main menu shows the company, the Load/Save screen
- * each save's (logo, colour, last mission, funds, countries held).
+ * each save's (logo, colour, completion, funds, countries held).  Every save is made through this file (the
+ * game's save routine, then this version's part added at its end: the colour chosen, see save_ext_write).
  *
  * Keys in missions: the arrow keys and W, A, S, D (and the pointer at an edge of the screen) scroll the view at
  * once, at every frame shown: the view is this program's, and the game's camera follows it at its ticks (the
@@ -211,8 +212,7 @@ static int slot_kind(int slot)
 }
 
 /* (the company on the menus, below) */
-static void save_colour_path(int slot, char *out, size_t n);
-static void save_colour_write(int slot);
+static void save_ext_write(int slot);
 static void save_autoname(uint32_t name);
 
 static int move_slot(int from, int to)
@@ -221,16 +221,18 @@ static int move_slot(int from, int to)
     slot_host_path(from, a, sizeof a);
     slot_host_path(to, b, sizeof b);
     remove(b);
-    if (rename(a, b) == 0) {
-        /* its colour with it */
-        save_colour_path(from, a, sizeof a);
-        save_colour_path(to, b, sizeof b);
-        remove(b);
-        rename(a, b);
-        return 1;
-    }
+    if (rename(a, b) == 0) return 1;
     rt_log("auto save: cannot move %s to %s", a, b);
     return 0;
+}
+
+/* the save in `slot` gone, before one is made there (the game's routine writes over a file without shortening
+ * it: this version's part of the save before would stay after its own) */
+static void slot_clear(int slot)
+{
+    char path[1024];
+    slot_host_path(slot, path, sizeof path);
+    remove(path);
 }
 
 static int first_free_player_slot(void)
@@ -270,11 +272,12 @@ static void auto_save(void)
     memcpy(M + buf, name, strlen(name));
     args[0] = buf;
     args[1] = 0;
+    slot_clear(0);
     g_saving = 1;
     guest_call(g_addrs->save_game, args, 2);
     g_saving = 0;
     R.esp += 0x40u;
-    save_colour_write(0);
+    save_ext_write(0);
     rt_log("auto save: %s", name);
 }
 
@@ -301,30 +304,27 @@ static int on_world_map(uint32_t addr)
     return 0;
 }
 
-/* the player saves: not over an auto save */
+/* the player saves: made here (the game's routine, then this version's part), not over an auto save */
 static int on_save_game(uint32_t addr)
 {
-    uint32_t slot = RD32(R.esp + 8u);
-    int to;
+    uint32_t slot = RD32(R.esp + 8u), args[2];
+    int to = (int)slot;
     (void)addr;
     if (g_saving) return 0;
     save_autoname(RD32(R.esp + 4u));
-    if (slot >= NB_AUTO_SLOTS) {
-        save_colour_write((int)slot);
-        return 0;
+    if (slot < NB_AUTO_SLOTS) {
+        to = first_free_player_slot();
+        if (to < 0) rt_log("save: line %u holds an auto save and no line is free, not saved", slot + 1);
+        else rt_log("save: line %u holds an auto save, saved in line %d", slot + 1, to + 1);
     }
-    to = first_free_player_slot();
     if (to >= 0) {
-        uint32_t args[2];
         args[0] = RD32(R.esp + 4u);
         args[1] = (uint32_t)to;
+        slot_clear(to);
         g_saving = 1;
         guest_call(g_addrs->save_game, args, 2);
         g_saving = 0;
-        save_colour_write(to);
-        rt_log("save: line %u holds an auto save, saved in line %d", slot + 1, to + 1);
-    } else {
-        rt_log("save: line %u holds an auto save and no line is free, not saved", slot + 1);
+        save_ext_write(to);
     }
     R.esp += 4u; /* the function's ret */
     return 1;
@@ -2365,7 +2365,7 @@ static void panel_true_colour(const uint8_t *index, uint32_t *rgb, int w)
  * funds, the countries it holds and how much of the world that is (the completion).  The Load/Save screen shows each
  * save's logo in its colour and its completion on its line, and the chosen line's company, funds and countries
  * between the buttons.  The colour chosen (Configure Company: one of 26, the game keeping the nearest of its own 8
- * in its saves) is kept beside each save, in NN.COL, and is the player's again when the save is loaded.  A save
+ * in its part of a save) is in this version's part, and is the player's again when the save is loaded.  A save
  * named as an empty line ("EMPTY") or nothing is named "SAVE dd/mm hh:mm".  The first time the main menu comes up,
  * the newest auto save is loaded (as Load does it), and the main menu says so.  Which screen is up: the title the
  * game draws as it comes up (the texts' MAIN MENU, LOAD-SAVE GAME) ---- */
@@ -2447,45 +2447,50 @@ static uint32_t text_at(uint32_t k)
     return RD32(g_addrs->texts + (three ? k * 12u + (uint32_t)(M[g_addrs->language] % 3u) * 4u : k * 4u));
 }
 
-/* the save in `slot`'s colour file */
-static void save_colour_path(int slot, char *out, size_t n)
-{
-    size_t k;
-    slot_host_path(slot, out, n);
-    k = strlen(out);
-    if (k > 4 && out[k - 4] == '.') snprintf(out + k - 3, n - (k - 3), "COL");
-}
+/* this version's part of a save, after the game's (which the game neither reads nor minds): SAVE_EXT_MAGIC, its
+ * version, then (version 1) the colour chosen (0..NB_PICK_COLOURS-1) */
+#define SAVE_EXT_MAGIC "S64X"
+#define SAVE_EXT_VERSION 1
+#define SAVE_EXT_SIZE 6
 
-/* the colour chosen, kept beside the save in `slot` */
-static void save_colour_write(int slot)
+/* added to the save in `slot`, just made by the game's routine */
+static void save_ext_write(int slot)
 {
     char path[1024];
+    uint8_t ext[SAVE_EXT_SIZE];
     FILE *f;
-    save_colour_path(slot, path, sizeof path);
-    f = fopen(path, "w");
+    slot_host_path(slot, path, sizeof path);
+    f = fopen(path, "ab");
     if (f == NULL) return;
-    fprintf(f, "%d\n", g_player_pick);
+    memcpy(ext, SAVE_EXT_MAGIC, 4);
+    ext[4] = SAVE_EXT_VERSION;
+    ext[5] = (uint8_t)g_player_pick;
+    fwrite(ext, 1, sizeof ext, f);
     fclose(f);
 }
 
-/* the colour chosen kept beside the save in `slot`: 0..NB_PICK_COLOURS-1, -1 when there is none */
-static int save_colour_read(int slot)
+/* the colour chosen in the save in `slot`: 0..NB_PICK_COLOURS-1, -1 when it has not got this version's part */
+static int save_ext_colour(int slot)
 {
+    static uint8_t buf[0x10000];
     char path[1024];
-    FILE *f;
-    int k = -1;
-    save_colour_path(slot, path, sizeof path);
-    f = fopen(path, "r");
+    VFile *f;
+    size_t got;
+    slot_host_path(slot, path, sizeof path);
+    f = vfs_open(path, "rb");
     if (f == NULL) return -1;
-    if (fscanf(f, "%d", &k) != 1 || k < 0 || k >= NB_PICK_COLOURS) k = -1;
-    fclose(f);
-    return k;
+    got = vfs_read(f, buf, sizeof buf);
+    vfs_close(f);
+    if (got < SAVE_EXT_SIZE || memcmp(buf + got - SAVE_EXT_SIZE, SAVE_EXT_MAGIC, 4) != 0 ||
+        buf[got - 2] != SAVE_EXT_VERSION || buf[got - 1] >= NB_PICK_COLOURS)
+        return -1;
+    return buf[got - 1];
 }
 
 /* a save loaded: its colour the player's (a save without one: the game's own, as the save has it) */
 static int on_load_game(uint32_t addr)
 {
-    int k = save_colour_read((int)RD32(R.esp + 4u));
+    int k = save_ext_colour((int)RD32(R.esp + 4u));
     (void)addr;
     g_player_pick = k >= 0 ? k : 0;
     g_player_colour = k >= NB_GAME_COLOURS ? 0xFF000000u | k_pick_colours[k] : 0;
@@ -2609,7 +2614,7 @@ static void load_save_companies(uint32_t *pic)
         CompanyInfo ci;
         int y = SAVE_ROW_Y0 + slot * SAVE_ROW_H;
         if (!save_company(slot, name, &ci)) continue;
-        draw_company_logo(pic, 320, SAVE_INFO_X, y, 10, ci.logo, info_rgb(ci.colour, save_colour_read(slot)));
+        draw_company_logo(pic, 320, SAVE_INFO_X, y, 10, ci.logo, info_rgb(ci.colour, save_ext_colour(slot)));
         snprintf(s, sizeof s, "%d%% COMPLETE", completion(&ci));
         menu_text_fit(pic, 320, SAVE_INFO_X + 13, y + 2, s, MENU_INFO_DIM, SAVE_ROW_X1 - SAVE_INFO_X - 14);
         if (slot != chosen) continue;
