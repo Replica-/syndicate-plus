@@ -118,6 +118,9 @@ static struct {
     int16_t cur, prev;    /* current and previous sample (for interpolation) */
     int irq_req;
     uint8_t dac;          /* direct DAC value */
+    int muted;            /* the block's memory was loaded over while it played: faded out until the next */
+    int32_t gain;         /* 0..256 */
+    int32_t sent, hold;   /* the last sample sent; the one faded out once muted */
 } g_sb;
 
 static void sb_push(uint8_t v)
@@ -143,6 +146,23 @@ static void sb_start_dma(uint32_t len, int autoinit)
     g_sb.autoinit = autoinit;
     g_sb.playing = 1;
     g_sb.paused = 0;
+    g_sb.muted = 0;
+    g_sb.gain = 256;
+}
+
+/* The memory a sound is playing from was filled: the games allocate (cleared to zeros: a full-scale burst) and
+ * load the next screen's sound bank (SOUND-0.DAT at the mission's start) over the one the menus' last sound is
+ * still playing from, and the card would play those bytes (headers, the middle of other sounds).  The rest of that sound is faded out; the
+ * DMA and its interrupt keep their time, so the game sees no difference. */
+void audio_mem_overwritten(uint32_t addr, uint32_t n)
+{
+    const DmaChan *c = &g_dma[SB_DMA];
+    uint32_t start = ((uint32_t)c->page << 16) | c->base_addr, end = start + c->base_count + 1u;
+    if (!g_sb.playing || c->masked) return;
+    if (addr < end && addr + n > start && !g_sb.muted) {
+        g_sb.muted = 1;
+        g_sb.hold = g_sb.sent;
+    }
 }
 
 static int sb_args_for(uint8_t cmd)
@@ -680,6 +700,7 @@ void audio_init(void)
         for (ch = 0; ch < 4; ch++) g_dma[ch].masked = 1;
     }
     memset(&g_sb, 0, sizeof g_sb);
+    g_sb.gain = 256;
     memset(&g_opl, 0, sizeof g_opl);
     {
         int n;
@@ -732,6 +753,11 @@ void audio_poll(void)
                 dg = (g_sb.playing || g_sb.cmd == 0x10) ? g_sb.cur : 0;
             }
             if (!g_sb.speaker) dg = 0;
+            if (g_sb.muted) { /* the last good sample, to silence in ~3 ms (no click), not the loaded bytes */
+                if (g_sb.gain > 0) g_sb.gain = g_sb.gain > 2 ? g_sb.gain - 2 : 0;
+                dg = g_sb.hold * g_sb.gain / 256;
+            }
+            g_sb.sent = dg;
             /* the volumes; the FM music is silent while a song plays from a file */
             fm = music_playing() ? 0 : fm * music_volume() / 100;
             dg = dg * sound_volume() / 100;

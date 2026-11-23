@@ -165,6 +165,7 @@ void audio_init(void);
 int audio_irq(void);      /* the IRQ line of the Sound Blaster */
 int audio_irq_take(void); /* 1 once per interrupt the card raised */
 int audio_irq_pending(void); /* the card's request line (the PIC's IRR) */
+void audio_mem_overwritten(uint32_t addr, uint32_t n); /* guest memory there was filled (a file read, an allocation cleared) */
 
 /* ---- interrupts ------------------------------------------------------------------------------------------ */
 /* call a guest protected-mode interrupt handler as the hardware would (pushes eflags, cs, eip) */

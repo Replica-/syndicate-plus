@@ -797,6 +797,7 @@ void dos_int21(void)
                     got++;
                 }
             }
+            if (got > 0) audio_mem_overwritten(dst, got);
         }
         R.eax = got;
         ok();

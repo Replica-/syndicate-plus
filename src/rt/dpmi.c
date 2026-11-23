@@ -52,6 +52,7 @@ static uint32_t heap_alloc(Heap *h, uint32_t size, uint32_t *handle)
             h->b[i].handle = g_next_handle++;
             if (handle) *handle = h->b[i].handle;
             memset(M + h->b[i].addr, 0, size);
+            audio_mem_overwritten(h->b[i].addr, size); /* a sound playing from there: faded out */
             return h->b[i].addr;
         }
     }
@@ -123,6 +124,7 @@ static uint32_t heap_resize(Heap *h, int i, uint32_t size)
     if (i + 1 < h->n && !h->b[i + 1].used && oldsize + h->b[i + 1].size >= size) {
         uint32_t extra = size - oldsize;
         memset(M + old + oldsize, 0, extra);
+        audio_mem_overwritten(old + oldsize, extra);
         h->b[i].size = size;
         h->b[i + 1].addr += extra;
         h->b[i + 1].size -= extra;
