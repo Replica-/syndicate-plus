@@ -2581,8 +2581,8 @@ static void follow_routes(uint32_t company)
 
 /* ---- the squad's cars: an order to an agent in a car (its driver or one with it) drives the car on a route over
  * the lanes (drive.c), to the lane nearest the point clicked.  While it does, the game's driving of that car
- * (drive_car) is done here instead: steered along the route (on the lanes' lines, round its corners), faster on
- * the straight, slower into turns and to a stop at its end.  The cars of everyone else (and the squad's cars
+ * (drive_car) is done here instead: on the lanes' lines as on rails, round the corners where they meet, faster on
+ * the straight, slower into the corners and to a stop at its end.  The cars of everyone else (and the squad's cars
  * without such a route) are left to the game ---- */
 #define PED_VEHICLE 0x2cu    /* (16 bits) the car it is in (the level data's things numbered from peds - 2) */
 #define PED_SPEED 0x54u      /* a driver's: (8 bits) its car's speed; +0x55 its top speed */
@@ -2594,21 +2594,17 @@ static void follow_routes(uint32_t company)
 #define CAR_DRIVER 0x1cu     /* (16 bits) its driver, numbered as PED_VEHICLE */
 #define NB_CARS 64
 #define CAR_ROUTE_MAX 96
-#define CAR_LOOK 192    /* it steers to this far ahead along the route (and as far again as it goes in a tick) */
-#define CAR_TURN 14     /* (of 256) the most it turns in a tick */
 #define CAR_ACCEL 4     /* speed gained in a tick (the game's) */
 #define CAR_BRAKE 10    /* lost */
 #define CAR_PLAN_BRAKE 8 /* (a little less, braking in time) */
-#define CAR_CORNER 34   /* the speed it turns sharply at */
-#define CAR_BRAKE_AHEAD 1200 /* the turns this far ahead along the route slow it down */
+#define CAR_CORNER 34   /* the speed it turns a corner at */
+#define CAR_BRAKE_AHEAD 1200 /* the corners this far ahead along the route slow it down */
 #define CAR_CREEP 10    /* it does not go slower than this until it is there */
-#define CAR_THERE 24    /* this near the end of the route: there */
 #define THING(off) (g_addrs->peds - 2u + (uint32_t)(off))
 #define IS_IN_CAR(p) ((M[(p) + PED_LOCATION] & ~8u) == IN_CAR)
 static struct {
     PathPoint pt[CAR_ROUTE_MAX];
-    int n, i;
-    int heading;      /* its exact heading (the game keeps the car's to the four ways its pictures show) */
+    int n, i;         /* its corners and end, the one it runs to */
     uint32_t ordered; /* the tick of its order (several agents in it are given the same) */
 } g_drive[NB_CARS];
 static uint32_t g_order_tick;
@@ -2665,8 +2661,7 @@ static void car_order(uint32_t ped, int32_t tx, int32_t ty)
     /* the point clicked on the level of the car (the game's target for each agent is beside it, the squad spread) */
     if (g_view_on) render_unproject(g_click_sx, g_click_sy, z, &tx, &ty);
     if (!g_types_loaded) load_tile_types();
-    if (g_drive[ci].n == 0) g_drive[ci].heading = M[car + CAR_HEADING]; /* (on a route: the exact one) */
-    n = drive_route(x, y, z, g_drive[ci].heading, tx, ty, g_drive[ci].pt, CAR_ROUTE_MAX);
+    n = drive_route(x, y, z, M[car + CAR_HEADING], tx, ty, g_drive[ci].pt, CAR_ROUTE_MAX);
     g_drive[ci].n = n;
     g_drive[ci].i = 0;
     g_drive[ci].ordered = g_order_tick;
@@ -2680,109 +2675,71 @@ static void car_order(uint32_t ped, int32_t tx, int32_t ty)
 }
 
 /* the car `ci` driven on along its route for a tick, as the game's driving does it (the speed in its driver, the
- * place set by set_place) */
+ * place set by set_place): on its lanes' lines as on rails, round the corners where they meet, facing the way it
+ * runs */
 static void drive_on(int ci, uint32_t driver, uint32_t car)
 {
     const PathPoint *pt = g_drive[ci].pt;
-    int n = g_drive[ci].n, k, h = g_drive[ci].heading, s = M[driver + PED_SPEED], top = M[driver + PED_SPEED + 1u];
+    int n = g_drive[ci].n, k, h = M[car + CAR_HEADING], s = M[driver + PED_SPEED], top = M[driver + PED_SPEED + 1u];
     int32_t x = (int16_t)RD16(car + PED_X), y = (int16_t)RD16(car + PED_Y), z = (int16_t)RD16(car + PED_Z);
-    int32_t px, py, nx, ny;
-    double left, ahead;
-    int want, hd, turn;
+    double left, along, go;
+    int want;
     uint32_t args[4];
     if (top == 0) top = 100;
-    /* on past the points it is beyond (near, or past them along the route) */
-    for (;;) {
-        int32_t ax, ay;
-        double d;
-        k = g_drive[ci].i;
-        if (k >= n - 1) break;
-        ax = k == 0 ? x : pt[k - 1].x;
-        ay = k == 0 ? y : pt[k - 1].y;
-        d = dist(ax, ay, pt[k].x, pt[k].y);
-        if (dist(x, y, pt[k].x, pt[k].y) < 48 + s ||
-            (k > 0 && d > 0 && ((x - ax) * (double)(pt[k].x - ax) + (y - ay) * (double)(pt[k].y - ay)) / d >= d))
-            g_drive[ci].i++;
-        else
-            break;
-    }
+    /* fast on the straight, down to CAR_CORNER by the corners ahead and to a stop at the end */
     k = g_drive[ci].i;
     left = dist(x, y, pt[k].x, pt[k].y);
-    for (; k + 1 < n; k++) left += dist(pt[k].x, pt[k].y, pt[k + 1].x, pt[k + 1].y);
-    if (left <= (s > CAR_THERE ? s : CAR_THERE)) {
-        /* there */
-        nx = pt[n - 1].x;
-        ny = pt[n - 1].y;
-        s = 0;
-        g_drive[ci].n = 0;
-    } else {
-        /* the point it steers to: CAR_LOOK on along the route */
-        k = g_drive[ci].i;
-        px = x;
-        py = y;
-        ahead = CAR_LOOK + s;
-        for (;;) {
-            double seg = dist(px, py, pt[k].x, pt[k].y);
-            if (seg >= ahead || k == n - 1) {
-                double f = seg > ahead ? ahead / seg : 1.0;
-                px += (int32_t)((pt[k].x - px) * f);
-                py += (int32_t)((pt[k].y - py) * f);
-                break;
-            }
-            ahead -= seg;
-            px = pt[k].x;
-            py = pt[k].y;
-            k++;
+    want = top;
+    for (along = left; k + 1 < n; k++) {
+        if (along < CAR_BRAKE_AHEAD) {
+            int v = (int)sqrt((double)CAR_CORNER * CAR_CORNER + 2.0 * CAR_PLAN_BRAKE * along);
+            if (want > v) want = v;
         }
-        hd = (int)floor(atan2((double)(px - x), (double)(py - y)) * 128.0 / 3.14159265358979 + 0.5) & 255;
-        turn = (int)(int8_t)(uint8_t)(hd - h);
-        if (turn > CAR_TURN) turn = CAR_TURN;
-        if (turn < -CAR_TURN) turn = -CAR_TURN;
-        h = (h + turn) & 255;
-        /* fast on the straight, slow into a sharp turn and to a stop at the end */
-        want = top;
-        if (abs((int)(int8_t)(uint8_t)(hd - h)) > 24 && want > CAR_CORNER) want = CAR_CORNER;
-        {
-            /* down to CAR_CORNER by the sharp turns ahead */
-            double along = dist(x, y, pt[g_drive[ci].i].x, pt[g_drive[ci].i].y);
-            for (k = g_drive[ci].i; k + 1 < n && along < CAR_BRAKE_AHEAD; k++) {
-                int32_t bx = k > 0 ? pt[k - 1].x : x, by = k > 0 ? pt[k - 1].y : y;
-                double a = atan2((double)(pt[k + 1].x - pt[k].x), (double)(pt[k + 1].y - pt[k].y)) -
-                           atan2((double)(pt[k].x - bx), (double)(pt[k].y - by));
-                while (a > 3.14159265358979) a -= 2 * 3.14159265358979;
-                while (a < -3.14159265358979) a += 2 * 3.14159265358979;
-                if (fabs(a) > 0.6) {
-                    int v = (int)sqrt((double)CAR_CORNER * CAR_CORNER + 2.0 * CAR_PLAN_BRAKE * along);
-                    if (want > v) want = v;
-                }
-                along += dist(pt[k].x, pt[k].y, pt[k + 1].x, pt[k + 1].y);
-            }
-        }
-        if (want > (int)sqrt(2.0 * CAR_PLAN_BRAKE * (left - CAR_THERE))) want = (int)sqrt(2.0 * CAR_PLAN_BRAKE * (left - CAR_THERE));
-        if (want < CAR_CREEP) want = CAR_CREEP;
-        s = s < want ? (s + CAR_ACCEL > want ? want : s + CAR_ACCEL) : (s - CAR_BRAKE < want ? want : s - CAR_BRAKE);
-        nx = x + ((s * (int16_t)RD16(g_addrs->headings + 2u * (uint32_t)h)) >> 8);
-        ny = y + ((s * (int16_t)RD16(g_addrs->headings + 0x200u + 2u * (uint32_t)h)) >> 8);
+        along += dist(pt[k].x, pt[k].y, pt[k + 1].x, pt[k + 1].y);
     }
-    g_drive[ci].heading = h;
+    left = along;
+    if (want > (int)sqrt(2.0 * CAR_PLAN_BRAKE * left)) want = (int)sqrt(2.0 * CAR_PLAN_BRAKE * left);
+    if (want < CAR_CREEP) want = CAR_CREEP;
+    s = s < want ? (s + CAR_ACCEL > want ? want : s + CAR_ACCEL) : (s - CAR_BRAKE < want ? want : s - CAR_BRAKE);
+    /* `s` on along the route */
+    for (go = s; go > 0;) {
+        double d = dist(x, y, pt[g_drive[ci].i].x, pt[g_drive[ci].i].y);
+        int32_t dx = pt[g_drive[ci].i].x - x, dy = pt[g_drive[ci].i].y - y;
+        if (d > 0) h = abs(dx) > abs(dy) ? (dx > 0 ? 64 : 192) : (dy > 0 ? 0 : 128);
+        if (d > go) {
+            x += (int32_t)floor(dx * go / d + 0.5);
+            y += (int32_t)floor(dy * go / d + 0.5);
+            break;
+        }
+        x = pt[g_drive[ci].i].x;
+        y = pt[g_drive[ci].i].y;
+        go -= d;
+        if (g_drive[ci].i == n - 1) {
+            /* there */
+            s = 0;
+            g_drive[ci].n = 0;
+            break;
+        }
+        g_drive[ci].i++;
+    }
     M[car + CAR_HEADING] = (uint8_t)h;
     M[driver + PED_SPEED] = (uint8_t)s;
-    WR16(driver + PED_LAST_PLACE, (uint16_t)nx);
-    WR16(driver + PED_LAST_PLACE + 2u, (uint16_t)ny);
+    WR16(driver + PED_LAST_PLACE, (uint16_t)x);
+    WR16(driver + PED_LAST_PLACE + 2u, (uint16_t)y);
     if (g_drive[ci].n == 0) {
         /* stopped: the driver no longer driving (as the game's driving does it there) */
         args[0] = driver;
         guest_call(g_addrs->driver_state, args, 1);
     }
     args[0] = car;
-    args[1] = (uint32_t)nx;
-    args[2] = (uint32_t)ny;
+    args[1] = (uint32_t)x;
+    args[2] = (uint32_t)y;
     args[3] = (uint32_t)z;
     guest_call(g_addrs->set_place, args, 4);
-    WR16(g_addrs->car_place, (uint16_t)nx);
-    WR16(g_addrs->car_place + 2u, (uint16_t)ny);
+    WR16(g_addrs->car_place, (uint16_t)x);
+    WR16(g_addrs->car_place + 2u, (uint16_t)y);
     WR16(g_addrs->car_place + 4u, (uint16_t)z);
-    if (g_drive[ci].n == 0) set_driver_target(driver, nx, ny, z); /* stopped: the game's driving stays */
+    if (g_drive[ci].n == 0) set_driver_target(driver, x, y, z); /* stopped: the game's driving stays */
 }
 
 /* the game drives a car on for a tick: done here when the squad drives it on a route */

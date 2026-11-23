@@ -158,10 +158,11 @@ squad's orders: the other people and the enemies' AI are untouched.
 
 A car the squad drives goes the same way (with squad routes on): an order to an agent in it drives it over the
 roads to the lane nearest the point clicked, the side of the road clicked, facing that lane's traffic.  The route
-keeps to the lanes' ways (traffic keeps right; never against a lane, never backing up), turns at junctions and
-round the loops at the roads' ends, and turns round across the middle line only where there is no better way.  The
-car is steered along its lane's line, slowing into sharp turns and to a stop at the end; a green marker shows where
-it will stop until it gets there, and the numbers of the agents in it are drawn over it.  The game's own driving
+keeps to the lanes' ways (traffic keeps right; never against a lane, never backing up) and turns only where the
+road does, at junctions and round the loops at the roads' ends (a lane that cannot be reached so: the nearest
+that can).  The car runs on its lanes' lines as on rails, round the corners where they meet, slowing into them and
+to a stop at the end; a green marker shows where it will stop until it gets there, and the numbers of the agents
+in it are drawn over it.  The game's own driving
 (which keeps to the lane a car is in, driving on away from a point behind it) stays for every other car, and for
 the squad's when no lane is near the point clicked.
 

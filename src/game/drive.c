@@ -5,9 +5,10 @@
  * lane it is part of).  Traffic keeps to the right: a car drives on the line of its lane nearest the middle of the
  * road.  The game's own driving keeps to the lane it is in and turns at junctions as it can: sent behind it, it
  * drives on away.  Here the route is found over the lanes (Dijkstra on tile and heading): never against a lane's
- * way, never backing up, a turn costing a little more than going on; turning round across the line is allowed
- * where there is no other way, at a high cost.  It ends on the lane nearest the point clicked (the side of the road
- * clicked, its traffic's way), where it is cheapest to reach if two are as near. */
+ * way, never backing up, turning only where the road does (junctions, the loops at the roads' ends), a turn costing
+ * a little more than going on.  It ends on the lane nearest the point clicked that can be reached (the side of the
+ * road clicked, its traffic's way), where it is cheapest to reach if two are as near.  A car runs on its lanes'
+ * lines as on rails: the route's points are where those lines meet at its turns, and its end. */
 #include "drive.h"
 
 #include <math.h>
@@ -28,12 +29,9 @@
 #define ANY 4         /* a junction: any way */
 #define TILE_COST 256 /* (world units) */
 #define TURN_COST 96
-#define UTURN_COST (24 * TILE_COST)
 #define GOAL_R 2          /* the lanes this many tiles about the point clicked */
 #define GOAL_WEIGHT 64    /* a lane further from it costs this many times the distance more */
 #define LANE_IN 0xC0      /* a lane's line: this far into its tile from the side away from the middle */
-#define UTURN_AHEAD 64    /* round across the line: from this far on along its lane ... */
-#define UTURN_OVER 224    /* ... over the line this far on, back onto the other lane */
 
 /* the ways: +y, +x, -y, -x (the game's headings 0, 64, 128, 192) */
 static const int k_dx[4] = {0, 1, 0, -1}, k_dy[4] = {1, 0, -1, 0};
@@ -74,19 +72,17 @@ static int cell(int x, int y)
     return ANY;
 }
 
-/* where on the tile x, y a car drives: on its lane's line (the middle of the road on its left), the middle of the
- * tile along it */
-static void lane_point(int x, int y, int32_t *px, int32_t *py)
+/* a lane's line, going `way` through the tile x, y (the middle of the road on its left): across that way, the
+ * coordinate a car keeps to there */
+static int32_t line_at(int x, int y, int way)
 {
-    static const int k_in[4] = {LANE_IN, 256 - LANE_IN, 256 - LANE_IN, LANE_IN}; /* across its way, by way */
-    int c = cell(x, y);
-    *px = x * 256 + 128;
-    *py = y * 256 + 128;
-    if (c < 0 || c == ANY) return;
-    if (c & 1)
-        *py = y * 256 + k_in[c];
-    else
-        *px = x * 256 + k_in[c];
+    static const int k_in[4] = {LANE_IN, 256 - LANE_IN, 256 - LANE_IN, LANE_IN};
+    return (way & 1 ? y : x) * 256 + k_in[way];
+}
+
+static int32_t clamp_in(int32_t v, int tile)
+{
+    return v < tile * 256 + 32 ? tile * 256 + 32 : v > tile * 256 + 224 ? tile * 256 + 224 : v;
 }
 
 static int add_point(PathPoint *out, int n, int max, int32_t x, int32_t y, int32_t z)
@@ -150,7 +146,7 @@ int drive_route(int32_t sx, int32_t sy, int32_t sz, int heading, int32_t tx, int
 {
     int mz, x0 = sx >> 8, y0 = sy >> 8, h0 = ((heading + 32) >> 6) & 3, gx = tx >> 8, gy = ty >> 8, x, y, s, best = -1;
     int n = 0;
-    int32_t best_cost = 0x7FFFFFFF, gpx[2 * GOAL_R + 1][2 * GOAL_R + 1], gpy[2 * GOAL_R + 1][2 * GOAL_R + 1];
+    int32_t best_cost = 0x7FFFFFFF, best_x = 0, best_y = 0;
     static int path[65536];
     if (!render_map_size(&g_mx, &g_my, &mz)) return 0;
     g_zi = sz / 128 - 1;
@@ -177,18 +173,21 @@ int drive_route(int32_t sx, int32_t sy, int32_t sz, int heading, int32_t tx, int
         c = cell(x, y);
         /* on a lane near the point clicked: an end (its distance from that point added) */
         if (abs(x - gx) <= GOAL_R && abs(y - gy) <= GOAL_R) {
-            int32_t px, py, at, d2;
-            lane_point(x, y, &px, &py);
-            /* along the lane: as far as the point clicked, in the tile */
-            if (c == ANY || (c & 1) == 0) py = ty < y * 256 + 32 ? y * 256 + 32 : ty > y * 256 + 224 ? y * 256 + 224 : ty;
-            if (c == ANY || (c & 1) == 1) px = tx < x * 256 + 32 ? x * 256 + 32 : tx > x * 256 + 224 ? x * 256 + 224 : tx;
+            /* on its line, along it as far as the point clicked in the tile (not back where it is, at the start) */
+            int32_t px = h & 1 ? clamp_in(tx, x) : line_at(x, y, h), py = h & 1 ? line_at(x, y, h) : clamp_in(ty, y), at, d2;
+            if (g_from[cur] < 0) {
+                if (h == 0 && py < sy) py = sy;
+                if (h == 2 && py > sy) py = sy;
+                if (h == 1 && px < sx) px = sx;
+                if (h == 3 && px > sx) px = sx;
+            }
             d2 = (int32_t)sqrt((double)(px - tx) * (px - tx) + (double)(py - ty) * (py - ty));
             at = cc + d2 * GOAL_WEIGHT;
             if (at < best_cost) {
                 best_cost = at;
                 best = cur;
-                gpx[y - gy + GOAL_R][x - gx + GOAL_R] = px;
-                gpy[y - gy + GOAL_R][x - gx + GOAL_R] = py;
+                best_x = px;
+                best_y = py;
             }
         }
         for (d = 0; d < 4; d++) {
@@ -200,46 +199,24 @@ int drive_route(int32_t sx, int32_t sy, int32_t sz, int heading, int32_t tx, int
             if (nc < 0 || (nc < ANY && d == ((nc + 2) & 3))) continue;
             relax(cur, nx, ny, d, cc + TILE_COST + (d != h ? TURN_COST : 0));
         }
-        /* round across the line, to the other lane */
-        if (c >= 0 && c < ANY && h == c)
-            for (d = 1; d <= 3; d += 2) {
-                int side = (c + d) & 3, mx1 = x + k_dx[side], my1 = y + k_dy[side];
-                int ox = x + 2 * k_dx[side], oy = y + 2 * k_dy[side], mt = type_at(mx1, my1);
-                if ((mt == T_LINE || mt == T_CROSSING) && cell(ox, oy) == ((c + 2) & 3) &&
-                    cell(x + k_dx[c], y + k_dy[c]) == c && cell(ox + k_dx[c], oy + k_dy[c]) == ((c + 2) & 3))
-                    relax(cur, ox, oy, (c + 2) & 3, cc + UTURN_COST);
-            }
     }
     if (best >= 0) {
-        /* the states back to the start, then the points: a lane's line in each tile (not the junctions'), the ones
-         * where the way does not change left out; round across the line, an arc ahead of where it turns */
-        int np = 0, i;
+        /* the states back to the start, then the corners: where the line it ran on meets the next one */
+        int np = 0, i, run_x = x0, run_y = y0, run_h = h0;
         for (s = best; s >= 0 && np < (int)(sizeof path / sizeof path[0]); s = g_from[s]) path[np++] = s;
         for (i = np - 2; i >= 0; i--) {
-            int st = path[i], h = st & 3, px0 = (st / 4) % g_mx, py0 = (st / 4) / g_mx, c = cell(px0, py0);
-            int prev = path[i + 1], ph = prev & 3, qx = (prev / 4) % g_mx, qy = (prev / 4) / g_mx;
-            int32_t px, py;
-            if (h == ((ph + 2) & 3)) {
-                lane_point(qx, qy, &px, &py);
-                n = add_point(out, n, max, px + k_dx[ph] * UTURN_AHEAD, py + k_dy[ph] * UTURN_AHEAD, sz);
-                n = add_point(out, n, max, (qx + px0) / 2 * 256 + 128 + k_dx[ph] * UTURN_OVER,
-                              (qy + py0) / 2 * 256 + 128 + k_dy[ph] * UTURN_OVER, sz);
-                lane_point(px0, py0, &px, &py);
-                n = add_point(out, n, max, px + k_dx[ph] * UTURN_AHEAD, py + k_dy[ph] * UTURN_AHEAD, sz);
-                if (i > 0) continue;
+            int st = path[i], h = st & 3, px0 = (st / 4) % g_mx, py0 = (st / 4) / g_mx;
+            if (h != run_h) {
+                if (run_h & 1)
+                    n = add_point(out, n, max, line_at(px0, py0, h), line_at(run_x, run_y, run_h), sz);
+                else
+                    n = add_point(out, n, max, line_at(run_x, run_y, run_h), line_at(px0, py0, h), sz);
+                run_h = h;
             }
-            if (i == 0) {
-                px = gpx[py0 - gy + GOAL_R][px0 - gx + GOAL_R];
-                py = gpy[py0 - gy + GOAL_R][px0 - gx + GOAL_R];
-            } else {
-                if (c == ANY) continue;
-                lane_point(px0, py0, &px, &py);
-                /* on a straight run (the same way before and after) */
-                if (n > 0 && ph == h && (path[i - 1] & 3) == h && ((h & 1) ? out[n - 1].y == py : out[n - 1].x == px))
-                    continue;
-            }
-            n = add_point(out, n, max, px, py, sz);
+            run_x = px0;
+            run_y = py0;
         }
+        n = add_point(out, n, max, best_x, best_y, sz);
     }
     free(g_cost);
     free(g_from);

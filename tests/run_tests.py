@@ -385,8 +385,8 @@ def squad_route(ctx):
 @test()
 def car_route(ctx):
     """mission 15 (every mission open: TO THE TOP): the squad gets into the car beside it, on the lane going down
-    the road; sent up the road behind it, the car turns round across the middle line, drives up the other lane,
-    round the loop at the road's end and stops on the lane clicked, where the marker is"""
+    the road; sent up the road behind it, the car keeps to the lanes as on rails: down to the junction, round it
+    onto the other lane, up to the loop at the road's end and back down to the lane clicked, where the marker is"""
     import struct
     dump = os.path.join(ctx.dir, 'mem.bin')
     inp = SKIP_INTRO + ['10000:move@29500;28800', '11000:click@29500;28800', '13000:click@37888;14745',
@@ -394,9 +394,9 @@ def car_route(ctx):
                         '26000:click@6553;18158',                             # the whole squad
                         '26800:move@57856;28672', '27000:click@57856;28672',  # into the car
                         '33000:move@63999;22937', '33200:click@63999;22937']  # up the road behind it
-    r = ctx.run('drive', 44, start=SYN, extra=['--cheats', 'MINIGUN SQUAD:TO THE TOP', '--mem-dump', '43500:' + dump],
+    r = ctx.run('drive', 56, start=SYN, extra=['--cheats', 'MINIGUN SQUAD:TO THE TOP', '--mem-dump', '55500:' + dump],
                 inputs=inp)
-    check('drive: car 0, 7 points, to 16320 1464' in r.log, 'no route for the car (see drive.log)')
+    check('drive: car 0, 5 points, to 16320 1464' in r.log, 'no route for the car (see drive.log)')
     check(os.path.exists(dump), 'no memory dump')
     mem = open(dump, 'rb').read()
     car = 0x478110 + 0x5c00 - 0x400000   # the first car
