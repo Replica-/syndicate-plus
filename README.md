@@ -149,8 +149,9 @@ the shots.  Ctrl+L in a mission opens the light editor: the tile under the point
 it glows in the dark, L whether it lights what is around it, [ and ] the size of its light, C its colour; the
 settings are saved in `tile_lights.ini` beside the saves.
 
-Traffic lights and other small coloured lights in the objects glow at dusk and
-night.  Held B also outlines in cyan the edges of the floor the squad walks on.
+Traffic lights glow at dusk and night in the colours of their lamps lit (red, amber), each lamp lighting the
+road on its side; billboards light up, and throw their picture's colour out in front of them, wider further
+out.  Other small coloured lights in the objects glow too.  Held B also outlines in cyan the edges of the floor the squad walks on.
 
 Configure Company shows every colour and logo in grids under its panel, one click each: the game's 8 colours and
 18 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world

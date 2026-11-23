@@ -730,10 +730,16 @@ static int g_nlights;
 
 static float g_car_dir[64][2];
 #define NB_FRAME_LIGHTS 4096
+#define NB_LAMP_HUES 3 /* a signal's lamps: red, amber, green */
 static struct {
     uint16_t frame, known, lit, bright; /* lit: a few coloured lamps; bright: very bright pixels (a lit window) */
     float ox, oy;
     uint32_t colour;
+    uint16_t lamps[NB_LAMP_HUES]; /* its strongly coloured pixels of each hue, their centre */
+    float lx[NB_LAMP_HUES], ly[NB_LAMP_HUES];
+    float cx, cy;                 /* the centre of all of it */
+    uint32_t average;             /* its colour (brightened: the brightest of r, g, b 255) */
+    uint8_t flipped;              /* its first image drawn mirrored */
 } g_frame_light[NB_FRAME_LIGHTS];
 
 static void lights_forget(void)
@@ -1010,14 +1016,34 @@ static int signal_pixel(uint32_t c)
     return mx >= 200 && mn * 100 <= mx * 45;
 }
 
+/* a signal pixel's hue: 0 red, 1 amber, 2 green, -1 another (blue) */
+static int lamp_hue(uint32_t c)
+{
+    int r = (int)((c >> 16) & 0xFF), g = (int)((c >> 8) & 0xFF), b = (int)(c & 0xFF);
+    if (r >= g && r >= b) return g * 2 < r ? 0 : 1;
+    if (g >= r && g >= b) return 2;
+    return -1;
+}
+
+/* r, g, b brightened: the brightest of them 255 */
+static uint32_t brightest(double r, double g, double b)
+{
+    double mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    if (mx <= 0) return 0xFFFFFFu;
+    return (uint32_t)(r / mx * 255.0) << 16 | (uint32_t)(g / mx * 255.0) << 8 | (uint32_t)(b / mx * 255.0);
+}
+
 static int frame_slot(int frame)
 {
     int slot = frame % NB_FRAME_LIGHTS;
     if (g_light_palette == NULL || frame <= 0) return -1;
     if (!g_frame_light[slot].known || g_frame_light[slot].frame != frame) {
         uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), e = rd16(frames + (uint32_t)frame * 8u);
-        int guard = 0, n = 0, nb = 0;
-        double sx = 0, sy = 0, cr = 0, cg = 0, cb = 0, mx;
+        int guard = 0, n = 0, nb = 0, all = 0, k;
+        double sx = 0, sy = 0, cr = 0, cg = 0, cb = 0, mx, lx[NB_LAMP_HUES] = {0}, ly[NB_LAMP_HUES] = {0};
+        double ax = 0, ay = 0, ar = 0, ag = 0, ab = 0;
+        memset(&g_frame_light[slot], 0, sizeof g_frame_light[slot]);
+        g_frame_light[slot].flipped = rd16(elements + e * 10u + 6u) != 0;
         for (;;) {
             uint32_t ea = elements + e * 10u;
             int sw, sh, x, y, ox = (int16_t)rd16(ea + 2u), oy = (int16_t)rd16(ea + 4u), flip = rd16(ea + 6u) != 0;
@@ -1025,8 +1051,21 @@ static int frame_slot(int frame)
             for (y = 0; px != NULL && y < sh; y++)
                 for (x = 0; x < sw; x++) {
                     uint8_t c = px[y * sw + (flip ? sw - 1 - x : x)];
-                    if (c != 255 && luminance(g_light_palette[c]) >= LAMP_LUMINANCE) nb++;
-                    if (c == 255 || !signal_pixel(g_light_palette[c])) continue;
+                    int hue;
+                    if (c == 255) continue;
+                    all++;
+                    ax += ox + x;
+                    ay += oy + y;
+                    ar += (g_light_palette[c] >> 16) & 0xFF;
+                    ag += (g_light_palette[c] >> 8) & 0xFF;
+                    ab += g_light_palette[c] & 0xFF;
+                    if (luminance(g_light_palette[c]) >= LAMP_LUMINANCE) nb++;
+                    if (!signal_pixel(g_light_palette[c])) continue;
+                    if ((hue = lamp_hue(g_light_palette[c])) >= 0) {
+                        g_frame_light[slot].lamps[hue]++;
+                        lx[hue] += ox + x;
+                        ly[hue] += oy + y;
+                    }
                     n++;
                     sx += ox + x;
                     sy += oy + y;
@@ -1048,13 +1087,35 @@ static int frame_slot(int frame)
             g_frame_light[slot].colour =
                 (uint32_t)(cr / mx * 255.0) << 16 | (uint32_t)(cg / mx * 255.0) << 8 | (uint32_t)(cb / mx * 255.0);
         }
+        for (k = 0; k < NB_LAMP_HUES; k++)
+            if (g_frame_light[slot].lamps[k] > 0) {
+                g_frame_light[slot].lx[k] = (float)(lx[k] / g_frame_light[slot].lamps[k]);
+                g_frame_light[slot].ly[k] = (float)(ly[k] / g_frame_light[slot].lamps[k]);
+            }
+        if (all > 0) {
+            g_frame_light[slot].cx = (float)(ax / all);
+            g_frame_light[slot].cy = (float)(ay / all);
+            g_frame_light[slot].average = brightest(ar, ag, ab);
+        }
     }
     return slot;
 }
 
 /* the statics' kinds (their byte +0x19) */
 #define STATIC_KIND 0x19u
-#define SEMAPHORE_RADIUS 56
+/* a traffic light's lamps: each hue lit shines its colour on the road the side it is on faces (its light pushed
+ * out from the middle of the light SEMAPHORE_THROW times as far as the lamps are) */
+#define SEMAPHORE_RADIUS 72
+#define SEMAPHORE_THROW 3.0f
+#define LIGHT_TWICE 2 /* a lamp's and a billboard's lights drawn this many times over (a light adds 0.4 of its colour) */
+static const uint32_t k_lamp_colours[NB_LAMP_HUES] = {0xFF2814u, 0xFFB414u, 0x28FF50u};
+/* a billboard: its picture shines, and lights what is in front of it (it faces +y, or +x drawn mirrored) in its
+ * colour, wider further out: BILLBOARD_STEPS lights from its foot out */
+#define STATIC_BILLBOARD 0x1F
+#define BILLBOARD_STEPS 5
+#define BILLBOARD_STEP 170.0f  /* world units between them */
+#define BILLBOARD_RADIUS 40.0f /* the first's (pixels), each further one BILLBOARD_GROW more */
+#define BILLBOARD_GROW 18.0f
 #define OBJECT_LIGHT_DY (-24) /* a window's or sign's light: above where it stands */
 #define WINDOW_LIGHT 0xFFD796u
 #define NEON_LIGHT 0xFF82DCu
@@ -1063,12 +1124,32 @@ static int frame_slot(int frame)
 static int static_lights(uint32_t a, int frame, float ax, float ay)
 {
     int kind = M[a + STATIC_KIND], slot;
-    if (kind >= 0x05 && kind <= 0x08) { /* traffic lights: the colour of the lamp lit */
+    if (kind >= 0x05 && kind <= 0x08) { /* traffic lights: each lamp lit, its colour */
+        int k, n;
         slot = frame_slot(frame);
-        if (slot >= 0 && g_frame_light[slot].lit)
-            add_light(ax + g_frame_light[slot].ox, ay + g_frame_light[slot].oy, SEMAPHORE_RADIUS, SEMAPHORE_RADIUS,
-                      g_frame_light[slot].colour);
-        return RENDER_GLOW_BRIGHT;
+        for (k = 0; slot >= 0 && k < NB_LAMP_HUES; k++) {
+            float dx, dy;
+            if (g_frame_light[slot].lamps[k] == 0) continue;
+            dx = (g_frame_light[slot].lx[k] - g_frame_light[slot].cx) * SEMAPHORE_THROW;
+            dy = (g_frame_light[slot].ly[k] - g_frame_light[slot].cy) * SEMAPHORE_THROW;
+            for (n = 0; n < LIGHT_TWICE; n++)
+                add_light(ax + g_frame_light[slot].cx + dx, ay + g_frame_light[slot].cy + dy + 4.0f, SEMAPHORE_RADIUS,
+                          SEMAPHORE_RADIUS * 0.6f, k_lamp_colours[k]);
+        }
+        return RENDER_GLOW_BRIGHT | RENDER_GLOW_SIGNAL;
+    }
+    if (kind == STATIC_BILLBOARD) {
+        int k, n;
+        slot = frame_slot(frame);
+        if (slot < 0) return RENDER_GLOW_FULL;
+        for (k = 0; k < BILLBOARD_STEPS; k++) {
+            /* the step in front of it on the screen: +y is down and left, +x down and right */
+            float d = BILLBOARD_STEP * (float)k, r = BILLBOARD_RADIUS + BILLBOARD_GROW * (float)k;
+            float dx = (g_frame_light[slot].flipped ? d : -d) / 8.0f, dy = d / 16.0f;
+            for (n = 0; n < LIGHT_TWICE; n++)
+                add_light(ax + dx, ay + dy + (k == 0 ? OBJECT_LIGHT_DY : 0.0f), r, r * 0.6f, g_frame_light[slot].average);
+        }
+        return RENDER_GLOW_FULL;
     }
     if (kind == 0x0A) {
         add_light(ax, ay + OBJECT_LIGHT_DY, 56, 56, NEON_LIGHT);

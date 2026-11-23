@@ -36,6 +36,7 @@ void render_floor_outline(uint32_t *rgb, int w, int h, int level, uint32_t colou
 
 /* how a tile lights up at dusk and at night (the light editor) */
 enum { RENDER_GLOW_NONE, RENDER_GLOW_BRIGHT, RENDER_GLOW_FULL };   /* what of it shines */
+#define RENDER_GLOW_SIGNAL 0x40 /* with them: its lamps (bright, strongly coloured) shine too (HOST_GLOW_SIGNAL) */
 enum { RENDER_LIGHT_AUTO, RENDER_LIGHT_NONE, RENDER_LIGHT_ON };    /* whether it lights what is around it */
 typedef struct RenderTileSetting {
     int glow, light, radius;   /* radius 0: from the tile */

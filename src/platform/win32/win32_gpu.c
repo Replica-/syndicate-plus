@@ -156,9 +156,12 @@ static const char k_city_shader[] =
     "    return i.z - r.y * 8;\n"
     "}\n"
     /* how much of a texel keeps its brightness in the dark (FreeSynd's): all of it (glow 2), its bright pixels
-     * by their brightness (1), a road's white lights (3), nothing (0) */
+     * by their brightness (1), a road's white lights (3), nothing (0); with 64 its lamps too (bright, strongly
+     * coloured: HOST_GLOW_SIGNAL) */
     "float4 glowing(float4 c, uint glow) {\n"
     "    float l = dot(c.rgb, float3(0.299, 0.587, 0.114)), s = 0;\n"
+    "    float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));\n"
+    "    if ((glow & 64) && c.a > 0 && mx >= 0.75 * c.a && mn <= mx * 0.45) return float4(1, 1, 1, 1) * c.a;\n"
     "    glow &= 3;\n"
     "    if (glow == 2) s = 1;\n"
     "    else if (glow == 1) s = saturate((l - 0.62) / 0.18);\n"
