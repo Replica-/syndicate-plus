@@ -122,6 +122,7 @@ typedef struct GameAddrs {
     uint32_t region;       /* (8 bits) its region, the world map's */
     uint32_t regions;      /* the world map's regions, REGION_SIZE bytes each (+0x11 the mission, +0x12 the text of
                             * the name) */
+    uint32_t squad;        /* (8 bits x 4) the team selection's agents (the company's), by box */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
@@ -130,37 +131,37 @@ static const GameAddrs k_addrs[] = {
      0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u,
      0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
      0x427110u, 0x419530u, 0x420250u, 0x44ab60u, 0x450b28u, 0x426940u, 0x450b5au,
-     0x428350u, 0x428a60u, 0x4441a4u, 0x44a50du, 0x44539cu, 0x451be0u, 0x444d92u, 0x450b2eu, 0x450b36u, 0x44b060u},
+     0x428350u, 0x428a60u, 0x4441a4u, 0x44a50du, 0x44539cu, 0x451be0u, 0x444d92u, 0x450b2eu, 0x450b36u, 0x44b060u, 0x450aa4u},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu,
      0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
      0x427030u, 0x419490u, 0x420190u, 0x448358u, 0x44e320u, 0x426860u, 0x44e352u,
-     0x428240u, 0x428950u, 0x4420bcu, 0x447d05u, 0x442b94u, 0x44f3d8u, 0x442592u, 0x44e326u, 0x44e32eu, 0x448858u},
+     0x428240u, 0x428950u, 0x4420bcu, 0x447d05u, 0x442b94u, 0x44f3d8u, 0x442592u, 0x44e326u, 0x44e32eu, 0x448858u, 0x44e29cu},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u,
      0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
      0x427030u, 0x419490u, 0x420190u, 0x4483bcu, 0x44e384u, 0x426860u, 0x44e3b6u,
-     0x428240u, 0x428950u, 0x442120u, 0x447d69u, 0x442bf8u, 0x44f43cu, 0x4425f6u, 0x44e38au, 0x44e392u, 0x4488bcu},
+     0x428240u, 0x428950u, 0x442120u, 0x447d69u, 0x442bf8u, 0x44f43cu, 0x4425f6u, 0x44e38au, 0x44e392u, 0x4488bcu, 0x44e300u},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
      0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu,
      0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
      0x428690u, 0x41a550u, 0x4217c0u, 0x45faacu, 0x463c12u, 0x427ec0u, 0x4662beu,
-     0x429c30u, 0x42a190u, 0x45410cu, 0x45f459u, 0x45536cu, 0x467338u, 0x454d4eu, 0x463c14u, 0x466297u, 0x45ffacu},
+     0x429c30u, 0x42a190u, 0x45410cu, 0x45f459u, 0x45536cu, 0x467338u, 0x454d4eu, 0x463c14u, 0x466297u, 0x45ffacu, 0x463b88u},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu,
      0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
      0x428610u, 0x41a4f0u, 0x421740u, 0x45d19cu, 0x461302u, 0x427e40u, 0x4639aeu,
-     0x429bb0u, 0x42a110u, 0x451f4cu, 0x45cb49u, 0x452a5cu, 0x464a28u, 0x45243eu, 0x461304u, 0x463987u, 0x45d69cu},
+     0x429bb0u, 0x42a110u, 0x451f4cu, 0x45cb49u, 0x452a5cu, 0x464a28u, 0x45243eu, 0x461304u, 0x463987u, 0x45d69cu, 0x461278u},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u,
      0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
      0x428610u, 0x41a4f0u, 0x421740u, 0x45d204u, 0x46136au, 0x427e40u, 0x463a16u,
-     0x429bb0u, 0x42a110u, 0x451fb4u, 0x45cbb1u, 0x452ac4u, 0x464a90u, 0x4524a6u, 0x46136cu, 0x4639efu, 0x45d704u},
+     0x429bb0u, 0x42a110u, 0x451fb4u, 0x45cbb1u, 0x452ac4u, 0x464a90u, 0x4524a6u, 0x46136cu, 0x4639efu, 0x45d704u, 0x4612e0u},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -2053,6 +2054,8 @@ static int g_menu_mx, g_menu_my; /* where the pointer was: it chooses an item wh
 static volatile int g_menu_click, g_menu_buttons, g_menu_hold;
 static int g_abort;
 
+static int reload_clicked(void);
+
 int game_mouse_buttons(int buttons)
 {
     int pressed = (buttons & 1) && !(g_menu_buttons & 1);
@@ -2076,6 +2079,10 @@ int game_mouse_buttons(int buttons)
         }
     }
     if (pressed && g_addrs != NULL && config_shown()) config_click();
+    if (pressed && g_addrs != NULL && reload_clicked()) {
+        g_menu_hold = 1; /* the click is not the game's */
+        return 1;
+    }
     if (g_pick_active) {
         if (pressed) g_pick_click = 1;
         return 1;
@@ -2416,13 +2423,14 @@ static void panel_true_colour(const uint8_t *index, uint32_t *rgb, int w)
 #define COUNTRY_OWNER 2u        /* (8 bits) the company holding it */
 #define TEXT_MAIN_MENU(ar) ((ar) ? 85u : 78u)  /* in the texts: the titles */
 #define TEXT_LOAD_SAVE(ar) ((ar) ? 86u : 79u)
+#define TEXT_TEAM_SELECTION(ar) ((ar) ? 89u : 82u)
 #define TEXT_EMPTY(ar) ((ar) ? 124u : 117u)    /* an empty line of the Load/Save screen */
 #define SAVE_COMPANIES(ar) ((ar) ? 0x18u : 0x14u)  /* in a save file: the companies */
 #define SAVE_COUNTRIES(ar) ((ar) ? 0x25adu : 0x20ccu)
 #define NAME_SIZE 18
 #define MENU_INFO 0x61FF24u     /* the menus' bright green */
 #define MENU_INFO_DIM 0x1C9200u
-enum { SCREEN_OTHER, SCREEN_MAIN, SCREEN_LOAD_SAVE };
+enum { SCREEN_OTHER, SCREEN_MAIN, SCREEN_LOAD_SAVE, SCREEN_TEAM };
 static int g_autoloaded;       /* the newest auto save was looked for (once a run) */
 static char g_autoload_name[SAVE_NAME_SIZE + 1]; /* and loaded: its name */
 
@@ -2667,6 +2675,78 @@ static void load_save_companies(uint32_t *pic)
     }
 }
 
+/* the team selection: RELOAD ALL above the chosen agent's weapons, every weapon of the squad's four agents
+ * reloaded as the game's own RELOAD does each agent's (0x411b74): one the company can pay for (its ammunition's
+ * price a round, the rounds it lacks), not full, its research done */
+#define RELOAD_X0 183
+#define RELOAD_X1 247
+#define RELOAD_Y0 136
+#define RELOAD_Y1 147
+#define AMMO_PRICES(ammo) ((ammo) - 2u * NB_WEAPONS) /* (16 bits, by weapon) a round's price: before the ammunition */
+static volatile int g_reload_click;
+static uint64_t g_reload_shown_us; /* the button was drawn (the screen is up) */
+
+/* the squad's weapons that would be reloaded: how many, and (act) reloaded */
+static int reload_squad(int act)
+{
+    uint32_t company = g_addrs->companies + (uint32_t)player_index() * g_addrs->company_size;
+    int box, k, n = 0;
+    for (box = 0; box < 4; box++) {
+        uint32_t a = M[g_addrs->squad + (uint32_t)box];
+        if (a >= NB_AGENTS) continue;
+        for (k = 0; k < 8; k++) {
+            uint32_t e = company + COMPANY_AGENTS + a * AGENT_SIZE + AGENT_WEAPONS + (uint32_t)k * 4u;
+            uint32_t w = RD16(e + 2u), full, cost;
+            int32_t have = (int16_t)RD16(e);
+            if (w == 0 || w >= NB_WEAPONS) continue;
+            full = RD16(g_addrs->ammo + w * 2u);
+            if ((int32_t)full <= have) continue;
+            cost = RD16(AMMO_PRICES(g_addrs->ammo) + w * 2u) * (uint32_t)((int32_t)full - have);
+            if (cost > RD32(company)) continue;
+            if (RD16(g_addrs->weapon_research + (w - 1u) * WEAPON_RESEARCH_SIZE + 0x11u) != RESEARCH_DONE) continue;
+            n++;
+            if (!act) continue;
+            WR32(company, RD32(company) - cost);
+            WR16(e, (uint16_t)full);
+        }
+    }
+    return n;
+}
+
+static int over_reload(void)
+{
+    int x, y;
+    menu_mouse(&x, &y);
+    return x >= RELOAD_X0 && x < RELOAD_X1 && y >= RELOAD_Y0 && y < RELOAD_Y1;
+}
+
+/* a click on RELOAD ALL (the input's thread): done on the game's (team_reload_button) */
+static int reload_clicked(void)
+{
+    if (in_mission() || g_menu_screen != SCREEN_TEAM || host_time_us() - g_reload_shown_us > 300000u || !over_reload())
+        return 0;
+    g_reload_click = 1;
+    return 1;
+}
+
+static void team_reload_button(uint32_t *pic)
+{
+    int n, over;
+    if (g_reload_click) {
+        g_reload_click = 0;
+        n = reload_squad(1);
+        rt_log("reload all: %d weapons", n);
+    }
+    if (!g_font_loaded) load_menu_font();
+    n = reload_squad(0);
+    over = n > 0 && over_reload();
+    fill_box(pic, 320, RELOAD_X0, RELOAD_Y0, RELOAD_X1, RELOAD_Y1, over ? MENU_BAR_SEL : MENU_BG, 220);
+    frame_box(pic, 320, 200, RELOAD_X0, RELOAD_Y0, RELOAD_X1, RELOAD_Y1, n > 0 ? MENU_INFO : MENU_INFO_DIM);
+    menu_text_fit(pic, 320, RELOAD_X0 + 4, RELOAD_Y0 + 2, "RELOAD ALL", n > 0 ? MENU_INFO : MENU_INFO_DIM,
+                  RELOAD_X1 - RELOAD_X0 - 6);
+    g_reload_shown_us = host_time_us();
+}
+
 /* the title is on the screen (bright green in its band at the top): not while the screen changes */
 #define TITLE_Y0 14
 #define TITLE_Y1 32
@@ -2690,6 +2770,7 @@ static int on_menu_title(uint32_t addr)
     (void)addr;
     g_menu_screen = text == text_at(TEXT_MAIN_MENU(g_addrs->ar))   ? SCREEN_MAIN
                     : text == text_at(TEXT_LOAD_SAVE(g_addrs->ar)) ? SCREEN_LOAD_SAVE
+                    : text == text_at(TEXT_TEAM_SELECTION(g_addrs->ar)) ? SCREEN_TEAM
                                                                    : SCREEN_OTHER;
     if (g_menu_screen == SCREEN_MAIN && !g_autoloaded) {
         char name[SAVE_NAME_SIZE + 1];
@@ -2728,6 +2809,8 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
             main_menu_company(pic);
         else if (g_menu_screen == SCREEN_LOAD_SAVE && title_shown(pic))
             load_save_companies(pic);
+        else if (g_menu_screen == SCREEN_TEAM && title_shown(pic))
+            team_reload_button(pic);
         g_menu_w = w;
         g_menu_off = (w - 320) / 2;
         rt_mouse_window(g_menu_off * 65536 / w, (g_menu_off + 320) * 65536 / w);

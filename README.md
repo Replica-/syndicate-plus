@@ -155,15 +155,18 @@ out; the small signs on walls shine and light the wall and the pavement in their
 
 Configure Company shows every colour and logo in grids under its panel, one click each: the game's 8 colours and
 18 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world
-map and its menus), and the 40 logos in the colour chosen.  Escape in a mission opens a menu in the game's
-briefing look while the mission waits: Resume, time of day, full screen, frames a second,
+map and its menus), and the 40 logos in the colour chosen.  The team selection has RELOAD ALL above the agent's
+weapons: every weapon of the squad's four agents reloaded as the game's own RELOAD does an agent's (paid for a round
+at a time, a weapon the funds cannot pay for left as it is).  Escape in a mission opens a menu in the game's
+briefing look while the mission waits, the region's name and the mission's number at its top: Resume, time of day, full screen, frames a second,
 the volumes, squad routes, and Abort mission (the game's Escape).  *Squad finds routes* (on by default): a move order the game's straight walk
 would not do well (another level, a gap or a wall between, or passing close to one) is walked as a route over the
 map's floors and stairs: A* on the tiles (with the game's own tile types), a step beside a wall costing more so the
 route keeps to open ground, then pulled into long straight stretches that keep a quarter of a tile clear of the
 walls either side.  The agent is steered along it, sent at each tick to a point 1.5 tiles further on along the route
-(round corners in a curve, never back past where it was), but onto stairs only by way of their ends; an agent that
-stops getting on gets a new route from where it is, three times, then the order as the game had it.  Only the
+(round corners in a curve, never back past where it was; a corner cut short is passed once the next point can be
+walked to straight), but onto stairs only by way of their ends; an agent the game takes to be there is set walking
+again; one that stops getting on gets a new route from where it is, three times, then the order as the game had it.  Only the
 squad's orders: the other people and the enemies' AI are untouched.
 
 A car the squad drives goes the same way (with squad routes on): an order to an agent in it drives it over the

@@ -451,6 +451,39 @@ def route_walkway(ctx):
 
 
 @test()
+def reload_all(ctx):
+    """RELOAD ALL on the team selection (above the weapons): a save with agent 1's pistol at 3 rounds and agent 2
+    given weapon 4 (2 a round, 11 full) at 1 round, loaded; the click fills both, the funds paying the rounds (20)"""
+    import struct
+    ctx.run('save', 19, start=SYN, inputs=SKIP_INTRO + [
+        '10000:f3', '12000:click@19600;%d' % LINE4,
+        '13000:del', '13300:del', '13600:del', '13900:del', '14200:del', '14500:a', '15500:enter',
+        '16500:click@19600;58700'])
+    path = os.path.join(ctx.user, 'Syndicate', '03.GAM')
+    check(os.path.exists(path), 'no save file Syndicate/03.GAM')
+    data = bytearray(open(path, 'rb').read())
+    agents = 0x14 + 0x11d + 8          # the first company's agents' weapons (40 bytes an agent, 4 a weapon)
+    struct.pack_into('<hH', data, agents, 3, 2)
+    struct.pack_into('<hH', data, agents + 40 + 4, 1, 4)
+    with open(path, 'wb') as f:
+        f.write(data)
+    dump = os.path.join(ctx.dir, 'mem.bin')
+    button = '%d;%d' % (215 * 65536 // 320, 141 * 65536 // 200)
+    ctx.run('reload', 29, start=SYN, extra=['--mem-dump', '28500:' + dump], inputs=SKIP_INTRO + [
+        '10000:f3', '12000:click@19600;%d' % LINE4, '13000:click@8500;58700',
+        '16000:click@29500;28800', '20000:click@8500;58500', '23000:click@8500;58700',
+        '26500:move@' + button, '27500:click@' + button])
+    check(os.path.exists(dump), 'no memory dump')
+    mem = open(dump, 'rb').read()
+    co = 0x44e49c - 0x400000
+    funds = struct.unpack_from('<i', mem, co)[0]
+    w1 = struct.unpack_from('<hH', mem, co + 0x125)
+    w2 = struct.unpack_from('<hH', mem, co + 0x125 + 40 + 4)
+    check(w1 == (12, 2) and w2 == (11, 4), 'the weapons are %s %s, not reloaded to (12, 2) (11, 4)' % (w1, w2))
+    check(funds == 30000 - 20, 'the funds are %d, not 29980' % funds)
+
+
+@test()
 def mission_menu(ctx):
     """Escape in a mission opens its menu and the mission waits (nothing moves under it); Abort mission (down to
     the last item, Enter) ends the mission as Escape did: the debriefing"""
