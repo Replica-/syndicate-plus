@@ -512,6 +512,25 @@ def menu_company(ctx):
 
 
 @test()
+def save_name_colour(ctx):
+    """a save left named EMPTY is named SAVE dd/mm hh:mm; the colour chosen (one of the 18 the game has not got:
+    cyan) is kept beside it (03.COL), shows as its logo's on the Load/Save screen in a run without it, and is the
+    player's again when it is loaded"""
+    ctx.run('save', 16, start=SYN, extra=['--colour', '00E5FF'], inputs=SKIP_INTRO + [
+        '10000:f3', '12000:click@19600;%d' % LINE4, '13500:click@19600;58700'])   # line 4, SAVE
+    folder = os.path.join(ctx.user, 'Syndicate')
+    check(open(os.path.join(folder, '03.GAM'), 'rb').read(5) == b'SAVE ', 'the save is not named SAVE ...')
+    check(os.path.exists(os.path.join(folder, '03.COL')), 'no colour beside the save')
+    r = ctx.run('load', 18, start=SYN, every=500, inputs=SKIP_INTRO + [
+        '10000:f3', '12000:click@19600;%d' % LINE4, '13500:click@8500;58700'])    # line 4, LOAD
+    f = r.at(13000)
+    cyan = sum(1 for p in f.pix if p & 0xFFFFFF == 0x00E5FF)
+    check(cyan > 20, 'the save\'s logo is not cyan on the Load/Save screen: ' + name(f))
+    with open(os.path.join(ctx.user, 'company_colour.txt')) as c:
+        check(c.read().strip() == '14', 'the loaded save\'s colour is not the player\'s')
+
+
+@test()
 def sound_mission_end(ctx):
     """with the sound card (as the window runs the game): a mission ends and the game goes on to the world map
     (the DOS memory it frees then is in one piece: SOUND-1.DAT, 444 KB, finds its block)"""
@@ -528,10 +547,11 @@ def auto_save(ctx):
     ctx.run('player', 19, start=SYN, inputs=SKIP_INTRO + [
         '10000:f3', '12000:click@19600;18000', '13000:x', '15500:enter', '16500:click@19600;58700'])  # line 1
     folder = os.path.join(ctx.user, 'Syndicate')
-    check(sorted(os.listdir(folder)) == ['03.GAM'], 'the save in line 1 is not in line 4: %s' % os.listdir(folder))
+    saves = lambda: sorted(f for f in os.listdir(folder) if f.endswith('.GAM'))   # (not the colours beside them)
+    check(saves() == ['03.GAM'], 'the save in line 1 is not in line 4: %s' % saves())
     os.rename(os.path.join(folder, '03.GAM'), os.path.join(folder, '00.GAM'))   # as saved before auto saves
     ctx.run('mission', 40, start=SYN, inputs=TO_MISSION + ['27000:click@36000;40455'] + abort(31000) + ['35000:enter'])
-    check(sorted(os.listdir(folder)) == ['00.GAM', '03.GAM'], 'the saves are %s' % os.listdir(folder))
+    check(saves() == ['00.GAM', '03.GAM'], 'the saves are %s' % saves())
     with open(os.path.join(folder, '00.GAM'), 'rb') as f:
         auto = f.read()
     with open(os.path.join(folder, '03.GAM'), 'rb') as f:

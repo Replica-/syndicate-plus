@@ -107,10 +107,11 @@ save is made.  This works in both games and every language (`src/game/additions.
 
 When the main menu first comes up, the newest auto save is loaded, as Load would.  Under its items the main menu
 shows the company: its logo in its colour, its name and the player's, its funds, how many of the 50 countries it
-holds, the mission it played last, and the auto save loaded.  On the Load/Save screen each save shows its logo
-in its colour and the country of its last mission on its line, and the chosen line's company, funds and countries
-show between the buttons.  (These read the save files and the game's own memory: the texts, countries and logos
-of the program running.)
+holds and how complete that is (in percent), and the auto save loaded.  On the Load/Save screen each save shows
+its logo in its colour and its completion on its line, and the chosen line's company, funds and countries show
+between the buttons.  The colour chosen in Configure Company (the game's saves only hold the nearest of its own 8)
+is kept beside each save (`NN.COL`) and is the player's again when the save is loaded.  A save left named as an
+empty line ("EMPTY") or with no name is named `SAVE <day>/<month> <hour>:<minute>`.
 
 ### In missions
 
