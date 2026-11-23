@@ -1751,6 +1751,7 @@ static uint32_t hat_colour(int ped)
 #define CAR_LABEL_DY (-10 + GAME_TOP - 56) /* over a car (its middle, where the city has it) */
 #define CAR_LABEL_GAP 11                   /* side by side */
 static int car_label(uint32_t ped, int slot, int *id, int *dx);
+static int squad_z(uint32_t ped);
 
 static int g_cut_level = -1;
 #define FLOOR_OUTLINE 0x5AFF5Au
@@ -1784,9 +1785,9 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
             uint32_t co = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
             for (slot = 0; slot < 4; slot++) {
                 uint32_t ped = g_addrs->peds + (M[co + COMPANY_SQUAD] + (uint32_t)slot) * PED_SIZE;
-                int l = (int16_t)RD16(ped + PED_Z) / 128 + SEE_INSIDE_LEVELS;
+                int z = squad_z(ped), l = z / 128 + SEE_INSIDE_LEVELS;
                 /* not a dead agent's body (the game keeps it on the map, its health below 1) */
-                if (PED_ON_MAP(ped) && (int16_t)RD16(ped + PED_HEALTH) > 0 && l > level) level = l;
+                if (z >= 0 && (int16_t)RD16(ped + PED_HEALTH) > 0 && l > level) level = l;
             }
             if (level < 0) level = 0;
         }
@@ -3110,6 +3111,13 @@ static int on_drive_car(uint32_t addr)
 
 /* the agent `ped` (in `slot` of the squad) in a car: its number goes over the car (the renderer's id for it, how
  * far to the side among the squad in it); 0 when it is not in one */
+/* the height an agent of the squad is at: its car's when it is in one, -1 when it is not on the map */
+static int squad_z(uint32_t ped)
+{
+    if (IS_IN_CAR(ped)) return car_index(car_of(ped)) >= 0 ? (int16_t)RD16(car_of(ped) + PED_Z) : -1;
+    return PED_ON_MAP(ped) ? (int16_t)RD16(ped + PED_Z) : -1;
+}
+
 static int car_label(uint32_t ped, int slot, int *id, int *dx)
 {
     uint32_t company = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;

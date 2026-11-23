@@ -873,7 +873,11 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define LIST_CARS 1
 #define LIST_STATICS 2
 #define LIST_EFFECTS 4
-#define CAR_REACH 160 /* how far a car reaches from its middle towards the viewer (a tile is 256) */
+/* how far a car reaches from its middle (a tile is 256; its frames reach some 340 ahead and behind, 45 pixels):
+ * along the way it faces, and across */
+#define CAR_LONG 352
+#define CAR_WIDE 96
+#define CAR_HEADING 0x1au /* (8 bits) the way it faces: 0 +y, 64 +x, 128 -y, 192 -x */
 #define LYING 255     /* Obj.z of a body lying: after every level of its row of tiles */
 #define LYING_H 20    /* a lying person's frame is at most this high */
 #define HEADLIGHT_COLOUR 0xFFF5D7u
@@ -1290,9 +1294,14 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             if (t.gpu && li == LIST_CARS)
                 object_lights(li, (int)i, x, y, z, t256 >= 0 ? sb->pos[n][0] - sa->pos[n][0] : 0,
                               t256 >= 0 ? sb->pos[n][1] - sa->pos[n][1] : 0);
-            /* a car is longer than a tile: drawn with the row of tiles its front end is in (with its middle's,
-             * the floor of the row in front of it is drawn over its front) */
-            objs[nobj].key = li == LIST_CARS ? ((x + CAR_REACH) >> 8) + ((y + CAR_REACH) >> 8) : (x >> 8) + (y >> 8);
+            /* a car is two tiles long and more: drawn with the row of tiles its end nearest the viewer is in (with
+             * its middle's, the floor of the rows in front of it is drawn over its nose or its tail) */
+            if (li == LIST_CARS) {
+                int along_x = ((M[a + CAR_HEADING] + 32u) & 64u) != 0;
+                objs[nobj].key = ((x + (along_x ? CAR_LONG : CAR_WIDE)) >> 8) + ((y + (along_x ? CAR_WIDE : CAR_LONG)) >> 8);
+            } else {
+                objs[nobj].key = (x >> 8) + (y >> 8);
+            }
             objs[nobj].z = z >> 7;
             /* a person lying (a body, falling or dead: its frame low, wider than high; standing ones are 25 to 36
              * high, firing ones up to 49 wide) reaches into the cells beside it in its row of tiles: drawn after all
