@@ -117,6 +117,11 @@ typedef struct GameAddrs {
     uint32_t countries;    /* the countries' state, COUNTRY_SIZE bytes each (as a save holds them) */
     uint32_t logos;        /* -> the logos (32 x 32 each, 254 the company's colour) */
     uint32_t save_line;    /* (8 bits) the line chosen on the Load/Save screen (10: none) */
+    /* the mission being played (set as the world map's Brief is chosen) */
+    uint32_t mission;      /* (16 bits) its number (GAMExx.DAT) */
+    uint32_t region;       /* (8 bits) its region, the world map's */
+    uint32_t regions;      /* the world map's regions, REGION_SIZE bytes each (+0x11 the mission, +0x12 the text of
+                            * the name) */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
@@ -125,37 +130,37 @@ static const GameAddrs k_addrs[] = {
      0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u,
      0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
      0x427110u, 0x419530u, 0x420250u, 0x44ab60u, 0x450b28u, 0x426940u, 0x450b5au,
-     0x428350u, 0x428a60u, 0x4441a4u, 0x44a50du, 0x44539cu, 0x451be0u, 0x444d92u},
+     0x428350u, 0x428a60u, 0x4441a4u, 0x44a50du, 0x44539cu, 0x451be0u, 0x444d92u, 0x450b2eu, 0x450b36u, 0x44b060u},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu,
      0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
      0x427030u, 0x419490u, 0x420190u, 0x448358u, 0x44e320u, 0x426860u, 0x44e352u,
-     0x428240u, 0x428950u, 0x4420bcu, 0x447d05u, 0x442b94u, 0x44f3d8u, 0x442592u},
+     0x428240u, 0x428950u, 0x4420bcu, 0x447d05u, 0x442b94u, 0x44f3d8u, 0x442592u, 0x44e326u, 0x44e32eu, 0x448858u},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u,
      0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
      0x427030u, 0x419490u, 0x420190u, 0x4483bcu, 0x44e384u, 0x426860u, 0x44e3b6u,
-     0x428240u, 0x428950u, 0x442120u, 0x447d69u, 0x442bf8u, 0x44f43cu, 0x4425f6u},
+     0x428240u, 0x428950u, 0x442120u, 0x447d69u, 0x442bf8u, 0x44f43cu, 0x4425f6u, 0x44e38au, 0x44e392u, 0x4488bcu},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
      0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu,
      0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
      0x428690u, 0x41a550u, 0x4217c0u, 0x45faacu, 0x463c12u, 0x427ec0u, 0x4662beu,
-     0x429c30u, 0x42a190u, 0x45410cu, 0x45f459u, 0x45536cu, 0x467338u, 0x454d4eu},
+     0x429c30u, 0x42a190u, 0x45410cu, 0x45f459u, 0x45536cu, 0x467338u, 0x454d4eu, 0x463c14u, 0x466297u, 0x45ffacu},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu,
      0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
      0x428610u, 0x41a4f0u, 0x421740u, 0x45d19cu, 0x461302u, 0x427e40u, 0x4639aeu,
-     0x429bb0u, 0x42a110u, 0x451f4cu, 0x45cb49u, 0x452a5cu, 0x464a28u, 0x45243eu},
+     0x429bb0u, 0x42a110u, 0x451f4cu, 0x45cb49u, 0x452a5cu, 0x464a28u, 0x45243eu, 0x461304u, 0x463987u, 0x45d69cu},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u,
      0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
      0x428610u, 0x41a4f0u, 0x421740u, 0x45d204u, 0x46136au, 0x427e40u, 0x463a16u,
-     0x429bb0u, 0x42a110u, 0x451fb4u, 0x45cbb1u, 0x452ac4u, 0x464a90u, 0x4524a6u},
+     0x429bb0u, 0x42a110u, 0x451fb4u, 0x45cbb1u, 0x452ac4u, 0x464a90u, 0x4524a6u, 0x46136cu, 0x4639efu, 0x45d704u},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -2220,6 +2225,28 @@ int game_pick_first(int revolt)
     return host_should_quit() ? -1 : chosen;
 }
 
+/* the mission being played: its region's name ("MISSION PAUSED" when it cannot be told) and "MISSION n PAUSED" */
+#define REGION_SIZE 19u
+#define REGION_NAME 0x12u
+#define MENU_HEAD 84 /* the panel's top to its first item */
+#define NB_REGIONS 50
+static uint32_t text_at(uint32_t k);
+static void mission_title(char *region, size_t rn, char *line, size_t ln)
+{
+    int mission = (int)RD16(g_addrs->mission), r = M[g_addrs->region], k = 0;
+    snprintf(region, rn, "MISSION PAUSED");
+    snprintf(line, ln, "MISSION %d PAUSED", mission);
+    if (mission < 1 || mission > 99) {
+        line[0] = '\0';
+        return;
+    }
+    if (r < NB_REGIONS) {
+        uint32_t t = text_at(M[g_addrs->regions + (uint32_t)r * REGION_SIZE + REGION_NAME]);
+        for (k = 0; k + 1 < (int)rn && t != 0 && M[t + (uint32_t)k] != 0; k++) region[k] = (char)M[t + (uint32_t)k];
+        if (k > 0) region[k] = '\0';
+    }
+}
+
 /* drawn over the mission, its keys and clicks acted on (game thread) */
 static void mission_menu(uint32_t *rgb, int w)
 {
@@ -2230,9 +2257,9 @@ static void mission_menu(uint32_t *rgb, int w)
     if (!g_font_loaded) load_menu_font();
     left = cx - MENU_W / 2;
     right = cx + MENU_W / 2;
-    top = 240 - (n * MENU_ROW + 80) / 2;
+    top = 240 - (n * MENU_ROW + MENU_HEAD + 20) / 2;
     if (top < VIEW_TOP + 4) top = VIEW_TOP + 4;
-    bottom = top + n * MENU_ROW + 80;
+    bottom = top + n * MENU_ROW + MENU_HEAD + 20;
     /* the keys: up, down, left, right, Enter, Escape (resume) */
     if (key == 0x48 + 0xE000 || key == 0x48) g_menu_sel = (g_menu_sel + n - 1) % n;
     if (key == 0x50 + 0xE000 || key == 0x50) g_menu_sel = (g_menu_sel + 1) % n;
@@ -2245,8 +2272,8 @@ static void mission_menu(uint32_t *rgb, int w)
     /* the pointer: over an item it is the one chosen, a click acts on it */
     canvas_mouse(&mx, &my);
     if (mx != g_menu_mx || my != g_menu_my || g_menu_click) {
-        int row = (my - (top + 60)) / MENU_ROW;
-        if (mx >= left + 16 && mx < right - 16 && my >= top + 60 && row >= 0 && row < n) {
+        int row = (my - (top + MENU_HEAD)) / MENU_ROW;
+        if (mx >= left + 16 && mx < right - 16 && my >= top + MENU_HEAD && row >= 0 && row < n) {
             g_menu_sel = row;
             if (g_menu_click) act = 1;
         }
@@ -2283,9 +2310,15 @@ static void mission_menu(uint32_t *rgb, int w)
             plot_any(rgb, w, right - 1 - i, y, MENU_FRAME);
         }
     }
-    menu_text(rgb, w, cx - menu_text_width("MISSION PAUSED") / 2, top + 18, "MISSION PAUSED", MENU_BRIGHT);
+    /* the region's name, then the mission's number (as the world map and the briefing have them) */
+    {
+        char region[40], line[40];
+        mission_title(region, sizeof region, line, sizeof line);
+        menu_text(rgb, w, cx - menu_text_width(region) / 2, top + 14, region, MENU_BRIGHT);
+        menu_text(rgb, w, cx - menu_text_width(line) / 2, top + 40, line, MENU_TEXT);
+    }
     for (i = 0; i < n; i++) {
-        int y = top + 60 + i * MENU_ROW, x, yy, sel = i == g_menu_sel;
+        int y = top + MENU_HEAD + i * MENU_ROW, x, yy, sel = i == g_menu_sel;
         const char *name = i == 0 ? "RESUME" : i == n - 1 ? "ABORT MISSION" : opts[i - 1].name;
         for (yy = y; yy < y + MENU_ROW - 6; yy++)
             for (x = left + 16; x < right - 16; x++) plot_any(rgb, w, x, yy, sel ? MENU_BAR_SEL : MENU_BAR);
