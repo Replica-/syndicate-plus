@@ -33,6 +33,5 @@ void gpu_city_frame(const HostCityQuad *quads, int n, int x0, int y0, int x1, in
 /* the time of day the city is lit for: 0 as the mission is (its colours; its lights glow as dark as its palette is),
  * 1 off (as the game draws it), 2 dusk, 3 night */
 void gpu_set_time(int time);
-/* the sun's shadows on the city's tiles (on by default) */
 /* no city (a frame without one) */
 void gpu_city_off(void);

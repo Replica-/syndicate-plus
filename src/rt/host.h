@@ -56,14 +56,11 @@ typedef struct HostCityQuad {
     uint16_t image;
     uint8_t flip;     /* drawn mirrored */
     uint8_t glow;     /* in the dark: 0 nothing shines, 1 its brightest pixels, 2 all of it, 3 a road's white lights;
-                       * bit 7: drawn almost see-through; HOST_GLOW_TILE */
+                       * bit 7: drawn almost see-through */
     uint32_t hat;     /* a colour (0x00RRGGBB) for the image's hat pixels (alpha 254) in its top rows (the top byte:
                        * how many; 0: none) */
-    float z;          /* how high it stands (world units; a level is 128): a tile, its top; anything else (upright),
-                       * its top row, each row below 8 lower (what stands between a lamp and what it lights) */
 } HostCityQuad;
 #define HOST_GLOW_SIGNAL 0x40u /* HostCityQuad.glow: its bright, strongly coloured pixels shine too (lamps) */
-#define HOST_GLOW_TILE 0x08u  /* HostCityQuad.glow: a tile (a block: its top at z, its faces below it 8 a row lower) */
 /* a light in the city (a lamp): a soft ellipse of light, centre x, y, radii rx, ry (frame pixels) */
 typedef struct HostCityLight {
     float x, y, rx, ry;

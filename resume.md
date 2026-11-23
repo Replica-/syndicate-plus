@@ -16,7 +16,7 @@ Where the work stands, for the next session. Everything is committed locally on 
 
 ## Build, run, test
 
-- `_references/dos` is a junction to `D:\development\syndicate\game_data` (GOG install). `gen/` is generated:
+- `_references/dos` holds the original game data (GOG install, not in git). `gen/` is generated:
   `python tools/gen_all.py` (needs `pip install capstone`), about 40 s.
 - `dev\build.cmd` builds into `build-dev\RelWithDebInfo` (Ninja; a change to `src/rt/recomp.h` or `gen/` rebuilds
   everything, about 8 min).
@@ -109,7 +109,6 @@ at the zoomed place at their own size. Recordings letterbox wide frames. Test: `
 
 ## Done: the rest of the list
 
-- Sun shadows (render.c `sun_shade`, packed in the quad's flip byte bits 1-7; window menu, `[video] shadows`).
 - Signal lights: object frames with a few bright saturated pixels light a little at dusk/night (`frame_lights`).
 - B held: floor outline (`render_floor_outline`).
 - Company colour: window menu, 16 extra colours for the player's hats (`game_set_player_colour`, `[game]
@@ -136,7 +135,7 @@ at the zoomed place at their own size. Recordings letterbox wide frames. Test: `
   MLOGOS in memory, 254 = the colour); the extra colour in `company_colour.txt` (user folder); Accept stores the
   game's nearest colour (+0x0F) and logo (+0x10). The window menu's company colour item was removed.
 
-## Done: FreeSynd parity pass (B view, lighting, shadows, full height, true colour)
+## Done: FreeSynd parity pass (B view, lighting, full height, true colour)
 
 - B: tiles from the squad's level up drawn at alpha 60/255 (quad glow bit 7), green outline of walkable cells
   (`path_walkable`, edges where no walkable cell on the level or one above/below) — as the fork's.
@@ -145,8 +144,6 @@ at the zoomed place at their own size. Recordings letterbox wide frames. Test: `
   roads' white pixels 0.6), capped at 1; city * map + city * add; glows (muzzle flash) added by day too. Lamps:
   luminance >= 0.78, 2..48 on ground, none on roads/slopes, circle 24+6*sqrt(n); light=on: tile centre, radius 80,
   ellipse. Statics by kind (+0x19): 5-8 traffic lights, 0x0A neon, 0x20-0x26 lit windows, 0x12/13/15 glass.
-- Shadows per pixel: surface tiles shaded by solid tiles towards the sun up to 8 away; 4 corner shades per tile
-  (HostCityQuad.shade) blended in the shader.
 - The city fills the whole height (VIEW_TOP 0, VIEW_BOTTOM 480; GAME_TOP 40 for the game's own window); the mouse
   over the picture's 480 lines (tests' clicks converted).
 - True colour: hats by the frame's top 6 rows (any element); the agents' boxes and the menus repaint the company's
@@ -154,6 +151,5 @@ at the zoomed place at their own size. Recordings letterbox wide frames. Test: `
 
 ## Still to do
 
-Check routes on stairs in a city mission (with the user); tune the night look and shadow strength from the user's
-play; the macOS front end (not built here: no wide view, GPU city, lighting or the new menu items there). Loose
+Check routes on stairs in a city mission (with the user); tune the night look from the user's play; the macOS front end (not built here: no wide view, GPU city, lighting or the new menu items there). Loose
 ends: blood spray on a real hit and the corpse fix on a real death are unchecked.

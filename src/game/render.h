@@ -28,7 +28,7 @@ void render_set_zoom(double zoom, float cx, float cy);
 /* the tiles of level `level` (z / 128) and above are drawn almost see-through, to see inside the buildings; -1:
  * none are */
 void render_set_cut(int level);
-/* the tiles' types (the game's COL01.DAT): the sun's shadows */
+/* the tiles' types (the game's COL01.DAT): which tiles are roads, which can hold lamps */
 void render_set_tile_types(const uint8_t types[256]);
 /* the outline of the cells one can walk in at level `level` (`walkable`), in the last city's view */
 void render_floor_outline(uint32_t *rgb, int w, int h, int level, uint32_t colour, int x0, int y0, int x1, int y1,

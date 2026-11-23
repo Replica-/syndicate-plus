@@ -186,7 +186,6 @@ static int g_nquads, g_quads_cap;
 static int g_cut = -1;   /* the tiles of this level and above are drawn almost see-through (-1: none) */
 static int g_translucent; /* the tile being put is one of them */
 #define SEE_THROUGH_ALPHA 60 /* of 255, as FreeSynd's */
-static float g_quad_z;   /* the height of what is being put (HostCityQuad.z) */
 static uint32_t g_cols;     /* the map being drawn: its columns and size */
 static int g_mx, g_my, g_mz;
 
@@ -229,7 +228,6 @@ static uint32_t sprite_colour(const uint32_t *pal, uint8_t c, int row, uint32_t 
     return pal[c];
 }
 static int g_put_head; /* the sprite being put is a head (sprite_colour) */
-static float g_obj_z;  /* the height of the feet of the thing being drawn */
 
 static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat, int glow)
 {
@@ -250,9 +248,7 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->y = y;
     q->image = (uint16_t)image;
     q->flip = (uint8_t)(flipped != 0);
-    q->z = g_quad_z;
-    q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0) |
-                        (image < IMAGE_SPRITES ? HOST_GLOW_TILE : 0));
+    q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0));
     q->hat = image < IMAGE_SPRITES ? 0 : hat; /* a sprite: its hat's rows, colour */
 }
 
@@ -393,7 +389,6 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
         if (s != NULL) {
             int rows = hat != 0 ? hat_rows(id, s, sw, sh) : 0;
             g_put_head = is_head(id);
-            g_quad_z = g_obj_z - 8.0f * (float)oy; /* its feet at the anchor, 8 world units a pixel up */
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
                 rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
             g_put_head = 0;
@@ -1294,7 +1289,6 @@ static void draw_obj(const Target *t, const Obj *o)
         if (render_hat_colour != NULL && o->ped < 256) hat = render_hat_colour(o->ped);
     }
     g_obj_glow = o->glow;
-    g_obj_z = (float)o->zw;
     draw_frame(t, o->frame, fx + render_obj_dx, fy + render_obj_dy, ffx + (float)render_obj_dx, ffy + (float)render_obj_dy,
                hat);
     g_obj_glow = 0;
@@ -1435,7 +1429,6 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         fy + render_tile_dy + TILE_H > ly0 - 2 && fy + render_tile_dy < ly1 + 2) {
                         float ffx, ffy;
                         project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
-                        g_quad_z = (float)((tz + 1) * 128); /* the block's top */
                         g_translucent = g_cut >= 0 && tz >= g_cut;
                         put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
                             ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
