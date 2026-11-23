@@ -488,6 +488,30 @@ def save_load(ctx):
 
 
 @test()
+def menu_company(ctx):
+    """the newest auto save is loaded when the main menu first comes up, and the main menu shows its company: the
+    logo in the company's colour (the save made on the Load/Save screen, then made an auto save in line 1 with
+    colour 3, logo 5, $12345 and Western Europe (mission 1) played last)"""
+    ctx.run('save', 19, start=SYN, inputs=SKIP_INTRO + [
+        '10000:f3', '12000:click@19600;%d' % LINE4, '13000:del', '13300:del', '13600:del', '13900:del', '14200:del',
+        '14500:a', '15500:enter', '16500:click@19600;58700'])
+    folder = os.path.join(ctx.user, 'Syndicate')
+    data = bytearray(open(os.path.join(folder, '03.GAM'), 'rb').read())
+    data[:20] = b'AUTO 01/01 00:00'.ljust(20, b'\0')
+    struct.pack_into('<I', data, 0x14, 12345)
+    data[0x14 + 0xf], data[0x14 + 0x10], data[0x14 + 0xb7] = 3, 5, 1
+    os.remove(os.path.join(folder, '03.GAM'))
+    with open(os.path.join(folder, '00.GAM'), 'wb') as f:
+        f.write(data)
+    r = ctx.run('menu', 12, start=SYN, inputs=SKIP_INTRO)
+    check('auto save loaded: AUTO 01/01 00:00' in r.log, 'the auto save was not loaded (see menu.log)')
+    f = r.last()
+    logo = sum(1 for y in range(int(0.74 * f.h), int(0.95 * f.h)) for x in range(int(0.18 * f.w), int(0.32 * f.w))
+               if f.pix[y * f.w + x] & 0xFFFFFF == 0xFFA65D)
+    check(logo > 40, 'no logo in the company\'s colour on the main menu: ' + name(f))
+
+
+@test()
 def sound_mission_end(ctx):
     """with the sound card (as the window runs the game): a mission ends and the game goes on to the world map
     (the DOS memory it frees then is in one piece: SOUND-1.DAT, 444 KB, finds its block)"""

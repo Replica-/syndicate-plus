@@ -67,6 +67,21 @@
             "preLaunchTask": "Build"
         },
         {
+            // Syndicate straight into mission 15 (every mission open: TO THE TOP), the squad beside a parked car on a
+            // long road: a test of the squad's car routes (select the squad, click the car to get in, then click the
+            // road: behind the car, on the other lane, down at the junction)
+            "name": "Syndicate64 - Mission 15 (car routes test)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-dev/RelWithDebInfo/Syndicate64.exe",
+            "args": ["--start", "SYNDICAT\\MAIN.EXE /c0 /iirq7 /idma1 /iio220", "--cheats", "MINIGUN SQUAD:TO THE TOP",
+                     "--input", "3000:esc,7000:esc,10000:move@29500;28800,11000:click@29500;28800,13000:click@37888;14745,14500:click@8500;58500,17500:click@8500;58700,20500:click@8500;58700",
+                     "--log", "${workspaceFolder}/out/syndicate64.log"],
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "preLaunchTask": "Build"
+        },
+        {
             "name": "Syndicate64 - American Revolt, all missions, miniguns, full mods",
             "type": "cppvsdbg",
             "request": "launch",

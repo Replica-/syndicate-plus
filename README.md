@@ -105,6 +105,13 @@ They load like any save.  Lines 4 to 10 are the player's: a save made in one of 
 first empty line from 4 on, and a save from before (in lines 1 to 3) moves to an empty line when the first auto
 save is made.  This works in both games and every language (`src/game/additions.c`).
 
+When the main menu first comes up, the newest auto save is loaded, as Load would.  Under its items the main menu
+shows the company: its logo in its colour, its name and the player's, its funds, how many of the 50 countries it
+holds, the mission it played last, and the auto save loaded.  On the Load/Save screen each save shows its logo
+in its colour and the country of its last mission on its line, and the chosen line's company, funds and countries
+show between the buttons.  (These read the save files and the game's own memory: the texts, countries and logos
+of the program running.)
+
 ### In missions
 
 In missions the view scrolls at once and smoothly, at every frame shown, with the arrow keys, W, A, S and D (only

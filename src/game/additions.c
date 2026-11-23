@@ -4,7 +4,9 @@
  * screen, by the game's own save routine; the auto saves before it move down a line.  The first three lines hold
  * the auto saves ("AUTO dd/mm hh:mm"), newest first; only saves named so are moved or replaced, and a save of
  * the player found in those lines is first moved to a free line further down.  A save the player makes in one of
- * the auto save lines goes to the first free line from the fourth on instead (none free: not saved).
+ * the auto save lines goes to the first free line from the fourth on instead (none free: not saved).  The newest
+ * auto save is loaded when the main menu first comes up; the main menu shows the company, the Load/Save screen
+ * each save's (logo, colour, last mission, funds, countries held).
  *
  * Keys in missions: the arrow keys and W, A, S, D (and the pointer at an edge of the screen) scroll the view at
  * once, at every frame shown: the view is this program's, and the game's camera follows it at its ticks (the
@@ -103,6 +105,15 @@ typedef struct GameAddrs {
                             * the car stops) */
     uint32_t headings;     /* (16 bits x 256, then as many for y) a heading's step in x per 256 of speed */
     uint32_t car_place;    /* (16 bits x, y, z) where drive_car put the car (its driver is put there after it) */
+    /* the menus */
+    uint32_t load_game;    /* load(slot): reads <save_dir>/<slot>.GAM */
+    uint32_t menu_title;   /* menu_title(text): a menu screen's title drawn (once, as it comes up) */
+    uint32_t texts;        /* the game's texts: 3 pointers (one a language) each, the countries' names first */
+    uint32_t language;     /* (8 bits) which of the 3 */
+    uint32_t country_map;  /* the countries on the world map, COUNTRY_MAP_SIZE bytes each: its mission, its name */
+    uint32_t countries;    /* the countries' state, COUNTRY_SIZE bytes each (as a save holds them) */
+    uint32_t logos;        /* -> the logos (32 x 32 each, 254 the company's colour) */
+    uint32_t save_line;    /* (8 bits) the line chosen on the Load/Save screen (10: none) */
 } GameAddrs;
 
 static const GameAddrs k_addrs[] = {
@@ -110,32 +121,38 @@ static const GameAddrs k_addrs[] = {
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
      0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u,
      0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
-     0x427110u, 0x419530u, 0x420250u, 0x44ab60u, 0x450b28u},
+     0x427110u, 0x419530u, 0x420250u, 0x44ab60u, 0x450b28u,
+     0x428350u, 0x428a60u, 0x4441a4u, 0x44a50du, 0x44b071u, 0x44539cu, 0x451be0u, 0x444d92u},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu,
      0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
-     0x427030u, 0x419490u, 0x420190u, 0x448358u, 0x44e320u},
+     0x427030u, 0x419490u, 0x420190u, 0x448358u, 0x44e320u,
+     0x428240u, 0x428950u, 0x4420bcu, 0x447d05u, 0x448869u, 0x442b94u, 0x44f3d8u, 0x442592u},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u,
      0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
-     0x427030u, 0x419490u, 0x420190u, 0x4483bcu, 0x44e384u},
+     0x427030u, 0x419490u, 0x420190u, 0x4483bcu, 0x44e384u,
+     0x428240u, 0x428950u, 0x442120u, 0x447d69u, 0x4488cdu, 0x442bf8u, 0x44f43cu, 0x4425f6u},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
      0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu,
      0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
-     0x428690u, 0x41a550u, 0x4217c0u, 0x45faacu, 0x463c12u},
+     0x428690u, 0x41a550u, 0x4217c0u, 0x45faacu, 0x463c12u,
+     0x429c30u, 0x42a190u, 0x45410cu, 0x45f459u, 0x45ffbdu, 0x45536cu, 0x467338u, 0x454d4eu},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu,
      0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
-     0x428610u, 0x41a4f0u, 0x421740u, 0x45d19cu, 0x461302u},
+     0x428610u, 0x41a4f0u, 0x421740u, 0x45d19cu, 0x461302u,
+     0x429bb0u, 0x42a110u, 0x451f4cu, 0x45cb49u, 0x45d6adu, 0x452a5cu, 0x464a28u, 0x45243eu},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u,
      0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
-     0x428610u, 0x41a4f0u, 0x421740u, 0x45d204u, 0x46136au},
+     0x428610u, 0x41a4f0u, 0x421740u, 0x45d204u, 0x46136au,
+     0x429bb0u, 0x42a110u, 0x451fb4u, 0x45cbb1u, 0x45d715u, 0x452ac4u, 0x464a90u, 0x4524a6u},
 };
 
 static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, the intros) */
@@ -258,9 +275,12 @@ static int on_mission_end(uint32_t addr)
 
 static void cheat_names(void);
 
+static int g_menu_screen; /* the menu screen up (SCREEN_*, from the last title drawn: the company on the menus) */
+
 static int on_world_map(uint32_t addr)
 {
     (void)addr;
+    g_menu_screen = 0; /* (not a menu of the company's) */
     cheat_names();
     if (g_mission_over) {
         g_mission_over = 0;
@@ -2322,6 +2342,249 @@ static void panel_true_colour(const uint8_t *index, uint32_t *rgb, int w)
         }
 }
 
+/* ==== the company on the menus ================================================================================
+ * The main menu shows the player's company under its items: its logo in its colour, its name and the player's, its
+ * funds, the countries it holds and the mission it played last.  The Load/Save screen shows each save's logo and
+ * last mission on its line, and the chosen line's company, funds and countries between the buttons.  The first
+ * time the main menu comes up, the newest auto save is loaded (as Load does it), and the main menu says so.  Which
+ * screen is up: the title the game draws as it comes up (the texts' MAIN MENU, LOAD-SAVE GAME) ---- */
+#define COMPANY_LOGO 0x10u
+#define COMPANY_MISSION 0xb7u   /* (8 bits) the mission played last (1..50, 0: none yet) */
+#define NB_COUNTRIES 50
+#define COUNTRY_SIZE 10u
+#define COUNTRY_OWNER 2u        /* (8 bits) the company holding it */
+#define COUNTRY_MAP_SIZE 19u
+#define COUNTRY_NAME 1u         /* in country_map: (8 bits) its name in the texts */
+#define TEXT_MAIN_MENU(ar) ((ar) ? 85u : 78u)  /* in the texts: the titles */
+#define TEXT_LOAD_SAVE(ar) ((ar) ? 86u : 79u)
+#define SAVE_COMPANIES(ar) ((ar) ? 0x18u : 0x14u)  /* in a save file: the companies */
+#define SAVE_COUNTRIES(ar) ((ar) ? 0x25adu : 0x20ccu)
+#define NAME_SIZE 18
+#define MENU_INFO 0x61FF24u     /* the menus' bright green */
+#define MENU_INFO_DIM 0x1C9200u
+enum { SCREEN_OTHER, SCREEN_MAIN, SCREEN_LOAD_SAVE };
+static int g_autoloaded;       /* the newest auto save was looked for (once a run) */
+static char g_autoload_name[SAVE_NAME_SIZE + 1]; /* and loaded: its name */
+
+typedef struct CompanyInfo {
+    char company[NAME_SIZE + 1], player[NAME_SIZE + 1];
+    int colour, logo, mission, held;
+    int32_t funds;
+} CompanyInfo;
+
+/* the player's company from its record and the countries' (as in memory, or as a save holds them) */
+static void company_info(const uint8_t *co, const uint8_t *countries, int player, CompanyInfo *ci)
+{
+    int k;
+    memcpy(ci->company, co + COMPANY_NAME, NAME_SIZE);
+    ci->company[NAME_SIZE] = '\0';
+    memcpy(ci->player, co + PLAYER_NAME, NAME_SIZE);
+    ci->player[NAME_SIZE] = '\0';
+    ci->colour = co[COMPANY_COLOUR];
+    ci->logo = co[COMPANY_LOGO];
+    ci->mission = co[COMPANY_MISSION];
+    memcpy(&ci->funds, co, 4);
+    ci->held = 0;
+    for (k = 0; k < NB_COUNTRIES; k++)
+        if (countries[k * COUNTRY_SIZE + COUNTRY_OWNER] == player) ci->held++;
+}
+
+static int player_index(void)
+{
+    int p = (int16_t)RD16(g_addrs->player);
+    return p < 0 || p > 8 ? 0 : p;
+}
+
+static void live_company(CompanyInfo *ci)
+{
+    int p = player_index();
+    company_info(M + g_addrs->companies + (uint32_t)p * g_addrs->company_size, M + g_addrs->countries, p, ci);
+}
+
+/* the save in `slot`: its name and company; 0 when there is none */
+static int save_company(int slot, char *name, CompanyInfo *ci)
+{
+    static uint8_t buf[0x2800];
+    char path[1024];
+    VFile *f;
+    size_t got;
+    int ar = g_addrs->ar, p = player_index();
+    slot_host_path(slot, path, sizeof path);
+    f = vfs_open(path, "rb");
+    if (f == NULL) return 0;
+    got = vfs_read(f, buf, sizeof buf);
+    vfs_close(f);
+    if (got < SAVE_COUNTRIES(ar) + NB_COUNTRIES * COUNTRY_SIZE) return 0;
+    memcpy(name, buf, SAVE_NAME_SIZE);
+    name[SAVE_NAME_SIZE] = '\0';
+    company_info(buf + SAVE_COMPANIES(ar) + (uint32_t)p * g_addrs->company_size, buf + SAVE_COUNTRIES(ar), p, ci);
+    return 1;
+}
+
+/* the game's text `k`: the English program's texts are in 3 languages (English, French, Italian, the one chosen
+ * in `language`), the Spanish and German programs' in one */
+static uint32_t text_at(uint32_t k)
+{
+    int three = g_addrs->game == GAME_SYN || g_addrs->game == GAME_AR;
+    return RD32(g_addrs->texts + (three ? k * 12u + (uint32_t)(M[g_addrs->language] % 3u) * 4u : k * 4u));
+}
+
+/* the name of the country of `mission` (the game's language), NULL if there is none */
+static const char *mission_country(int mission)
+{
+    int k;
+    if (mission <= 0) return NULL;
+    for (k = 0; k < NB_COUNTRIES; k++) {
+        uint32_t c = g_addrs->country_map + (uint32_t)k * COUNTRY_MAP_SIZE, s;
+        if (M[c] != mission) continue;
+        s = text_at(M[c + COUNTRY_NAME]);
+        return s != 0 && s < RT_MEM_SIZE ? (const char *)(M + s) : NULL;
+    }
+    return NULL;
+}
+
+static uint32_t info_rgb(int colour, int live)
+{
+    if (live && g_player_pick >= NB_GAME_COLOURS) return k_pick_colours[g_player_pick];
+    return k_pick_colours[colour & 7];
+}
+
+/* logo `logo` size x size (from its 32 x 32) at x, y, in colour c */
+static void draw_company_logo(uint32_t *rgb, int w, int x0, int y0, int size, int logo, uint32_t c)
+{
+    uint32_t logos = RD32(g_addrs->logos);
+    int x, y;
+    if (logos == 0 || logo < 0 || logo >= NB_LOGOS) return;
+    for (y = 0; y < size; y++)
+        for (x = 0; x < size; x++) {
+            uint8_t v = M[logos + (uint32_t)logo * 1024u + (uint32_t)(((y * 32 + 16) / size) * 32 + (x * 32 + 16) / size)];
+            if (y0 + y < 200) plot_any(rgb, w, x0 + x, y0 + y, v == 254 ? c : 0);
+        }
+}
+
+/* text in the menus' font cut to `width` */
+static void menu_text_fit(uint32_t *rgb, int w, int x, int y, const char *t, uint32_t c, int width)
+{
+    char s[64];
+    size_t n;
+    snprintf(s, sizeof s, "%s", t);
+    for (n = strlen(s); n > 0 && text_width_scaled(s, 1) > width; n--) s[n - 1] = '\0';
+    menu_text_scaled(rgb, w, x, y, s, c, 1);
+}
+
+static void funds_text(char *s, size_t n, int32_t funds)
+{
+    snprintf(s, n, "$%ld", (long)funds);
+}
+
+/* the main menu: the player's company under its items */
+#define INFO_X0 58
+#define INFO_X1 262
+#define INFO_Y0(ar) ((ar) ? 163 : 148) /* under the items (American Revolt has 6) */
+#define INFO_Y1(ar) ((ar) ? 196 : 192)
+#define INFO_LINE 8
+static void main_menu_company(uint32_t *pic)
+{
+    CompanyInfo ci;
+    char s[96], f[24];
+    const char *where;
+    int ar = g_addrs->ar, y0 = INFO_Y0(ar), y1 = INFO_Y1(ar), logo = y1 - y0 - 8;
+    int x = INFO_X0 + logo + 10, width = INFO_X1 - x - 4, y = y0 + 3;
+    if (!g_font_loaded) load_menu_font();
+    live_company(&ci);
+    fill_box(pic, 320, INFO_X0, y0, INFO_X1, y1, MENU_BG, 200);
+    frame_box(pic, 320, 200, INFO_X0, y0, INFO_X1, y1, MENU_INFO_DIM);
+    draw_company_logo(pic, 320, INFO_X0 + 5, y0 + 4, logo, ci.logo, info_rgb(ci.colour, 1));
+    menu_text_fit(pic, 320, x, y, ci.company[0] ? ci.company : "UNNAMED COMPANY", MENU_INFO, width);
+    y += INFO_LINE;
+    if (!ar) {
+        /* (no room for the player's name under American Revolt's 6 items) */
+        if (ci.player[0]) menu_text_fit(pic, 320, x, y, ci.player, MENU_INFO_DIM, width);
+        y += INFO_LINE;
+    }
+    funds_text(f, sizeof f, ci.funds);
+    snprintf(s, sizeof s, "%s   %d/%d COUNTRIES", f, ci.held, NB_COUNTRIES);
+    menu_text_fit(pic, 320, x, y, s, MENU_INFO, width);
+    y += INFO_LINE;
+    where = mission_country(ci.mission);
+    snprintf(s, sizeof s, "%s%s", where ? "LAST: " : "NO MISSION YET", where ? where : "");
+    menu_text_fit(pic, 320, x, y, s, MENU_INFO, width);
+    y += INFO_LINE;
+    if (g_autoload_name[0]) {
+        snprintf(s, sizeof s, "LOADED: %s", g_autoload_name);
+        menu_text_fit(pic, 320, x, y, s, MENU_INFO_DIM, width);
+    }
+}
+
+/* the Load/Save screen: each save's logo and last mission on its line, the chosen one's company below */
+#define SAVE_ROW_Y0 51 /* the first line's box (12 a line) */
+#define SAVE_ROW_H 12
+#define SAVE_INFO_X 182
+#define SAVE_ROW_X1 268
+#define SAVE_CHOSEN_X0 127
+#define SAVE_CHOSEN_X1 248
+#define SAVE_CHOSEN_Y 174
+static void load_save_companies(uint32_t *pic)
+{
+    int slot, chosen = M[g_addrs->save_line];
+    if (!g_font_loaded) load_menu_font();
+    for (slot = 0; slot < NB_SLOTS; slot++) {
+        char name[SAVE_NAME_SIZE + 1], s[96], f[24];
+        CompanyInfo ci;
+        const char *where;
+        int y = SAVE_ROW_Y0 + slot * SAVE_ROW_H;
+        if (!save_company(slot, name, &ci)) continue;
+        draw_company_logo(pic, 320, SAVE_INFO_X, y, 10, ci.logo, info_rgb(ci.colour, 0));
+        where = mission_country(ci.mission);
+        menu_text_fit(pic, 320, SAVE_INFO_X + 13, y + 2, where ? where : "-", MENU_INFO_DIM, SAVE_ROW_X1 - SAVE_INFO_X - 14);
+        if (slot != chosen) continue;
+        funds_text(f, sizeof f, ci.funds);
+        menu_text_fit(pic, 320, SAVE_CHOSEN_X0, SAVE_CHOSEN_Y, ci.company[0] ? ci.company : "UNNAMED COMPANY", MENU_INFO,
+                      SAVE_CHOSEN_X1 - SAVE_CHOSEN_X0);
+        snprintf(s, sizeof s, "%s  %d/%d", f, ci.held, NB_COUNTRIES);
+        menu_text_fit(pic, 320, SAVE_CHOSEN_X0, SAVE_CHOSEN_Y + 9, s, MENU_INFO_DIM, SAVE_CHOSEN_X1 - SAVE_CHOSEN_X0);
+    }
+}
+
+/* the title is on the screen (bright green in its band at the top): not while the screen changes */
+#define TITLE_Y0 14
+#define TITLE_Y1 32
+#define TITLE_PIXELS 120
+static int title_shown(const uint32_t *pic)
+{
+    int x, y, n = 0;
+    for (y = TITLE_Y0; y < TITLE_Y1; y++)
+        for (x = 40; x < 280; x++) {
+            uint32_t c = pic[y * 320 + x];
+            if (((c >> 8) & 0xFF) > 120 && ((c >> 16) & 0xFF) < 100) n++;
+        }
+    return n >= TITLE_PIXELS;
+}
+
+/* the game draws a menu screen's title as it comes up: which screen it is; the first main menu loads the newest
+ * auto save */
+static int on_menu_title(uint32_t addr)
+{
+    uint32_t text = RD32(R.esp + 4u);
+    (void)addr;
+    g_menu_screen = text == text_at(TEXT_MAIN_MENU(g_addrs->ar))   ? SCREEN_MAIN
+                    : text == text_at(TEXT_LOAD_SAVE(g_addrs->ar)) ? SCREEN_LOAD_SAVE
+                                                                   : SCREEN_OTHER;
+    if (g_menu_screen == SCREEN_MAIN && !g_autoloaded) {
+        char name[SAVE_NAME_SIZE + 1];
+        CompanyInfo ci;
+        g_autoloaded = 1;
+        if (slot_kind(0) == 2 && save_company(0, name, &ci)) {
+            uint32_t args[1];
+            args[0] = 0;
+            guest_call(g_addrs->load_game, args, 1);
+            snprintf(g_autoload_name, sizeof g_autoload_name, "%s", name);
+            rt_log("auto save loaded: %s", name);
+        }
+    }
+    return 0;
+}
+
 int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, int w, int h)
 {
     uint64_t age;
@@ -2338,7 +2601,12 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
         if (w > 320)
             for (y = 0; y < 200; y++) memcpy(game + y * 320, rgb + y * w, sizeof *game * 320);
         menu_true_colour(index, palette, pic, 320, h);
-        if (config_shown()) config_grids(pic, 320, h, index, palette);
+        if (config_shown())
+            config_grids(pic, 320, h, index, palette);
+        else if (g_menu_screen == SCREEN_MAIN && title_shown(pic))
+            main_menu_company(pic);
+        else if (g_menu_screen == SCREEN_LOAD_SAVE && title_shown(pic))
+            load_save_companies(pic);
         g_menu_w = w;
         g_menu_off = (w - 320) / 2;
         rt_mouse_window(g_menu_off * 65536 / w, (g_menu_off + 320) * 65536 / w);
@@ -2990,6 +3258,7 @@ void additions_install(int game)
     }
     hook_add(g_addrs->mission_tick, on_mission_tick);
     hook_add(g_addrs->drive_car, on_drive_car);
+    hook_add(g_addrs->menu_title, on_menu_title);
     hook_add(g_addrs->draw_logo, on_draw_logo);
     player_colour_load();
     hook_add(g_addrs->frame_wait, on_frame_wait);
