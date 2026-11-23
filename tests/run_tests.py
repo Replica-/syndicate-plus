@@ -426,6 +426,31 @@ def route_stairs(ctx):
 
 
 @test()
+def route_walkway(ctx):
+    """Eastern Europe: the whole squad (the group bar) sent from the street to the walkway along the front of the
+    building on the left (the view scrolled left): round the corner of the railing at the foot of its stairs, up
+    them and along the landing, every agent on the walkway (z 896). Agents used to stop at the foot of the stairs
+    (a corner cut short was never passed, and an agent the game took to be there walked no more)"""
+    import struct
+    dump = os.path.join(ctx.dir, 'mem.bin')
+
+    def at(x, y):   # a point of the 854 x 480 picture
+        return '%d;%d' % (x * 65536 // 854, y * 65536 // 480)
+    inp = SKIP_INTRO + ['10000:move@29500;28800', '11000:click@29500;28800', '13000:click@40448;12288',
+                        '14500:click@8500;58500', '17500:click@8500;58700', '20500:click@8500;58700',
+                        '26500:a:down', '27100:a:up', '27500:click@' + at(63, 135),
+                        '28000:move@' + at(250, 228), '28500:click@' + at(250, 228)]
+    ctx.run('walkway', 75, start=SYN, extra=['--cheats', 'MINIGUN SQUAD:TO THE TOP', '--wide', '854',
+                                              '--mem-dump', '74000:' + dump], inputs=inp)
+    check(os.path.exists(dump), 'no memory dump')
+    mem = open(dump, 'rb').read()
+    for k in range(4):
+        x, y, z = struct.unpack_from('<hhh', mem, 0x478110 - 0x400000 + k * 0x5c + 4)
+        check(z == 896 and 72 <= x >> 8 <= 74 and 34 <= y >> 8 <= 36,
+              'agent %d is at %d %d %d, not on the walkway (z 896 near 18800 9050)' % (k + 1, x, y, z))
+
+
+@test()
 def mission_menu(ctx):
     """Escape in a mission opens its menu and the mission waits (nothing moves under it); Abort mission (down to
     the last item, Enter) ends the mission as Escape did: the debriefing"""

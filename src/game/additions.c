@@ -2828,6 +2828,9 @@ static void load_tile_types(void)
     free(types);
 }
 
+#define PED_WALK 0x19u  /* 2: walking to PED_TARGET, 0: there (it no longer walks when PED_TARGET changes) */
+#define PED_WALK2 0x58u /* set with it by the game's move order */
+
 /* a new order of the player's for the agent in `slot`, to tx, ty, tz: walked as a route if it needs one */
 static double dist(int32_t ax, int32_t ay, int32_t bx, int32_t by)
 {
@@ -2836,6 +2839,13 @@ static double dist(int32_t ax, int32_t ay, int32_t bx, int32_t by)
 
 static void send_to(int slot, uint32_t ped, int32_t x, int32_t y, int32_t z)
 {
+    /* walking again if it stopped: an agent that got to a point of the route (the foot of stairs: such points are
+     * walked to exactly) is "there" for the game, which then pays no heed to a new target; set as the game's own
+     * move order does (0x415c2d) */
+    if (M[ped + PED_WALK] == 0 && M[ped + PED_STATE] != 0x11u) {
+        M[ped + PED_WALK] = 2;
+        M[ped + PED_WALK2] = 2;
+    }
     WR16(ped + PED_TARGET, (uint16_t)x);
     WR16(ped + PED_TARGET + 2u, (uint16_t)y);
     WR16(ped + PED_TARGET + 4u, (uint16_t)z);
@@ -2876,8 +2886,12 @@ static void follow_route(int slot, uint32_t ped)
         ax = k == 0 ? g_route[slot].sx : pt[k - 1].x;
         ay = k == 0 ? g_route[slot].sy : pt[k - 1].y;
         d = dist(ax, ay, pt[k].x, pt[k].y);
+        /* (a corner cut short is passed once the next point can be walked to straight from here: else the point
+         * ROUTE_AHEAD on, measured back through that corner, comes nearer as the agent goes on, until it is "there"
+         * for the game and stops) */
         if (dist(x, y, pt[k].x, pt[k].y) < ROUTE_NEAR ||
-            (!pt[k].hard && d > 0 && ((x - ax) * (double)(pt[k].x - ax) + (y - ay) * (double)(pt[k].y - ay)) / d >= d))
+            (!pt[k].hard && d > 0 && ((x - ax) * (double)(pt[k].x - ax) + (y - ay) * (double)(pt[k].y - ay)) / d >= d) ||
+            (!pt[k].hard && path_clear(x, y, (int16_t)RD16(ped + PED_Z), pt[k + 1].x, pt[k + 1].y)))
             g_route[slot].i++;
         else
             break;

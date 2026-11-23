@@ -265,6 +265,14 @@ static int stand_level(int x, int y, int32_t z)
     return -1;
 }
 
+int path_clear(int32_t ax, int32_t ay, int32_t az, int32_t bx, int32_t by)
+{
+    int l;
+    if (!g_have_types || !render_map_size(&g_mx, &g_my, &g_mz) || ax < 0 || ay < 0) return 0;
+    l = stand_level(ax >> 8, ay >> 8, az);
+    return l >= 0 && clear_line(ax, ay, bx, by, l);
+}
+
 int path_route(int32_t sx, int32_t sy, int32_t sz, int32_t tx, int32_t ty, int32_t tz, PathPoint *out, int max)
 {
     int ax, ay, az, bx, by, bz, n = 0, found = 0;
