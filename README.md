@@ -171,7 +171,8 @@ keeps to the lanes' ways (traffic keeps right; never against a lane, never backi
 road does, at junctions and round the loops at the roads' ends (a lane that cannot be reached so: the nearest
 that can).  The car runs on its lanes' lines as on rails, round the corners where they meet, slowing into them and
 to a stop at the end; a green marker shows where it will stop until it gets there, and the numbers of the agents
-in it are drawn over it.  The game's own driving
+in it are drawn over it.  Cars ahead hold it up as they do in the game: one a tile ahead on its route stops it,
+one 2 or 3 tiles ahead slows it to that car's speed less 8.  The game's own driving
 (which keeps to the lane a car is in, driving on away from a point behind it) stays for every other car, and for
 the squad's when no lane is near the point clicked.
 
