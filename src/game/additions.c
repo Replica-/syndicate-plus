@@ -106,6 +106,9 @@ typedef struct GameAddrs {
                             * the car stops) */
     uint32_t headings;     /* (16 bits x 256, then as many for y) a heading's step in x per 256 of speed */
     uint32_t car_place;    /* (16 bits x, y, z) where drive_car put the car (its driver is put there after it) */
+    uint32_t thing_ahead;  /* thing_ahead(): the first person or car on the tile at ahead_place (its height's
+                            * level), 0 for none (its address): what drive_car's look ahead finds */
+    uint32_t ahead_place;  /* (16 bits z, y, x) the place thing_ahead looks at */
     /* the menus */
     uint32_t load_game;    /* load(slot): reads <save_dir>/<slot>.GAM */
     uint32_t menu_title;   /* menu_title(text): a menu screen's title drawn (once, as it comes up) */
@@ -121,37 +124,37 @@ static const GameAddrs k_addrs[] = {
      0x413f10u, 0x44e49cu, 0x417u, 0x450b16u, 0x445780u, 0x447bf4u, 0x44b830u, 0x44a73au,
      0x41d380u, 0x40e300u, 0x478110u, 0x40bec0u, 0x470000u, 0x47e790u, 0x44b46au, 0x445314u,
      0x408810u, 0x445304u, 0x450b50u, 0x443ef8u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
-     0x427110u, 0x419530u, 0x420250u, 0x44ab60u, 0x450b28u,
+     0x427110u, 0x419530u, 0x420250u, 0x44ab60u, 0x450b28u, 0x426940u, 0x450b5au,
      0x428350u, 0x428a60u, 0x4441a4u, 0x44a50du, 0x44539cu, 0x451be0u, 0x444d92u},
     {GAME_SYN_S, 0x427e70u, 0x417d80u, 0x428310u, 0x449168u,
      0x413e90u, 0x44bc94u, 0x417u, 0x44e30eu, 0x442f78u, 0x4453ecu, 0x449028u, 0x447f32u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448c62u, 0x442b0cu,
      0x408810u, 0x442afcu, 0x44e348u, 0x441e10u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
-     0x427030u, 0x419490u, 0x420190u, 0x448358u, 0x44e320u,
+     0x427030u, 0x419490u, 0x420190u, 0x448358u, 0x44e320u, 0x426860u, 0x44e352u,
      0x428240u, 0x428950u, 0x4420bcu, 0x447d05u, 0x442b94u, 0x44f3d8u, 0x442592u},
     {GAME_SYN_G, 0x427e70u, 0x417d80u, 0x428310u, 0x4491ccu,
      0x413e90u, 0x44bcf8u, 0x417u, 0x44e372u, 0x442fdcu, 0x445450u, 0x44908cu, 0x447f96u,
      0x41d2c0u, 0x40e2f0u, 0x478110u, 0x40beb0u, 0x470000u, 0x47e790u, 0x448cc6u, 0x442b70u,
      0x408810u, 0x442b60u, 0x44e3acu, 0x441e74u, 0x4086f0u, 0x4077e7u, 0xF4u, 0xECu, 0,
-     0x427030u, 0x419490u, 0x420190u, 0x4483bcu, 0x44e384u,
+     0x427030u, 0x419490u, 0x420190u, 0x4483bcu, 0x44e384u, 0x426860u, 0x44e3b6u,
      0x428240u, 0x428950u, 0x442120u, 0x447d69u, 0x442bf8u, 0x44f43cu, 0x4425f6u},
     {GAME_AR, 0x4295f0u, 0x418e20u, 0x429ae0u, 0x460958u,
      0x414960u, 0x463c1cu, 0x42du, 0x463bfeu, 0x455750u, 0x457bc4u, 0x460818u, 0x45f686u,
      0x41e9c0u, 0x40e270u, 0x488110u, 0x40bbe0u, 0x480000u, 0x48e790u, 0x4603e8u, 0x4552dcu,
      0x408700u, 0x4552ccu, 0x4662b1u, 0x453e5cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
-     0x428690u, 0x41a550u, 0x4217c0u, 0x45faacu, 0x463c12u,
+     0x428690u, 0x41a550u, 0x4217c0u, 0x45faacu, 0x463c12u, 0x427ec0u, 0x4662beu,
      0x429c30u, 0x42a190u, 0x45410cu, 0x45f459u, 0x45536cu, 0x467338u, 0x454d4eu},
     {GAME_AR_S, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e048u,
      0x414910u, 0x46130cu, 0x42du, 0x4612eeu, 0x452e40u, 0x4552b4u, 0x45df08u, 0x45cd76u,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45dad8u, 0x4529ccu,
      0x408700u, 0x4529bcu, 0x4639a1u, 0x451c9cu, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
-     0x428610u, 0x41a4f0u, 0x421740u, 0x45d19cu, 0x461302u,
+     0x428610u, 0x41a4f0u, 0x421740u, 0x45d19cu, 0x461302u, 0x427e40u, 0x4639aeu,
      0x429bb0u, 0x42a110u, 0x451f4cu, 0x45cb49u, 0x452a5cu, 0x464a28u, 0x45243eu},
     {GAME_AR_G, 0x429570u, 0x418dd0u, 0x429a60u, 0x45e0b0u,
      0x414910u, 0x461374u, 0x42du, 0x461356u, 0x452ea8u, 0x45531cu, 0x45df70u, 0x45cddeu,
      0x41e940u, 0x40e280u, 0x488110u, 0x40bbf0u, 0x480000u, 0x48e790u, 0x45db40u, 0x452a34u,
      0x408700u, 0x452a24u, 0x463a09u, 0x451d04u, 0x4085e0u, 0x4076e9u, 0xECu, 0xF0u, 1,
-     0x428610u, 0x41a4f0u, 0x421740u, 0x45d204u, 0x46136au,
+     0x428610u, 0x41a4f0u, 0x421740u, 0x45d204u, 0x46136au, 0x427e40u, 0x463a16u,
      0x429bb0u, 0x42a110u, 0x451fb4u, 0x45cbb1u, 0x452ac4u, 0x464a90u, 0x4524a6u},
 };
 
@@ -160,15 +163,19 @@ static const GameAddrs *g_addrs; /* the running program's (NULL: the launcher, t
 /* ---- calling the game's functions ---- */
 #define GUEST_RET_MARK 0xFFFF0100u
 
-/* calls the guest function at `fn` with the arguments (cdecl), leaving the registers as they were */
-static void guest_call(uint32_t fn, const uint32_t *args, int nargs)
+/* calls the guest function at `fn` with the arguments (cdecl), leaving the registers as they were; returns what
+ * it returned (eax) */
+static uint32_t guest_call(uint32_t fn, const uint32_t *args, int nargs)
 {
     Cpu saved = R;
+    uint32_t ret;
     int i;
     for (i = nargs - 1; i >= 0; i--) PUSH32(args[i]);
     PUSH32(GUEST_RET_MARK);
     rt_call_ind(fn);
+    ret = R.eax;
     R = saved;
+    return ret;
 }
 
 /* ==== auto saves ============================================================================================ */
@@ -3023,6 +3030,61 @@ static void car_order(uint32_t ped, int32_t tx, int32_t ty)
     g_marker_us = host_time_us();
 }
 
+/* what drive_car's look ahead does (0x426a50 in Syndicate), on the route: 1, 2 and 3 tiles ahead, at the car's
+ * height, the first person or car there (thing_ahead).  A car 1 tile ahead stops this one; further on, this one
+ * goes no faster than its driver less 8 (stops when it has none).  A person the same, unless the driver walks
+ * through people (+0x1c bit 1: the squad's agents do).  Returns the speed it may go, -1 for any */
+#define AHEAD_STEPS 3
+#define AHEAD_SLOWER 8
+#define AHEAD_PERSON 16
+#define DRIVER_IGNORES_PEOPLE 2u
+#define THING_KIND 0x18u /* (8 bits) 1 a person, 2 a car */
+#define THING_CAR 2u
+static int car_blocked(int ci, uint32_t driver, uint32_t car, int32_t x, int32_t y, int32_t z, int s)
+{
+    const PathPoint *pt = g_drive[ci].pt;
+    int n = g_drive[ci].n, k = g_drive[ci].i, step;
+    double ahead = 0, want = 256;
+    for (step = 0; step < AHEAD_STEPS; step++, want += 256) {
+        uint32_t thing;
+        /* the point `want` along the route (its end if it is nearer) */
+        int32_t px = x, py = y;
+        while (k < n) {
+            double d = dist(px, py, pt[k].x, pt[k].y);
+            if (ahead + d >= want) {
+                double f = (want - ahead) / d;
+                px += (int32_t)floor((pt[k].x - px) * f + 0.5);
+                py += (int32_t)floor((pt[k].y - py) * f + 0.5);
+                ahead = want;
+                break;
+            }
+            ahead += d;
+            px = pt[k].x;
+            py = pt[k].y;
+            k++;
+        }
+        x = px;
+        y = py;
+        WR16(g_addrs->ahead_place, (uint16_t)z);
+        WR16(g_addrs->ahead_place + 2u, (uint16_t)y);
+        WR16(g_addrs->ahead_place + 4u, (uint16_t)x);
+        thing = guest_call(g_addrs->thing_ahead, NULL, 0);
+        if (thing != 0 && thing != car && thing != driver) {
+            if (M[thing + THING_KIND] == THING_CAR) {
+                uint16_t other = RD16(thing + CAR_DRIVER);
+                int v;
+                if (step == 0 || other == 0) return 0;
+                v = M[THING(other) + PED_SPEED];
+                return v <= AHEAD_SLOWER ? 0 : v - AHEAD_SLOWER;
+            }
+            if (!(M[driver + 0x1cu] & DRIVER_IGNORES_PEOPLE))
+                return step == 0 ? 0 : (s <= AHEAD_PERSON ? 0 : s - AHEAD_PERSON);
+        }
+        if (k >= n) break; /* the route's end */
+    }
+    return -1;
+}
+
 /* the car `ci` driven on along its route for a tick, as the game's driving does it (the speed in its driver, the
  * place set by set_place): on its lanes' lines as on rails, round the corners where they meet, facing the way it
  * runs */
@@ -3050,6 +3112,11 @@ static void drive_on(int ci, uint32_t driver, uint32_t car)
     if (want > (int)sqrt(2.0 * CAR_PLAN_BRAKE * left)) want = (int)sqrt(2.0 * CAR_PLAN_BRAKE * left);
     if (want < CAR_CREEP) want = CAR_CREEP;
     s = s < want ? (s + CAR_ACCEL > want ? want : s + CAR_ACCEL) : (s - CAR_BRAKE < want ? want : s - CAR_BRAKE);
+    /* something in the way (the game's rule): as slow as it says, at once */
+    {
+        int v = car_blocked(ci, driver, car, x, y, z, s);
+        if (v >= 0 && s > v) s = v;
+    }
     /* `s` on along the route */
     for (go = s; go > 0;) {
         double d = dist(x, y, pt[g_drive[ci].i].x, pt[g_drive[ci].i].y);
