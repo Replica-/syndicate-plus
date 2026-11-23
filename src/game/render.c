@@ -879,7 +879,6 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define CAR_LONG 352
 #define CAR_WIDE 96
 #define CAR_HEADING 0x1au /* (8 bits) the way it faces: 0 +y, 64 +x, 128 -y, 192 -x */
-#define LYING 255     /* Obj.z of a body lying: after every level of its row of tiles */
 #define LYING_H 20    /* a lying person's frame is at most this high */
 #define HEADLIGHT_COLOUR 0xFFF5D7u
 #define REAR_LIGHT_COLOUR 0xFF281Eu
@@ -1390,11 +1389,16 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             }
             objs[nobj].z = z >> 7;
             /* a person lying (a body, falling or dead: its frame low, wider than high; standing ones are 25 to 36
-             * high, firing ones up to 49 wide) reaches into the cells beside it in its row of tiles: drawn after all
-             * their levels, not under a raised tile next to it */
+             * high, firing ones up to 49 wide) reaches into the cells beside it, and its ends below its cell's
+             * lower edges, over the floor of the next row: drawn after every level of its own row (not under a
+             * raised tile next to it) and after the next row's floor it lies on (not cut off along that floor's
+             * edge), before what stands on that floor (nearer the viewer) */
             if (li == 0) {
                 uint32_t fr = rd32(P_FRAMES) + (uint32_t)frame * 8u;
-                if (M[fr + 3u] <= LYING_H && M[fr + 2u] > M[fr + 3u]) objs[nobj].z = LYING;
+                if (M[fr + 3u] <= LYING_H && M[fr + 2u] > M[fr + 3u]) {
+                    objs[nobj].key++;
+                    objs[nobj].z = z >= 128 ? (z >> 7) - 1 : 0;
+                }
             }
             objs[nobj].x = x;
             objs[nobj].y = y;
@@ -1448,6 +1452,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         }
         for (; k < nobj && objs[k].key == s; k++) draw_obj(&t, &objs[k]);
     }
+    for (; k < nobj; k++) draw_obj(&t, &objs[k]); /* a body lying in the last row (drawn with the row after it) */
     if (t.gpu) {
         /* a city that moved is a new frame (the frame's pixels may not have changed) */
         static uint32_t prev_hash;
