@@ -157,7 +157,7 @@ Configure Company shows every colour and logo in grids under its panel, one clic
 18 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world
 map and its menus), and the 40 logos in the colour chosen.  The team selection has RELOAD ALL above the agent's
 weapons: every weapon of the squad's four agents reloaded as the game's own RELOAD does an agent's (paid for a round
-at a time, a weapon the funds cannot pay for left as it is).  Escape in a mission opens a menu in the game's
+at a time), only when the funds pay for all of them.  Escape in a mission opens a menu in the game's
 briefing look while the mission waits, the region's name and the mission's number at its top: Resume, time of day, full screen, frames a second,
 the volumes, squad routes, and Abort mission (the game's Escape).  *Squad finds routes* (on by default): a move order the game's straight walk
 would not do well (another level, a gap or a wall between, or passing close to one) is walked as a route over the

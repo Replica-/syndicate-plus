@@ -465,22 +465,30 @@ def reload_all(ctx):
     agents = 0x14 + 0x11d + 8          # the first company's agents' weapons (40 bytes an agent, 4 a weapon)
     struct.pack_into('<hH', data, agents, 3, 2)
     struct.pack_into('<hH', data, agents + 40 + 4, 1, 4)
-    with open(path, 'wb') as f:
-        f.write(data)
-    dump = os.path.join(ctx.dir, 'mem.bin')
     button = '%d;%d' % (215 * 65536 // 320, 141 * 65536 // 200)
-    ctx.run('reload', 29, start=SYN, extra=['--mem-dump', '28500:' + dump], inputs=SKIP_INTRO + [
-        '10000:f3', '12000:click@19600;%d' % LINE4, '13000:click@8500;58700',
-        '16000:click@29500;28800', '20000:click@8500;58500', '23000:click@8500;58700',
-        '26500:move@' + button, '27500:click@' + button])
-    check(os.path.exists(dump), 'no memory dump')
-    mem = open(dump, 'rb').read()
     co = 0x44e49c - 0x400000
-    funds = struct.unpack_from('<i', mem, co)[0]
-    w1 = struct.unpack_from('<hH', mem, co + 0x125)
-    w2 = struct.unpack_from('<hH', mem, co + 0x125 + 40 + 4)
+
+    def reload(run, funds):
+        """the save with these funds loaded, the team selection, RELOAD ALL: the funds and the two weapons"""
+        struct.pack_into('<I', data, 0x14, funds)
+        with open(path, 'wb') as f:
+            f.write(data)
+        dump = os.path.join(ctx.dir, run + '.bin')
+        ctx.run(run, 29, start=SYN, extra=['--mem-dump', '28500:' + dump], inputs=SKIP_INTRO + [
+            '10000:f3', '12000:click@19600;%d' % LINE4, '13000:click@8500;58700',
+            '16000:click@29500;28800', '20000:click@8500;58500', '23000:click@8500;58700',
+            '26500:move@' + button, '27500:click@' + button])
+        check(os.path.exists(dump), 'no memory dump')
+        mem = open(dump, 'rb').read()
+        return (struct.unpack_from('<i', mem, co)[0], struct.unpack_from('<hH', mem, co + 0x125),
+                struct.unpack_from('<hH', mem, co + 0x125 + 40 + 4))
+    funds, w1, w2 = reload('reload', 30000)
     check(w1 == (12, 2) and w2 == (11, 4), 'the weapons are %s %s, not reloaded to (12, 2) (11, 4)' % (w1, w2))
     check(funds == 30000 - 20, 'the funds are %d, not 29980' % funds)
+    # $10 does not pay for the 20 the rounds cost: nothing reloaded, nothing paid
+    funds, w1, w2 = reload('short', 10)
+    check(w1 == (3, 2) and w2 == (1, 4), 'with $10 the weapons are %s %s, not left at (3, 2) (1, 4)' % (w1, w2))
+    check(funds == 10, 'with $10 the funds are %d after RELOAD ALL' % funds)
 
 
 @test()

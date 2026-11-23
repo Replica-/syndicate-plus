@@ -2676,8 +2676,8 @@ static void load_save_companies(uint32_t *pic)
 }
 
 /* the team selection: RELOAD ALL above the chosen agent's weapons, every weapon of the squad's four agents
- * reloaded as the game's own RELOAD does each agent's (0x411b74): one the company can pay for (its ammunition's
- * price a round, the rounds it lacks), not full, its research done */
+ * reloaded (one not full, its research done, as the game's own RELOAD does each agent's: 0x411b74), each paying
+ * its ammunition's price a round for the rounds it lacks; only when the funds pay for all of them, else none */
 #define RELOAD_X0 183
 #define RELOAD_X1 247
 #define RELOAD_Y0 136
@@ -2686,11 +2686,14 @@ static void load_save_companies(uint32_t *pic)
 static volatile int g_reload_click;
 static uint64_t g_reload_shown_us; /* the button was drawn (the screen is up) */
 
-/* the squad's weapons that would be reloaded: how many, and (act) reloaded */
+/* the squad's weapons that lack rounds: how many, and (act) all of them reloaded, paid for together; none when
+ * the funds cannot pay for them all (0 then) */
 static int reload_squad(int act)
 {
-    uint32_t company = g_addrs->companies + (uint32_t)player_index() * g_addrs->company_size;
-    int box, k, n = 0;
+    uint32_t company = g_addrs->companies + (uint32_t)player_index() * g_addrs->company_size, total = 0;
+    int box, k, n = 0, pass;
+    for (pass = 0; pass < 2; pass++) {
+    if (pass == 1 && (!act || n == 0)) break;
     for (box = 0; box < 4; box++) {
         uint32_t a = M[g_addrs->squad + (uint32_t)box];
         if (a >= NB_AGENTS) continue;
@@ -2702,13 +2705,17 @@ static int reload_squad(int act)
             full = RD16(g_addrs->ammo + w * 2u);
             if ((int32_t)full <= have) continue;
             cost = RD16(AMMO_PRICES(g_addrs->ammo) + w * 2u) * (uint32_t)((int32_t)full - have);
-            if (cost > RD32(company)) continue;
             if (RD16(g_addrs->weapon_research + (w - 1u) * WEAPON_RESEARCH_SIZE + 0x11u) != RESEARCH_DONE) continue;
-            n++;
-            if (!act) continue;
+            if (pass == 0) {
+                n++;
+                total += cost;
+                continue;
+            }
             WR32(company, RD32(company) - cost);
             WR16(e, (uint16_t)full);
         }
+    }
+    if (pass == 0 && total > RD32(company)) return 0; /* not enough money for all of them: none */
     }
     return n;
 }
