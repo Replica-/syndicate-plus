@@ -151,7 +151,7 @@ settings are saved in `tile_lights.ini` beside the saves.
 
 Traffic lights glow at dusk and night in the colours of their lamps lit (red, amber), each lamp lighting the
 road on its side; billboards light up, and throw their picture's colour out in front of them, wider further
-out.  Other small coloured lights in the objects glow too.  Held B also outlines in cyan the edges of the floor the squad walks on.
+out; the small signs on walls shine and light the wall and the pavement in their own colours.  Other small coloured lights in the objects glow too.  Held B also outlines in cyan the edges of the floor the squad walks on.
 
 Configure Company shows every colour and logo in grids under its panel, one click each: the game's 8 colours and
 18 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world

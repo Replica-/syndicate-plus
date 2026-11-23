@@ -1118,7 +1118,9 @@ static const uint32_t k_lamp_colours[NB_LAMP_HUES] = {0xFF2814u, 0xFFB414u, 0x28
 #define BILLBOARD_GROW 18.0f
 #define OBJECT_LIGHT_DY (-24) /* a window's or sign's light: above where it stands */
 #define WINDOW_LIGHT 0xFFD796u
-#define NEON_LIGHT 0xFF82DCu
+#define NEON_LIGHT 0xFF82DCu /* a neon sign's light when its picture is not known */
+#define STATIC_NEON 0x0A
+#define NEON_RADIUS 56.0f
 
 /* a static's light (traffic lights, neon signs, lit windows); returns how it glows in the dark (HostCityQuad.glow) */
 static int static_lights(uint32_t a, int frame, float ax, float ay)
@@ -1151,9 +1153,18 @@ static int static_lights(uint32_t a, int frame, float ax, float ay)
         }
         return RENDER_GLOW_FULL;
     }
-    if (kind == 0x0A) {
-        add_light(ax, ay + OBJECT_LIGHT_DY, 56, 56, NEON_LIGHT);
-        return RENDER_GLOW_NONE;
+    if (kind == STATIC_NEON) { /* a sign on a wall: it shines, and lights the wall and the ground in its colour */
+        int n;
+        float dx = 0.0f, dy = OBJECT_LIGHT_DY;
+        uint32_t colour = NEON_LIGHT;
+        slot = frame_slot(frame);
+        if (slot >= 0) {
+            dx = g_frame_light[slot].cx;
+            dy = g_frame_light[slot].cy;
+            colour = g_frame_light[slot].average;
+        }
+        for (n = 0; n < LIGHT_TWICE; n++) add_light(ax + dx, ay + dy, NEON_RADIUS, NEON_RADIUS * 0.8f, colour);
+        return RENDER_GLOW_FULL;
     }
     if (kind >= 0x20 && kind <= 0x26) { /* a window that lights up: lit when its frame has very bright pixels */
         slot = frame_slot(frame);
