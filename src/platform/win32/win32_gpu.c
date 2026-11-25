@@ -209,11 +209,14 @@ static const char k_city_shader[] =
     "    m = material(t.a, i);\n"
     "    if (m == WATER) return float4(water(p, i), 1);\n"
     "    if (m >= 0) return float4(ground(world(p, i), m, mat).rgb * damp(world(p, i), m), 1);\n"
-    "    {\n" /* a pedestrian's hair, skin, clothes (alpha 252, 251, 250, 249 lighter): its own colours */
-    "        uint code = (uint)round(t.a * 255), c = code == 252 ? i.look.x : code == 251 ? i.look.y : i.look.z;\n"
-    "        if (code >= 249 && code <= 252 && c != 0)\n"
-    "            return float4(saturate(float3((c >> 16) & 255, (c >> 8) & 255, c & 255) / 255.0 * (code == 249 ? 1.35 : 1)), 1);\n"
-    "        if (code >= 249 && code <= 252) return float4(t.rgb, 1);\n"
+    "    {\n" /* a pedestrian's part (alpha 160 + 16 x part + shade: 0 hair, 1 skin, 2 clothes, 3 trousers): its own colour at the pixel's shade (0.3 + 0.1 x shade of it), else the pixel as drawn */
+    "        uint code = (uint)round(t.a * 255), part = (code - 160) / 16, c = part == 0 ? i.look.x : part == 1 ? i.look.y : i.look.z;\n"
+    "        if (code >= 160 && code < 224) {\n"
+    "            float3 col = float3((c >> 16) & 255, (c >> 8) & 255, c & 255) / 255.0;\n"
+    "            if (c == 0) return float4(t.rgb, 1);\n"
+    "            if (part == 3) col = (col * 2 + dot(col, float3(0.299, 0.587, 0.114)) * 3) / 5 * 0.6;\n" /* trousers */
+    "            return float4(saturate(col * (0.3 + 0.1 * (code & 15))), 1);\n"
+    "        }\n"
     "    }\n"
     "    if (t.a < 0.998 && t.a > 252.5 / 255 && p.y - (int)i.rect.y < (int)(i.hat >> 24)) {\n" /* alpha 254: the hat's colour, 253 its shine */
     "        float3 h = float3((i.hat >> 16) & 255, (i.hat >> 8) & 255, i.hat & 255) / 255.0;\n"

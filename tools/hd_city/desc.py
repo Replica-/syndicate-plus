@@ -78,7 +78,7 @@ DESC = {
     203: PLATFORM + ', stained pavement top',
     205: 'black panelled roof with orange brick walls and small glowing lights',
     207: PLATFORM + ', stained pavement top with a dusty patch',
-    209: 'ruined building with a burnt crater roof and black ribbed walls',
+    209: 'a blast crater in the street, a deep pit of broken concrete slabs, rubble, charred dark earth and scorch marks at the bottom, cracked broken edges, black ribbed walls',
     225: 'yellow and black hazard striped loading building with a dark doorway',
     226: 'yellow and black hazard striped loading building with glowing white windows',
     228: 'steel ramp, rusty perforated deck on a black truss',

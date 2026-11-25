@@ -207,19 +207,63 @@ static uint32_t shine(uint32_t c)
     return r;
 }
 
-/* a pedestrian's own colours (render_ped_look): in the people's heads (sprites 1-32) their hair (blonde: LOOK_HAIR;
- * red is the hats' colour, HAT_INDEX: the hat's colour is the hair's) and skin; in the rest of them their clothes
- * (the jackets' blue and the coats' ochre, their lighter shades); the image's alpha for them: 252 hair, 251 skin, 250
- * clothes, 249 lighter (255: none) */
-#define LOOK_HAIR 11
+/* a pedestrian's own colours (render_ped_look): in the people's heads (sprites 1-32) their hair (blonde 11, grey 10
+ * and 4, the dark heads' 8; red is the hats' colour, HAT_INDEX: the hat's colour is the hair's) and skin (9); in their
+ * bodies the clothes, in their legs the trousers (every colour but black).  The image's alpha for them: 252 hair, 251
+ * skin, 250 clothes, 249 trousers (255: none); their colour channels the pixel's shade (128: the colour itself): its
+ * brightness against the part's main colour in that sprite, so the folds and lights stay */
 #define LOOK_SKIN 9
 static uint32_t g_obj_look[3]; /* the person being drawn: hair, skin, clothes (0: as drawn) */
+static uint8_t g_look_main[NB_SPRITES]; /* a sprite's main colour of its part (+1; 0: not known yet) */
+
+static int is_leg(int id)
+{
+    return (id >= 181 && id <= 260) || (id >= 361 && id <= 400) || (id >= 421 && id <= 440);
+}
 
 static int look_code(int id, uint8_t c)
 {
-    if (id >= 1 && id <= 32) return c == LOOK_HAIR ? 252 : c == LOOK_SKIN ? 251 : 255;
-    if (id > 32 && id < 450) return c == 7 || c == 5 ? 250 : c == 13 || c == 15 ? 249 : 255;
+    if (c == 0 || c == 255) return 255;
+    if (id >= 1 && id <= 32) {
+        if (c == LOOK_SKIN) return 251;
+        if (c == 11 || ((id <= 24 && id > 16) && (c == 10 || c == 4)) || (id > 24 && c == 8)) return 252;
+        return 255;
+    }
+    if (id > 32 && id < 450 && !is_head(id) && c != HAT_INDEX && c != 14 && c != 12) return is_leg(id) ? 249 : 250;
     return 255;
+}
+
+static int lum8(uint32_t c)
+{
+    return (int)((((c >> 16) & 255) * 299 + ((c >> 8) & 255) * 587 + (c & 255) * 114) / 1000);
+}
+
+/* the shade (128: 1) of colour c in sprite id (its pixels px): against the part's most used colour */
+static int look_shade(int id, const uint8_t *px, int n, uint8_t c)
+{
+    int k, s;
+    if (g_look_main[id] == 0) {
+        int count[256] = {0}, best = -1, code = look_code(id, c);
+        for (k = 0; k < n; k++)
+            if (look_code(id, px[k]) == code) count[px[k]]++;
+        for (k = 0; k < 256; k++)
+            if (count[k] > 0 && (best < 0 || count[k] > count[best])) best = k;
+        g_look_main[id] = (uint8_t)(best < 0 ? c : best) + 1;
+    }
+    s = lum8(g_image_pal[c]) * 128 / (lum8(g_image_pal[g_look_main[id] - 1]) + 1);
+    return s < 40 ? 40 : s > 176 ? 176 : s; /* 0.3 .. 1.375 */
+}
+
+/* a look's colour at a shade */
+static uint32_t look_colour(uint32_t c, int shade)
+{
+    uint32_t r = 0;
+    int k;
+    for (k = 0; k < 24; k += 8) {
+        int v = (int)((c >> k) & 255) * shade / 128;
+        r |= (uint32_t)(v > 255 ? 255 : v) << k;
+    }
+    return r;
 }
 
 /* an image (palette indices, 255 transparent) to the GPU in true colour: the hat's colours marked (alpha 254 its
@@ -236,10 +280,30 @@ static void define_image(int image, const uint8_t *px, int w, int h)
     if (image >= IMAGE_SPRITES && !head && hd_sprite(image, px, w, h)) return;
     for (i = 0; i < w * h; i++) {
         uint32_t a = px[i] == HAT_INDEX ? 0xFE000000u : head && px[i] == HAT_SHINE ? 0xFD000000u : 0xFF000000u;
-        if (image >= IMAGE_SPRITES && a == 0xFF000000u) a = (uint32_t)look_code(image - IMAGE_SPRITES, px[i]) << 24;
+        if (image >= IMAGE_SPRITES && a == 0xFF000000u && px[i] != 255) {
+            int code = look_code(image - IMAGE_SPRITES, px[i]);
+            if (code != 255) { /* alpha 160 + 16 x part (hair, skin, clothes, trousers) + shade (0.3 + 0.1 x it) */
+                int s = look_shade(image - IMAGE_SPRITES, px, w * h, px[i]), b = (s * 10 / 128 - 3);
+                b = b < 0 ? 0 : b > 15 ? 15 : b;
+                rgb[i] = (uint32_t)(160 + 16 * (252 - code) + b) << 24 | (g_image_pal[px[i]] & 0xFFFFFFu);
+                continue;
+            }
+        }
         rgb[i] = px[i] == 255 ? 0 : a | (g_image_pal[px[i]] & 0xFFFFFFu);
     }
     host_city_image(image, w, h, 1, rgb);
+}
+
+/* a pedestrian's trousers: the clothes' colour darker and greyer */
+static uint32_t trousers(uint32_t c)
+{
+    uint32_t r = 0;
+    int k, l = lum8(c);
+    for (k = 0; k < 24; k += 8) {
+        int v = (((int)((c >> k) & 255) * 2 + l * 3) / 5) * 3 / 5;
+        r |= (uint32_t)v << k;
+    }
+    return c != 0 ? r : 0;
 }
 
 /* a pixel of a sprite drawn on the CPU: the hat's colours in `hat`'s top rows (head: a head sprite) */
@@ -250,18 +314,11 @@ static uint32_t sprite_colour(const uint32_t *pal, uint8_t c, int row, uint32_t 
     int code;
     if (row < (int)(hat >> 24) && c == HAT_INDEX) return hat & 0xFFFFFFu;
     if (row < (int)(hat >> 24) && head && c == HAT_SHINE) return shine(hat & 0xFFFFFFu);
-    if (g_put_sprite >= 0 && (code = look_code(g_put_sprite, c)) != 255) {
+    if (g_put_sprite >= 0 && g_look_main[g_put_sprite] != 0 && (code = look_code(g_put_sprite, c)) != 255) {
         uint32_t l = g_obj_look[code == 252 ? 0 : code == 251 ? 1 : 2];
-        if (l != 0 && code == 249) {
-            uint32_t r = 0;
-            int k;
-            for (k = 0; k < 24; k += 8) {
-                int v = (int)((l >> k) & 255) * 27 / 20;
-                r |= (uint32_t)(v > 255 ? 255 : v) << k;
-            }
-            return r;
-        }
-        if (l != 0) return l;
+        int s = lum8(pal[c]) * 128 / (lum8(pal[g_look_main[g_put_sprite] - 1]) + 1);
+        if (code == 249) l = trousers(l);
+        if (l != 0) return look_colour(l, s < 40 ? 40 : s > 176 ? 176 : s);
     }
     return pal[c];
 }

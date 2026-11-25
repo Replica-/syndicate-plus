@@ -60,7 +60,8 @@ typedef struct HostCityQuad {
     uint32_t hat;     /* a colour (0x00RRGGBB) for the image's hat pixels (alpha 254) in its top rows (the top byte:
                        * how many; 0: none) */
     uint32_t look[3]; /* a pedestrian's hair, skin and clothes (0x00RRGGBB; 0: as drawn) for the image's pixels of
-                       * alpha 252 (hair), 251 (skin), 250 (clothes) and 249 (clothes, lighter) */
+                       * alpha 160 + 16 x part (0 hair, 1 skin, 2 clothes, 3 trousers: the clothes' darker and
+                       * greyer) + shade (the colour at 0.3 + 0.1 x shade) */
 } HostCityQuad;
 /* HostCityQuad.hat of a tile with material pixels: this bit, the tile's map y in bits 10-19, its x in bits 0-9 */
 #define HOST_CITY_WORLD 0x100000u
@@ -88,7 +89,7 @@ void host_menu_sides(const HostMenuSides *s);
 int host_city_gpu(void);
 /* forget every image (new data); then define image `image`: w x h pixels 0xAARRGGBB, row stride w, `scale` (1, 2
  * or 4) of them to a pixel of the frame each way; alpha 255 opaque, 254 a hat pixel (HostCityQuad.hat's colour), 253 a
- * hat's shine (its colour brighter), 249-252 a pedestrian's (HostCityQuad.look), 240 + K (in a tile drawn with
+ * hat's shine (its colour brighter), 160-223 a pedestrian's (HostCityQuad.look), 240 + K (in a tile drawn with
  * HOST_CITY_WORLD) material K's, 0 transparent */
 void host_city_reset(void);
 void host_city_image(int image, int w, int h, int scale, const uint32_t *pixels);

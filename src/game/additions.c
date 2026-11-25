@@ -1750,22 +1750,36 @@ static uint32_t hat_colour(int ped)
     return c == g_overlay_pal[HAT_COLOUR] ? 0 : c;
 }
 
-/* a pedestrian's own colours, the same each time for the same person (from its number): human hair (black, dark
- * and light brown, auburn, blonde, grey), skin from dark to light, and clothes in muted city colours */
+/* a colour from hue (0-359), saturation and value (0-1) */
+static uint32_t hsv(float h, float sat, float v)
+{
+    float c = v * sat, x = c * (1.0f - fabsf(fmodf(h / 60.0f, 2.0f) - 1.0f)), m = v - c, r, g, b;
+    int k = (int)(h / 60.0f) % 6;
+    r = k == 0 || k == 5 ? c : k == 1 || k == 4 ? x : 0;
+    g = k == 1 || k == 2 ? c : k == 0 || k == 3 ? x : 0;
+    b = k == 3 || k == 4 ? c : k == 2 || k == 5 ? x : 0;
+    return (uint32_t)((r + m) * 255.0f) << 16 | (uint32_t)((g + m) * 255.0f) << 8 | (uint32_t)((b + m) * 255.0f);
+}
+
+/* a pedestrian's own colours, the same each time for the same person (from its number): hair black, browns, auburn,
+ * blonde or grey (now and then dyed: any colour), skin anywhere from deep brown to fair, clothes in any colour, from
+ * soft to vivid */
 static int ped_look(int ped, uint32_t look[3])
 {
-    static const uint32_t hair[] = {0x16110E, 0x2A1D15, 0x3B2A1E, 0x4F3624, 0x6B4A2E, 0x7A3E1F, 0xA0763E, 0xC9A866,
-                                    0x8A8580, 0x24201D};
-    static const uint32_t skin[] = {0x5A3A28, 0x6E4630, 0x8A5A3C, 0xA06E4C, 0xB98462, 0xC99A78, 0xDAAE8E, 0xE6C2A6};
-    static const uint32_t cloth[] = {0x3A3F4A, 0x5A3A30, 0x2F4A3E, 0x6B5A42, 0x4A3050, 0x7A2E2A, 0x2E3E5E, 0x5E5E58,
-                                     0x8A6A3A, 0x3E2E24, 0x405A6A, 0x6A4A5A};
-    uint32_t h;
+    static const uint32_t hair[] = {0x141010, 0x1E1612, 0x2C1E16, 0x3E2A1C, 0x553A26, 0x6E4A2C, 0x8A3C1C, 0xA8551E,
+                                    0xB08A50, 0xD2B477, 0xE4CF9A, 0x9A9690, 0xC8C6C0, 0x2A221E};
+    uint32_t h = (uint32_t)ped * 2654435761u;
+    float t, u;
     if (ped < 0 || ped >= NB_PEDS || PED_KIND(g_addrs->peds + (uint32_t)ped * PED_SIZE) != 1) return 0;
-    h = (uint32_t)ped * 2654435761u;
     h ^= h >> 15;
-    look[0] = hair[h % (sizeof hair / sizeof hair[0])];
-    look[1] = skin[(h >> 8) % (sizeof skin / sizeof skin[0])];
-    look[2] = cloth[(h >> 16) % (sizeof cloth / sizeof cloth[0])];
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    look[0] = (h & 15) == 0 ? hsv((float)((h >> 4) % 360), 0.7f, 0.75f) : hair[(h >> 4) % (sizeof hair / sizeof hair[0])];
+    t = (float)((h >> 9) & 255) / 255.0f;                /* deep brown .. fair */
+    u = (float)((h >> 17) & 7) / 7.0f - 0.5f;            /* a little warmer or cooler */
+    look[1] = hsv(18.0f + 10.0f * u + 8.0f * t, 0.62f - 0.32f * t, 0.32f + 0.62f * t);
+    look[2] = hsv((float)((h * 2246822519u >> 8) % 360), 0.3f + 0.6f * (float)((h >> 20) & 15) / 15.0f,
+                  0.3f + 0.45f * (float)((h >> 24) & 15) / 15.0f);
     return 1;
 }
 
