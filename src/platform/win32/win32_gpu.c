@@ -327,7 +327,7 @@ static const char k_city_shader[] =
     "    o.c = filtered(c00, c10, c01, c11, f, p - b);\n"
     "    o.c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
-    "    o.h = float4(height(i), (i.shade & 128) && (i.shade & 2) && at(i).y <= 32 - abs(at(i).x - 32) / 2 ? 1 : 0, (i.shade & 128) && (i.shade & 2) ? 300 : 48, (i.glow & 128) ? 0 : o.c.a);\n"
+    "    o.h = float4(height(i), (i.shade & 128) && (i.shade & 2) && at(i).y <= 32 - abs(at(i).x - 32) / 2 ? 1 : 0, (i.shade & 128) && (i.shade & 2) ? 300 : 140, (i.glow & 128) || (i.shade & 0x20000) ? 0 : o.c.a);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
     "    return o;\n"
     "}\n";
@@ -352,20 +352,26 @@ static const char k_light_shader[] =
     "Texture2D light : register(t2);\n"
     "Texture2D heights : register(t3);\n"
     "#define STEPS 110\n"
-    "float shade(int2 p, float2 size) {\n"
-    "    float4 h0 = heights.Load(int3(p, 0));\n"
+    "float ray(int2 p, float2 size, float4 h0, float2 dir) {\n"
     "    float occ = 0;\n"
-    "    if (sun.w <= 0 || h0.a < 0.5 || h0.g < 0.5) return 0;\n"
     "    [loop] for (int k = 1; k <= STEPS; k++) {\n"
-    "        int2 q = (int2)floor(p + sun.xy * k + 0.5);\n"
+    "        int2 q = (int2)floor(p + dir * k + 0.5);\n"
     "        if (q.x < 0 || q.y < 0 || q.x >= size.x || q.y >= size.y) break;\n"
     "        float4 hq = heights.Load(int3(q, 0));\n"
     "        if (hq.a > 0.5) {\n"
     "            float over = hq.r - (h0.r + sun.z * k);\n"
-    "            if (over > 3 && over < hq.b) occ = max(occ, saturate((over - 3) / 6) * (1 - 0.35 * k / STEPS));\n"
+    "            if (over > 3 && over < hq.b) occ = max(occ, saturate((over - 3) / (5 + 0.12 * k)) * (1 - 0.55 * k / STEPS));\n"
     "        }\n"
     "    }\n"
-    "    return occ * sun.w;\n"
+    "    return occ;\n"
+    "}\n"
+    "float shade(int2 p, float2 size) {\n"
+    "    float4 h0 = heights.Load(int3(p, 0));\n"
+    "    if (sun.w <= 0 || h0.a < 0.5 || h0.g < 0.5) return 0;\n"
+    "    float2 side = float2(-sun.y, sun.x) * 0.022;\n"
+    "    float occ = ray(p, size, h0, sun.xy - side * 1.5) + ray(p, size, h0, sun.xy - side * 0.5)\n"
+    "              + ray(p, size, h0, sun.xy + side * 0.5) + ray(p, size, h0, sun.xy + side * 1.5);\n"
+    "    return occ / 4 * sun.w;\n"
     "}\n"
     "float4 ps_comp(float4 pos : SV_Position) : SV_Target {\n"
     "    int3 p = int3(pos.xy - origin + margin, 0);\n"
@@ -1331,7 +1337,7 @@ static void draw_city(RECT dst, int fw, int fh)
                 lc.sun[0] = dx / len * px;
                 lc.sun[1] = dy / len * px;
                 lc.sun[2] = SUN_TAN / len;
-                lc.sun[3] = sun_on ? 0.78f * k_times[lit_time].strength : 0.0f; /* how dark (night: faint) */
+                lc.sun[3] = sun_on ? 0.9f * k_times[lit_time].strength : 0.0f; /* how dark (night: faint) */
                 memcpy(lc.ambient, ambient, sizeof lc.ambient);
             }
             if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_comp_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {

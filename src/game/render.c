@@ -1595,6 +1595,7 @@ static uint32_t tile_shade(uint32_t cols, int mx, int my, int mz, int x, int y, 
     uint32_t s = HOST_SHADE_TILE | (uint32_t)(g_sun * 255.0f) << 8 | (render_shadows ? HOST_SHADE_ON : 0);
     if (render_shadows && g_have_types && solid_type(type_at(cols, mx, my, mz, x, y, z))) s |= HOST_SHADE_SOLID;
     if (flat_tile(id)) s |= HOST_SHADE_FLAT;
+    if (g_have_types && type_at(cols, mx, my, mz, x, y, z) == 0x0C) s |= HOST_SHADE_MESH;
     return s;
 }
 
