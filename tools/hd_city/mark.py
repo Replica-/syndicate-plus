@@ -62,4 +62,16 @@ for t in ROADS:
     sy = np.clip(((16 + (fy - 16) * k) * S).astype(int), 0, H * S - 1)
     out[..., :3][rim] = out[..., :3][sy[rim], sx[rim]]
     Image.fromarray(out, 'RGBA').save(f'{HD}/out/{t:03d}.png')
+# the other cities' pavements (upscale.py's tiles): only their paving's colours (the game's checkerboard) laid in the
+# pavement material, their stripes, vents, lights and stains kept
+PAVE_ONLY = [24, 26, 28, 29, 30, 31, 32, 33, 37, 38, 39, 40, 44, 46, 145, 149, 153, 204, 206, 208]
+PAVE_COLOURS = [(203, 134, 81), (101, 101, 101), (174, 93, 60)]
+for t in PAVE_ONLY:
+    base = np.asarray(Image.open(f'{HD}/base/{t:03d}.png').convert('RGBA'))
+    sel = np.zeros(base.shape[:2], bool)
+    for c in PAVE_COLOURS: sel |= (base[..., :3] == c).all(-1) & (base[..., 3] > 0)
+    out = load(t)
+    mk = TOP & big(sel) & (out[..., 3] > 0)
+    out[..., 3][mk] = 247
+    Image.fromarray(out, 'RGBA').save(f'{HD}/out/{t:03d}.png')
 print('marked', len(MATERIAL), 'water', len(WATER_TILES), 'same', len(SAME))

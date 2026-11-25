@@ -7,13 +7,17 @@ import sys, numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 HD = sys.argv[1]
 W, H, S = 64, 48, 4
-GRASS, TILES = 6, [210]
+GRASS, TILES = 6, [210, 12, 18, 19, 20, 21, 22, 23, 27, 211, 212, 213, 214, 215]
+OWN_SIDES = [12, 18, 19, 20, 21, 22, 23, 27, 211, 212, 213, 214, 215]   # their sides upscale.py's (layered blocks)
 TUFTS, BLADES = 16, (12, 22)             # tufts a tile, blades a tuft
 SOIL = np.array([38, 31, 22], np.float32)
 ys, xs = np.mgrid[0:H * S, 0:W * S]
 fx, fy = (xs + 0.5) / S, (ys + 0.5) / S
 TOP = np.abs(fx - 32) / 32 + np.abs(fy - 16) / 16 <= 1.0 + 1.5 / 16
 Z = 4                                     # the tufts drawn Z times larger, then made smaller (smooth blades)
+import os, shutil
+for t in OWN_SIDES:                                     # upscale.py's version kept (run again from it)
+    if not os.path.exists(f'{HD}/out/{t:03d}_up.png'): shutil.copy(f'{HD}/out/{t:03d}.png', f'{HD}/out/{t:03d}_up.png')
 for t in TILES:
     rng = np.random.default_rng(t)
     base = Image.open(f'{HD}/base/{t:03d}.png').convert('RGBA')
@@ -26,6 +30,8 @@ for t in TILES:
     soil = SOIL * (0.75 + 0.5 * l / max(1.0, float(l[opaque].mean())))[..., None] * (1 + grain)[..., None]
     out = np.zeros((H * S, W * S, 4), np.uint8)
     out[..., :3] = soil.clip(0, 255).astype(np.uint8)
+    if t in OWN_SIDES:                                  # their own sides, as the game draws them
+        out[..., :3] = np.asarray(Image.open(f'{HD}/out/{t:03d}_up.png').convert('RGB'))
     out[..., 3] = np.where(opaque | TOP, 255, 0)
     out[..., 3][TOP] = 240 + GRASS
     nrm = np.zeros((H * S, W * S, 3), np.uint8)
