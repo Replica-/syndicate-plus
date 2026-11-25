@@ -1241,6 +1241,9 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define HEADLIGHT_COLOUR 0xFFF5D7u
 #define REAR_LIGHT_COLOUR 0xFF281Eu
 
+#define SHOT_LIGHT_RX 46.0f          /* a shot's light (a muzzle flash, an impact): its radius */
+#define SHOT_LIGHT_COLOUR 0xFFB860u  /* warm */
+
 static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_t vx, int32_t vy)
 {
     float fx, fy;
@@ -1812,6 +1815,12 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                 float sfx, sfy;
                 project_f(x, y, z, &sfx, &sfy);
                 objs[nobj].glow = (uint8_t)static_lights(a, frame, sfx + (float)render_obj_dx, sfy + (float)render_obj_dy);
+            }
+            if (t.gpu && li == LIST_EFFECTS) {
+                float sfx, sfy;
+                project_f(x, y, z, &sfx, &sfy);
+                add_light(sfx + (float)render_obj_dx, sfy + (float)render_obj_dy - 6.0f, SHOT_LIGHT_RX, SHOT_LIGHT_RX * 0.65f,
+                          SHOT_LIGHT_COLOUR);
             }
             if (t.gpu && li == LIST_CARS)
                 object_lights(li, (int)i, x, y, z, t256 >= 0 ? sb->pos[n][0] - sa->pos[n][0] : 0,

@@ -1746,10 +1746,8 @@ static uint32_t hat_colour(int ped)
     if (owner < 0) return 0;
     if (g_player_colour != 0 && owner == (int16_t)RD16(g_addrs->player)) return g_player_colour & 0xFFFFFFu;
     company = g_addrs->companies + (uint32_t)owner * g_addrs->company_size;
-    /* the company's colour as the menus, the logo and the panel show it (the city's palette has its own shade of
-     * it, which made the hats look another colour) */
-    c = k_pick_colours[M[company + COMPANY_COLOUR] & 7u];
-    (void)g_overlay_pal;
+    /* the company's colour as the panel shows it (the same palette entry) */
+    c = company_rgb(company, g_overlay_pal);
     return c;
 }
 

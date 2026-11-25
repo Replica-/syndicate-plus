@@ -292,8 +292,8 @@ static const char k_city_shader[] =
     "    float2 r = at(i);\n"
     "    float a = ((i.shade >> 8) & 255) / 255.0;\n"
     "    if (!(i.shade & 1)) return 1;\n"
-    "    if (r.x >= 32 && r.y > 32 - (r.x - 32) / 2 + 3) return 1 - shadow.x * 0.9 * (1 - a);\n"
-    "    if (r.x < 32 && r.y > 16 + r.x / 2 + 3) return 1 - shadow.x * 0.9 * a;\n"
+    "    if (r.x >= 32 && r.y > 32 - (r.x - 32) / 2 + 3) return 1 - shadow.x * 0.6 * (1 - a);\n"
+    "    if (r.x < 32 && r.y > 16 + r.x / 2 + 3) return 1 - shadow.x * 0.6 * a;\n"
     "    return 1;\n"
     "}\n"
     /* in the shadow (FreeSynd's: a whole cell is or is not; a tile's top's edges softened against its neighbours
@@ -342,7 +342,7 @@ static const char k_city_shader[] =
     "float height(V i) {\n"
     "    float2 r = at(i);\n"
     "    float below = r.y - (32 - abs(r.x - 32) / 2);\n"
-    "    if ((i.shade & 128) && (i.shade & 2)) return below <= 0 ? i.z : i.z - min(below, 16) * 8;\n"
+    "    if ((i.shade & 128) && (i.shade & 2)) return below <= 2.5 ? i.z : i.z - min(below, 16) * 8;\n"
     "    if (i.shade & 128) return i.z - (r.y - 16) * 8;\n"
     "    return i.z - r.y * 8;\n"
     "}\n"
@@ -358,7 +358,7 @@ static const char k_city_shader[] =
     "    o.c = filtered(c00, c10, c01, c11, f, p - b);\n"
     "    o.c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
-    "    o.h = float4(height(i), (i.shade & 128) && (i.shade & 2) && at(i).y <= 32 - abs(at(i).x - 32) / 2 ? 1 : 0, (i.shade & 128) && (i.shade & 2) ? 300 : -36, (i.glow & 128) || (i.shade & 0x20000) ? 0 : o.c.a);\n"
+    "    o.h = float4(height(i), (i.shade & 128) && (i.shade & 2) && at(i).y <= 32 - abs(at(i).x - 32) / 2 + 2.5 ? 1 : 0, (i.shade & 128) && (i.shade & 2) ? 300 : -36, (i.glow & 128) || (i.shade & 0x20000) ? 0 : o.c.a);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
     "    return o;\n"
     "}\n";
@@ -413,7 +413,7 @@ static const char k_light_shader[] =
     "    float2 size;\n"
     "    float4 c = scene.Load(p);\n"
     "    heights.GetDimensions(size.x, size.y);\n"
-    "    float3 l = saturate(light.Load(p).rgb) - ambient.rgb * shade(p.xy, size);\n"
+    "    float3 l = saturate(light.Load(p).rgb) - ambient.rgb * min(shade(p.xy, size), 0.5);\n"
     "    return float4(c.rgb * saturate(l + emis.Load(p).r) + c.rgb * add, c.a);\n"
     "}\n";
 
@@ -455,6 +455,7 @@ typedef struct LightVertex {
 } LightVertex;
 
 #define SHADOW_MARGIN 160.0f /* frame pixels drawn round the view for the shadows (render.c's too) */
+#define SHADOW_DARK 0.6f /* how much of the light a shadow takes (the walls away from the sun too; at most half) */
 #define SUN_TAN 1.4f /* the sun's height: it rises 1.4 for each unit across (54 degrees up) */
 typedef struct LightConsts {
     float frame_size[2], strength, add, origin[2], margin[2]; /* margin: the view's corner in the lit targets */
@@ -1372,7 +1373,7 @@ static void draw_city(RECT dst, int fw, int fh)
                 lc.sun[0] = dx / len * px;
                 lc.sun[1] = dy / len * px;
                 lc.sun[2] = SUN_TAN / len;
-                lc.sun[3] = sun_on ? 0.9f * k_times[lit_time].strength : 0.0f; /* how dark (night: faint) */
+                lc.sun[3] = sun_on ? SHADOW_DARK * k_times[lit_time].strength : 0.0f; /* how dark (night: faint) */
                 memcpy(lc.ambient, ambient, sizeof lc.ambient);
             }
             if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_comp_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {

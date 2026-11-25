@@ -24,6 +24,8 @@ def muted(path, t):
     sat = (mx - mn) / np.maximum(mx, 1)
     # how orange: hues 5..55 (red-orange to amber), saturated
     w = np.clip(1 - np.abs(hue - 30) / 25, 0, 1) * np.clip((sat - 0.25) / 0.2, 0, 1)
+    # pinks and magentas (hues 280-355): nearly grey, a little darker
+    pink = np.clip((np.minimum(hue - 280, 355 - hue)) / 12, 0, 1) * np.clip((sat - 0.1) / 0.15, 0, 1)
     w[(a[..., 3] >= 240) & (a[..., 3] < 255)] = 0            # materials' pixels (the game draws them)
     if t in PAVED:
         w[TOP] = 0
@@ -32,6 +34,8 @@ def muted(path, t):
     l = c.mean(-1, keepdims=True)
     k = (1 - w * (1 - ORANGE_SAT))[..., None]
     out = (l + (c - l) * k) * (1 - w * (1 - ORANGE_VALUE))[..., None]
+    pink[(a[..., 3] >= 240) & (a[..., 3] < 255)] = 0
+    out = out + ((l * np.array([1.0, 0.97, 0.92]) * 0.85) - out) * (pink * 0.9)[..., None]
     a[..., :3] = out.clip(0, 255).astype(np.uint8)
     return Image.fromarray(a, 'RGBA')
 
