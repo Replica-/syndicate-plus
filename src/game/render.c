@@ -709,6 +709,30 @@ static int hat_rows(int id, const uint8_t *s, int sw, int sh)
     }
     return g_hat_rows[id];
 }
+static void add_light(float fx, float fy, float rx, float ry, uint32_t colour);
+
+#define FLASH_LIGHT_R 64.0f          /* a flash's light (a muzzle flash, an explosion): its radius */
+#define FLASH_LIGHT_COLOUR 0xFFC878u
+/* a flash (a muzzle flash, an explosion, a flame): a small sprite mostly of bright yellow and white pixels */
+static int flash_sprite(int id, const uint8_t *s, int sw, int sh)
+{
+    static uint8_t known[NB_SPRITES], flash[NB_SPRITES];
+    if (id < 0 || id >= NB_SPRITES) return 0;
+    if (!known[id]) {
+        int k, n = 0, hot = 0;
+        known[id] = 1;
+        for (k = 0; sw <= 40 && sh <= 40 && k < sw * sh; k++) {
+            uint32_t c;
+            if (s[k] == 255) continue;
+            n++;
+            c = g_image_pal[s[k]];
+            if (((c >> 16) & 255) >= 200 && ((c >> 8) & 255) >= 120) hot++; /* white, yellow, bright orange */
+        }
+        flash[id] = n >= 4 && hot * 2 >= n;
+    }
+    return flash[id];
+}
+
 static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, float fay, uint32_t hat)
 {
     uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), f = frames + (uint32_t)frame * 8u;
@@ -734,6 +758,9 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
             g_put_head = is_head(id);
             g_put_sprite = id;
             g_quad_z = g_obj_z - 8.0f * (float)oy; /* its feet at the anchor, 8 world units a pixel up */
+            if (t->gpu && flash_sprite(id, s, sw, sh)) /* it lights what is round it (by night most) */
+                add_light(fax + (float)ox + (float)sw / 2.0f, fay + (float)oy + (float)sh / 2.0f, FLASH_LIGHT_R,
+                          FLASH_LIGHT_R * 0.65f, FLASH_LIGHT_COLOUR);
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
                 rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
             g_put_head = 0;
