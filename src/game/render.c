@@ -1745,6 +1745,9 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     /* the part of the unzoomed picture that the zoom brings into x0..x1, y0..y1 */
     int lx0 = (int)floorf(g_zcx + ((float)x0 - g_zcx) / (float)g_zoom), lx1 = (int)ceilf(g_zcx + ((float)x1 - g_zcx) / (float)g_zoom);
     int ly0 = (int)floorf(g_zcy + ((float)y0 - g_zcy) / (float)g_zoom), ly1 = (int)ceilf(g_zcy + ((float)y1 - g_zcy) / (float)g_zoom);
+    /* on the GPU with the sun's shadows the tiles round the view too (what casts the shadows that fall into it):
+     * win32_gpu.c's SHADOW_MARGIN */
+    int margin = t.gpu && render_shadows ? 160 : 0;
     if (mx <= 0 || my <= 0 || mz <= 0 || mx > 256 || my > 256 || mz > 16) return;
     g_nquads = 0;
     g_nlights = 0;
@@ -1866,8 +1869,8 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                 int fx, fy;
                 if (tl != NULL) {
                     project(tx * 256, ty * 256, tz * 128, &fx, &fy);
-                    if (fx + render_tile_dx + TILE_W > lx0 - 2 && fx + render_tile_dx < lx1 + 2 &&
-                        fy + render_tile_dy + TILE_H > ly0 - 2 && fy + render_tile_dy < ly1 + 2) {
+                    if (fx + render_tile_dx + TILE_W > lx0 - 2 - margin && fx + render_tile_dx < lx1 + 2 + margin &&
+                        fy + render_tile_dy + TILE_H > ly0 - 2 - margin && fy + render_tile_dy < ly1 + 2) {
                         float ffx, ffy;
                         project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
                         g_translucent = g_cut >= 0 && tz >= g_cut;
