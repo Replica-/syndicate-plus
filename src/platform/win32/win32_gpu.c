@@ -131,18 +131,18 @@ static const char k_shader[] =
 
 /* the city: an image's corner, its texels there, its rectangle in the atlas, its hat colour */
 static const char k_city_shader[] =
-    "cbuffer C : register(b0) { float2 frame_size; float scale; float bump; float4 sun; };\n"
+    "cbuffer C : register(b0) { float2 frame_size; float scale; float bump; float4 sun; float4 shadow; };\n"
     "Texture2D<float4> atlas : register(t0);\n"
     "Texture2D<float4> normals : register(t1);\n"
     "Texture2DArray<float4> mat : register(t2);\n"
     "Texture2DArray<float4> matn : register(t3);\n"
     "SamplerState wrap : register(s0);\n"
-    "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2; uint glow : TEXCOORD3; uint3 look : TEXCOORD4; };\n"
-    "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1; nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3; nointerpolation uint3 look : TEXCOORD4; };\n"
+    "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2; uint glow : TEXCOORD3; uint3 look : TEXCOORD4; uint shade : TEXCOORD5; };\n"
+    "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1; nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3; nointerpolation uint3 look : TEXCOORD4; nointerpolation uint shade : TEXCOORD5; };\n"
     "V vs(VI i) {\n"
     "    V o;\n"
     "    o.pos = float4(i.pos.x / frame_size.x * 2 - 1, 1 - i.pos.y / frame_size.y * 2, 0, 1);\n"
-    "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat; o.glow = i.glow; o.look = i.look;\n"
+    "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat; o.glow = i.glow; o.look = i.look; o.shade = i.shade;\n"
     "    return o;\n"
     "}\n"
     "float texels(V i) { return (float)(1u << ((i.glow >> 4) & 3)); }\n" /* the image's texels a frame pixel */
@@ -253,6 +253,36 @@ static const char k_city_shader[] =
     "    float3 l = normalize(sun.xyz);\n"
     "    return lerp(1, saturate(dot(normalize(n), l)) / l.z, bump);\n"
     "}\n"
+    /* the sun's shadows (HostCityQuad.shade; shadow.x how dark, 0 none): a tile's place in it (game pixels) */
+    "float2 at(V i) { return (i.tex - i.rect.xy) / texels(i); }\n"
+    /* a solid tile's face away from the sun (world +x: below the lower right edge of its top) darker */
+    "float face(V i) {\n"
+    "    float2 r = at(i);\n"
+    "    if (!(i.shade & 1) || r.x < 32 || r.y < 32 - (r.x - 32) / 2) return 1;\n"
+    "    return 1 - shadow.x * 0.45;\n"
+    "}\n"
+    /* in the shadow (FreeSynd's: a whole cell is or is not; a tile's top's edges softened against its neighbours
+     * in the other state): 0..1 */
+    "float shaded(V i) {\n"
+    "    float2 r = at(i);\n"
+    "    float own = (i.shade & 2) ? 1 : 0, v = own;\n"
+    "    if (!(i.shade & 128) || abs(r.x - 32) / 32 + abs(r.y - 16) / 16 > 1) return own;\n"
+    "    float2 q = r - float2(32, 0);\n"
+    "    float2 w = saturate(float2(q.x / 32 + q.y / 16, q.y / 16 - q.x / 32) * 0.5);\n"
+    "    float4 dist = float4(w.x, 1 - w.x, w.y, 1 - w.y);\n"
+    "    [unroll] for (int e = 0; e < 4; e++) {\n"
+    "        float n = (i.shade >> (e + 2)) & 1;\n"
+    "        float edge = lerp(0.5, own, smoothstep(0, 0.14, dist[e]));\n"
+    "        if (n != own) v = own > 0 ? min(v, edge) : max(v, edge);\n"
+    "    }\n"
+    "    return v;\n"
+    "}\n"
+    /* the light it keeps (FreeSynd's: 45% taken in a shadow, 20% on a slope down from the sun) */
+    "float sunlit(V i) {\n"
+    "    float l = 0.45 * shaded(i);\n"
+    "    if ((i.shade & 128) && (i.shade & 64)) l = max(l, 0.2);\n"
+    "    return 1 - shadow.x * l;\n"
+    "}\n"
     /* the four texels around a point filtered: their colours by their weights among the opaque ones only (a
      * transparent texel brings no colour in), the coverage that of the nearest (`r` the point's place between
      * them): an image's edge is not half see-through, so tiles side by side meet without a seam */
@@ -269,7 +299,7 @@ static const char k_city_shader[] =
     "    float2 f = saturate((p - b - 0.5) * scale / texels(i) + 0.5);\n"
     "    int2 q = (int2)b;\n"
     "    float4 c = filtered(texel(q, i), texel(q + int2(1, 0), i), texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f, p - b);\n"
-    "    c.rgb *= lerp(relief(i), 1, glowing(c, i.glow).r / max(c.a, 1e-4));\n" /* light is not shaded */
+    "    c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(c, i.glow).r / max(c.a, 1e-4));\n" /* light is not shaded */
     "    if (i.glow & 128) c *= 60.0 / 255.0;\n" /* drawn see-through (B held) */
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
     "}\n"
@@ -284,7 +314,7 @@ static const char k_city_shader[] =
     "    float4 c00 = texel(q, i), c10 = texel(q + int2(1, 0), i), c01 = texel(q + int2(0, 1), i);\n"
     "    float4 c11 = texel(q + int2(1, 1), i);\n"
     "    o.c = filtered(c00, c10, c01, c11, f, p - b);\n"
-    "    o.c.rgb *= lerp(relief(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
+    "    o.c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
     "    return o;\n"
@@ -320,6 +350,7 @@ typedef struct Consts {
 
 typedef struct CityConsts {
     float frame_size[2], scale, bump, sun[4];
+    float shadow[4]; /* x: how dark the sun's shadows are (0: none) */
 } CityConsts;
 
 /* the HD tiles' relief at each time of day (k_times): where the sun is (x right, y down, z out of the picture) and
@@ -340,6 +371,7 @@ typedef struct CityVertex {
     float rect[4];
     uint32_t hat, glow;
     uint32_t look[3];
+    uint32_t shade;
 } CityVertex;
 
 typedef struct LightVertex {
@@ -632,6 +664,7 @@ static int make_city(void)
         {"TEXCOORD", 2, DXGI_FORMAT_R32_UINT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 3, DXGI_FORMAT_R32_UINT, 0, 36, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 4, DXGI_FORMAT_R32G32B32_UINT, 0, 40, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 5, DXGI_FORMAT_R32_UINT, 0, 52, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
     static const D3D11_INPUT_ELEMENT_DESC light_layout[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -1090,6 +1123,7 @@ static void draw_city(RECT dst, int fw, int fh)
             c[k].look[0] = q->look[0];
             c[k].look[1] = q->look[1];
             c[k].look[2] = q->look[2];
+            c[k].shade = q->shade;
         }
         verts[nv++] = c[0];
         verts[nv++] = c[1];
@@ -1159,6 +1193,8 @@ static void draw_city(RECT dst, int fw, int fh)
     cc.sun[0] = k_relief[lit_time].sun[0];
     cc.sun[1] = k_relief[lit_time].sun[1];
     cc.sun[2] = k_relief[lit_time].sun[2];
+    memset(cc.shadow, 0, sizeof cc.shadow);
+    cc.shadow[0] = k_times[lit_time].strength; /* the shadows as strong as the time's light (night: faint) */
     cc.sun[3] = (float)(GetTickCount64() % 1000000u) / 1000.0f; /* the water's time: its drift repeats each 1000 s */
     if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_city_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
         memcpy(map.pData, &cc, sizeof cc);

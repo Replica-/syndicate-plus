@@ -62,7 +62,15 @@ typedef struct HostCityQuad {
     uint32_t look[3]; /* a pedestrian's hair, skin and clothes (0x00RRGGBB; 0: as drawn) for the image's pixels of
                        * alpha 160 + 16 x part (0 hair, 1 skin, 2 clothes, 3 trousers: the clothes' darker and
                        * greyer) + shade (the colour at 0.3 + 0.1 x shade) */
+    uint32_t shade;   /* the sun's shadows (HOST_SHADE_*): bits 0-7 */
 } HostCityQuad;
+/* HostCityQuad.shade: a solid tile (its face away from the sun darker); in the sun's shadow (a tile's cell, or the
+ * cell what stands there is on); a tile's 4 neighbours in it (bits 2-5: x - 1, x + 1, y - 1, y + 1: its top's edges
+ * softened against them); a slope going down from the sun; a tile */
+#define HOST_SHADE_SOLID 0x01u
+#define HOST_SHADE_SHADOW 0x02u
+#define HOST_SHADE_SLOPE 0x40u
+#define HOST_SHADE_TILE 0x80u
 /* HostCityQuad.hat of a tile with material pixels: this bit, the tile's map y in bits 10-19, its x in bits 0-9 */
 #define HOST_CITY_WORLD 0x100000u
 #define HOST_GLOW_SIGNAL 0x40u /* HostCityQuad.glow: its bright, strongly coloured pixels shine too (lamps) */

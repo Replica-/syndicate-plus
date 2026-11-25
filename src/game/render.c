@@ -326,6 +326,8 @@ static uint32_t sprite_colour(const uint32_t *pal, uint8_t c, int row, uint32_t 
 static int g_put_tx = -1, g_put_ty; /* the map place of the tile being put (-1: not a tile of the map) */
 static int hd_has_materials(int image);
 
+static uint32_t g_tile_shade, g_obj_shade; /* the tile being put, the thing being drawn: HostCityQuad.shade */
+
 static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat, int glow)
 {
     HostCityQuad *q;
@@ -346,6 +348,7 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->image = (uint16_t)image;
     q->flip = (uint8_t)(flipped != 0);
     q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0));
+    q->shade = image >= IMAGE_SPRITES ? g_obj_shade : g_tile_shade;
     q->look[0] = image >= IMAGE_SPRITES ? g_obj_look[0] : 0;
     q->look[1] = image >= IMAGE_SPRITES ? g_obj_look[1] : 0;
     q->look[2] = image >= IMAGE_SPRITES ? g_obj_look[2] : 0;
@@ -1535,6 +1538,50 @@ static int type_at(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
     return g_types[M[rd32(cols + (uint32_t)(x + y * mx) * 4u) + (uint32_t)z]];
 }
 
+/* ---- the sun's shadows, as FreeSynd's: the sun at the top left of the screen (world -x), rising a level a cell; the
+ * top of a floor, road, slope or roof (nothing solid on it) is in shadow when a solid tile is on that line, up to
+ * SHADOW_LENGTH cells away; what stands on a shadowed cell is in it too.  A slope going down from the sun is a little
+ * darker, the faces of solid tiles away from the sun too (the GPU's: HostCityQuad.shade) ---- */
+#define SHADOW_LENGTH 8
+int render_shadows = 1;
+
+/* casts a shadow: not empty, not a mesh (fences, handrails), not the space over a train stop */
+static int solid_type(int t)
+{
+    return t != 0x00 && t != 0x0C && t != 0x10;
+}
+
+/* takes a shadow on its top: not empty, not a mesh, not a wall, nothing solid on it */
+static int receives_shadow(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
+{
+    int t = type_at(cols, mx, my, mz, x, y, z);
+    return t != 0x00 && t != 0x0C && t != 0x10 && t != 0x0A && !solid_type(type_at(cols, mx, my, mz, x, y, z + 1));
+}
+
+static int in_shadow(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
+{
+    int k;
+    if (!g_have_types || !render_shadows || !receives_shadow(cols, mx, my, mz, x, y, z)) return 0;
+    for (k = 1; k <= SHADOW_LENGTH; k++)
+        if (solid_type(type_at(cols, mx, my, mz, x - k, y, z + k))) return 1;
+    return 0;
+}
+
+/* a tile's HostCityQuad.shade */
+static uint32_t tile_shade(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
+{
+    static const int nb[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+    uint32_t s = HOST_SHADE_TILE;
+    int e;
+    if (!g_have_types || !render_shadows) return s;
+    if (in_shadow(cols, mx, my, mz, x, y, z)) s |= HOST_SHADE_SHADOW;
+    for (e = 0; e < 4; e++)
+        if (in_shadow(cols, mx, my, mz, x + nb[e][0], y + nb[e][1], z)) s |= 4u << e;
+    if (type_at(cols, mx, my, mz, x, y, z) == 0x04) s |= HOST_SHADE_SLOPE;
+    if (solid_type(type_at(cols, mx, my, mz, x, y, z))) s |= HOST_SHADE_SOLID;
+    return s;
+}
+
 /* a tile drawn with its top left at fx, fy (unzoomed): its light */
 static void tile_lights_at(int id, float fx, float fy)
 {
@@ -1645,10 +1692,13 @@ static void draw_obj(const Target *t, const Obj *o)
             hat = g_obj_look[0];
     }
     g_obj_glow = o->glow;
+    g_obj_shade = t->gpu && in_shadow(g_cols, g_mx, g_my, g_mz, o->x >> 8, o->y >> 8, (o->zw >> 7) - 1 < 0 ? 0 : (o->zw >> 7) - 1)
+                      ? HOST_SHADE_SHADOW : 0;
     draw_frame(t, o->frame, fx + render_obj_dx, fy + render_obj_dy, ffx + (float)render_obj_dx, ffy + (float)render_obj_dy,
                hat);
     g_obj_glow = 0;
     g_obj_look[0] = g_obj_look[1] = g_obj_look[2] = 0;
+    g_obj_shade = 0;
 }
 
 void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1, uint64_t now_us)
@@ -1806,9 +1856,11 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         g_translucent = g_cut >= 0 && tz >= g_cut;
                         g_put_tx = tx;
                         g_put_ty = ty;
+                        g_tile_shade = t.gpu ? tile_shade(cols, mx, my, mz, tx, ty, tz) : 0;
                         put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
                             ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
                         g_put_tx = -1;
+                        g_tile_shade = 0;
                         g_translucent = 0;
                         if (t.gpu) tile_lights_at(tid, ffx + (float)render_tile_dx, ffy + (float)render_tile_dy);
                         if (g_ndrawn < NB_DRAWN) {

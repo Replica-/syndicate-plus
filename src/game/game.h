@@ -39,6 +39,8 @@ void game_set_routes(int on);
 int game_pick_first(int revolt);
 /* the HD texture pack (rt_user_dir/hd) instead of the game's tiles, where it has them (on by default) */
 void game_set_hd(int on);
+/* the sun's shadows in missions (FreeSynd's: by map cell; on by default) */
+void game_set_shadows(int on);
 
 #ifdef __cplusplus
 }

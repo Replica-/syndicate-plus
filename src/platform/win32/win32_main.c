@@ -58,6 +58,7 @@
 #define SC_APP_TIME 0x1300u /* + 0x10 * time (0 the mission's own look, 1 day, 2 dusk, 3 night, 4 dawn) */
 #define SC_APP_ROUTES 0x10F0u
 #define SC_APP_HD 0x10A0u
+#define SC_APP_SHADOWS 0x10E0u
 #define SC_APP_MUSIC_VOL 0x1100u /* + 0x10 * step (0..4): off, 25%, 50%, 75%, 100% */
 #define SC_APP_SOUND_VOL 0x1200u
 #define WM_APP_GAME_DONE (WM_APP + 1)
@@ -856,7 +857,15 @@ static void set_time(int t)
     if (g_ini[0]) WritePrivateProfileStringW(L"video", L"time", k_time_names[t], g_ini);
 }
 
-static int g_routes = 1, g_hd = 1;
+static int g_routes = 1, g_hd = 1, g_shadows = 1;
+
+static void toggle_shadows(void)
+{
+    g_shadows = !g_shadows;
+    game_set_shadows(g_shadows);
+    CheckMenuItem(GetSystemMenu(g_hwnd, FALSE), SC_APP_SHADOWS, g_shadows ? MF_CHECKED : MF_UNCHECKED);
+    if (g_ini[0]) WritePrivateProfileStringW(L"video", L"shadows", g_shadows ? L"1" : L"0", g_ini);
+}
 
 static void toggle_hd(void)
 {
@@ -984,12 +993,12 @@ static void save_capture(void)
 }
 
 /* ==== the options of the mission's menu (Escape): the window menu's, changed on the window's thread ======== */
-enum { OPT_TIME, OPT_HD, OPT_FULL, OPT_FPS, OPT_MUSIC, OPT_SOUND, OPT_ROUTES, NB_OPTS };
+enum { OPT_TIME, OPT_SHADOWS, OPT_HD, OPT_FULL, OPT_FPS, OPT_MUSIC, OPT_SOUND, OPT_ROUTES, NB_OPTS };
 
 
 int host_options(HostOption *o, int max)
 {
-    static const char *const names[NB_OPTS] = {"TIME OF DAY", "HD TEXTURES", "FULL SCREEN",
+    static const char *const names[NB_OPTS] = {"TIME OF DAY", "SUN SHADOWS", "HD TEXTURES", "FULL SCREEN",
                                                "FRAMES A SECOND", "MUSIC VOLUME", "SOUND VOLUME", "SQUAD ROUTES"};
     static const char *const times[5] = {"MISSION", "DAY", "DUSK", "NIGHT", "DAWN"};
     int k, n = max < NB_OPTS ? max : NB_OPTS;
@@ -1003,6 +1012,7 @@ int host_options(HostOption *o, int max)
         case OPT_SOUND: snprintf(o[k].value, sizeof o[k].value, "%d%%", g_sound_vol); break;
         case OPT_ROUTES: snprintf(o[k].value, sizeof o[k].value, "%s", g_routes ? "ON" : "OFF"); break;
         case OPT_HD: snprintf(o[k].value, sizeof o[k].value, "%s", g_hd ? "ON" : "OFF"); break;
+        case OPT_SHADOWS: snprintf(o[k].value, sizeof o[k].value, "%s", g_shadows ? "ON" : "OFF"); break;
         }
     }
     return n;
@@ -1023,6 +1033,7 @@ static void option_step(int index, int dir)
     case OPT_SOUND: set_volumes(g_music_vol, (g_sound_vol / 25 + 5 + dir) % 5 * 25); break;
     case OPT_ROUTES: toggle_routes(); break;
     case OPT_HD: toggle_hd(); break;
+    case OPT_SHADOWS: toggle_shadows(); break;
     default: break;
     }
 }
@@ -1056,6 +1067,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             for (k = 0; k < 5; k++)
                 AppendMenuW(times, MF_STRING | (g_time == k ? MF_CHECKED : 0), SC_APP_TIME + 0x10u * (UINT)k, items[k]);
             AppendMenuW(sm, MF_POPUP, (UINT_PTR)times, L"&Time of day (missions)");
+            AppendMenuW(sm, MF_STRING | (g_shadows ? MF_CHECKED : 0), SC_APP_SHADOWS, L"Sun s&hadows (missions)");
             AppendMenuW(sm, MF_STRING | (g_hd ? MF_CHECKED : 0), SC_APP_HD, L"H&D textures (missions)");
         }
         {
@@ -1128,6 +1140,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             return 0;
         case SC_APP_HD:
             toggle_hd();
+            return 0;
+        case SC_APP_SHADOWS:
+            toggle_shadows();
             return 0;
 
         case SC_APP_TIME: case SC_APP_TIME + 0x10u: case SC_APP_TIME + 0x20u: case SC_APP_TIME + 0x30u:
@@ -1523,6 +1538,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
         game_set_routes(g_routes);
         g_hd = GetPrivateProfileIntW(L"video", L"hd", 1, g_ini) != 0;
         game_set_hd(g_hd);
+        g_shadows = GetPrivateProfileIntW(L"video", L"shadows", 1, g_ini) != 0;
+        game_set_shadows(g_shadows);
 
     }
     rt_set_show_fps(g_fps_on);
