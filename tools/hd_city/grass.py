@@ -43,11 +43,16 @@ for t in TILES:
     n8 = int(round(TUFTS ** 0.5))
     for gu in range(n8):
         for gv in range(n8):
-            u = (gu + 0.5 + rng.uniform(-0.45, 0.45)) * 32 / n8
-            v = (gv + 0.5 + rng.uniform(-0.45, 0.45)) * 32 / n8
+            u = rng.uniform(1.0, 31.0)                 # anywhere on the top (no grid: no rows where tiles meet)
+            v = rng.uniform(1.0, 31.0)
             roots.append((float(np.clip(u, 0.8, 31.2)), float(np.clip(v, 0.8, 31.2))))
+    # the tile's tufts as its neighbours (the same tile) place them too: blades cross the edges, the field seamless
+    rng_state = rng.bit_generator.state
+    roots = [(u + du, v + dv, k) for k, (u, v) in enumerate(roots) for du in (-32, 0, 32) for dv in (-32, 0, 32)]
+    roots = [r for r in roots if -8 < r[0] < 40 and -8 < r[1] < 40]
     roots.sort(key=lambda r: r[0] + r[1])
-    for u, v in roots:
+    for u, v, kk in roots:
+        rng = np.random.default_rng(t * 1000 + kk)       # the same tuft wherever its copy is
         x0, y0 = 32 + (u - v), (u + v) / 2            # game pixels
         n = rng.integers(*BLADES)
         dry = rng.uniform(0, 1)
@@ -72,7 +77,7 @@ for t in TILES:
     tufts = np.asarray(layer.resize((W * S, H * S), Image.LANCZOS)).astype(np.float32)
     a = tufts[..., 3:] / 255
     rgb = tufts[..., :3] / np.maximum(a, 1e-3)
-    on = (a[..., 0] > 0.5) & (opaque | TOP | (fy < 16))
+    on = (a[..., 0] > 0.5) & TOP                      # within the top (no fringe over the tile behind)
     out[..., :3][on] = rgb.clip(0, 255).astype(np.uint8)[on]
     out[..., 3][on] = 255
     nrm[on] = (128, 104, 236)                           # leaning to the light a little (up the picture, out of it)

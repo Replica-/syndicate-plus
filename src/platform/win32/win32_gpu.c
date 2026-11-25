@@ -358,7 +358,7 @@ static const char k_city_shader[] =
     "    o.c = filtered(c00, c10, c01, c11, f, p - b);\n"
     "    o.c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
-    "    o.h = float4(height(i), (i.shade & 128) && (i.shade & 2) && at(i).y <= 32 - abs(at(i).x - 32) / 2 + 2.5 ? 1 : 0, (i.shade & 128) && (i.shade & 2) ? 300 : -14, (i.glow & 128) || (i.shade & 0x20000) ? 0 : o.c.a);\n"
+    "    o.h = float4(height(i), (i.shade & 128) && (i.shade & 2) && at(i).y <= 32 - abs(at(i).x - 32) / 2 + 2.5 ? 1 : (i.shade & 128) ? 0 : 0.5, (i.shade & 128) && (i.shade & 2) ? 300 : -14, (i.glow & 128) || (i.shade & 0x20000) ? 0 : o.c.a);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
     "    return o;\n"
     "}\n";
@@ -384,6 +384,7 @@ static const char k_light_shader[] =
     "Texture2D heights : register(t3);\n"
     "#define STEPS 110\n"
     "float ray(int2 p, float2 size, float4 h0, float2 dir) {\n"
+    "    bool blocks = h0.g < 0.75;\n"
     "    float occ = 0;\n"
     "    [loop] for (int k = 1; k <= STEPS; k++) {\n"
     "        int2 q = (int2)floor(p + dir * k + 0.5);\n"
@@ -393,6 +394,7 @@ static const char k_light_shader[] =
     "            float over = hq.r - (h0.r + sun.z * k);\n"
     /* a floor or block: what stands in front of the ray and above it, up to its depth; an upright thing (a card
      * through its middle: b < 0, its half thickness): the ray passing within it, either side */
+    "            if (blocks && hq.b <= 0) continue;\n"
     "            float hit = hq.b > 0 ? (over > 3 && over < hq.b ? saturate((over - 3) / (5 + 0.12 * k)) : 0)\n"
     "                                 : saturate((-hq.b - abs(over)) / (4 + 0.1 * k));\n"
     "            occ = max(occ, hit * (1 - 0.55 * k / STEPS));\n"
@@ -402,7 +404,7 @@ static const char k_light_shader[] =
     "}\n"
     "float shade(int2 p, float2 size) {\n"
     "    float4 h0 = heights.Load(int3(p, 0));\n"
-    "    if (sun.w <= 0 || h0.a < 0.5 || h0.g < 0.5) return 0;\n"
+    "    if (sun.w <= 0 || h0.a < 0.5 || h0.g < 0.25) return 0;\n"
     "    float2 side = float2(-sun.y, sun.x) * 0.022;\n"
     "    float occ = ray(p, size, h0, sun.xy - side * 1.5) + ray(p, size, h0, sun.xy - side * 0.5)\n"
     "              + ray(p, size, h0, sun.xy + side * 0.5) + ray(p, size, h0, sun.xy + side * 1.5);\n"

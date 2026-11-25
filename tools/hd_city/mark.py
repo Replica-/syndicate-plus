@@ -51,7 +51,7 @@ for t in WATER_TILES:
     Image.fromarray(out, 'RGBA').save(f'{HD}/out/{t:03d}.png')
 # the roads' rims: faithful.py replaced their tops up to the diamond's edge, the texels out to the stepped edge kept
 # the redraw's rust (a dotted line where tiles meet): their colour taken from just inside the top
-ROADS = [100, 102, 103, 104, 106, 107, 108, 109, 110, 111, 112, 113, 119, 120, 121, 122, 123]
+ROADS = [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 119, 120, 121, 122, 123]
 d = np.abs(fx - 32) / 32 + np.abs(fy - 16) / 16
 RIM = (d > 0.985) & (d <= 1.0 + 2.5 / 16) & (fy < 16 + 1e-6 + 16 * 0)
 for t in ROADS:

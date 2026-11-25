@@ -21,7 +21,7 @@ import modules.default_pipeline as pipeline
 from modules.upscaler import perform_upscale
 
 W, H, S = 64, 48, 4
-ROADS = [100, 102, 103, 104, 106, 107, 108, 109, 110, 111, 112, 113, 119, 120, 121, 122, 123]
+ROADS = [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 119, 120, 121, 122, 123]
 PAVED = [35, 36, 41, 42, 43, 176, 203, 207, 251, 252]
 GRAINS = {
     'asphalt': ('seamless top-down texture of fine dark asphalt grain, tiny aggregate, subtle wear, uniform, flat, '
