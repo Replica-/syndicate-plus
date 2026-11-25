@@ -63,6 +63,8 @@ typedef struct HostCityQuad {
                        * alpha 160 + 16 x part (0 hair, 1 skin, 2 clothes, 3 trousers: the clothes' darker and
                        * greyer) + shade (the colour at 0.3 + 0.1 x shade) */
     uint32_t shade;   /* the sun's shadows (HOST_SHADE_*): bits 0-7 */
+    float z;          /* how high it stands (world units, a level 128): a tile, its top; anything else (upright),
+                       * its top row, each row below 8 lower: the sun's shadows are traced from each pixel's */
 } HostCityQuad;
 /* HostCityQuad.shade: a solid tile (its face away from the sun darker); in the sun's shadow (a tile's cell, or the
  * cell what stands there is on); a tile's 4 neighbours in it (bits 2-5: x - 1, x + 1, y - 1, y + 1: its top's edges
@@ -70,8 +72,10 @@ typedef struct HostCityQuad {
  * the top left of the screen, 255: towards -y, the top right) */
 #define HOST_SHADE_SOLID 0x01u
 #define HOST_SHADE_SHADOW 0x02u
+#define HOST_SHADE_FLAT 0x02u /* a tile whose top is a whole floor or roof (it takes the shadows) */
 #define HOST_SHADE_SLOPE 0x40u
 #define HOST_SHADE_TILE 0x80u
+#define HOST_SHADE_ON 0x10000u /* the sun's shadows on (per pixel, the GPU's) */
 /* HostCityQuad.hat of a tile with material pixels: this bit, the tile's map y in bits 10-19, its x in bits 0-9 */
 #define HOST_CITY_WORLD 0x100000u
 #define HOST_GLOW_SIGNAL 0x40u /* HostCityQuad.glow: its bright, strongly coloured pixels shine too (lamps) */

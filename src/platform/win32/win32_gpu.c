@@ -36,9 +36,9 @@ static ID3D11BlendState *g_add;
 static ID3D11Buffer *g_light_vb, *g_comp_cb;
 static int g_light_vb_cap;
 /* the lit city: its picture, what glows in it, the light map (as big as the picture's rectangle) */
-static ID3D11Texture2D *g_lit_tex[3];
-static ID3D11RenderTargetView *g_lit_rtv[3];
-static ID3D11ShaderResourceView *g_lit_srv[3];
+static ID3D11Texture2D *g_lit_tex[4];
+static ID3D11RenderTargetView *g_lit_rtv[4]; /* the scene, its glows, the light map, its heights */
+static ID3D11ShaderResourceView *g_lit_srv[4];
 static int g_lit_w, g_lit_h;
 static volatile LONG g_time; /* 0 the mission's own look, 1 day, 2 dusk, 3 night, 4 dawn (as FreeSynd's) */
 static ID3D11SamplerState *g_linear;
@@ -137,12 +137,12 @@ static const char k_city_shader[] =
     "Texture2DArray<float4> mat : register(t2);\n"
     "Texture2DArray<float4> matn : register(t3);\n"
     "SamplerState wrap : register(s0);\n"
-    "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2; uint glow : TEXCOORD3; uint3 look : TEXCOORD4; uint shade : TEXCOORD5; };\n"
-    "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1; nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3; nointerpolation uint3 look : TEXCOORD4; nointerpolation uint shade : TEXCOORD5; };\n"
+    "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2; uint glow : TEXCOORD3; uint3 look : TEXCOORD4; uint shade : TEXCOORD5; float z : TEXCOORD6; };\n"
+    "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1; nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3; nointerpolation uint3 look : TEXCOORD4; nointerpolation uint shade : TEXCOORD5; nointerpolation float z : TEXCOORD6; };\n"
     "V vs(VI i) {\n"
     "    V o;\n"
     "    o.pos = float4(i.pos.x / frame_size.x * 2 - 1, 1 - i.pos.y / frame_size.y * 2, 0, 1);\n"
-    "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat; o.glow = i.glow; o.look = i.look; o.shade = i.shade;\n"
+    "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat; o.glow = i.glow; o.look = i.look; o.shade = i.shade; o.z = i.z;\n"
     "    return o;\n"
     "}\n"
     "float texels(V i) { return (float)(1u << ((i.glow >> 4) & 3)); }\n" /* the image's texels a frame pixel */
@@ -268,7 +268,7 @@ static const char k_city_shader[] =
      * in the other state): 0..1 */
     "float shaded(V i) {\n"
     "    float2 r = at(i);\n"
-    "    float own = (i.shade & 2) ? 1 : 0, v = own;\n"
+    "    float own = 0, v = own;\n"
     "    if (!(i.shade & 128) || abs(r.x - 32) / 32 + abs(r.y - 16) / 16 > 1) return own;\n"
     "    float2 q = r - float2(32, 0);\n"
     "    float2 w = saturate(float2(q.x / 32 + q.y / 16, q.y / 16 - q.x / 32) * 0.5);\n"
@@ -307,7 +307,14 @@ static const char k_city_shader[] =
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
     "}\n"
     /* lit: the picture and what glows in it (covering what glowed under it) */
-    "struct O { float4 c : SV_Target0; float4 e : SV_Target1; };\n"
+    "float height(V i) {\n"
+    "    float2 r = at(i);\n"
+    "    float below = r.y - (32 - abs(r.x - 32) / 2);\n"
+    "    if ((i.shade & 128) && (i.shade & 2)) return below <= 0 ? i.z : i.z - min(below, 16) * 8;\n"
+    "    if (i.shade & 128) return i.z - (r.y - 16) * 8;\n"
+    "    return i.z - r.y * 8;\n"
+    "}\n"
+    "struct O { float4 c : SV_Target0; float4 e : SV_Target1; float4 h : SV_Target2; };\n"
     "O ps_lit(V i) {\n"
     "    O o;\n"
     "    float2 p = i.tex - 0.5;\n"
@@ -319,12 +326,13 @@ static const char k_city_shader[] =
     "    o.c = filtered(c00, c10, c01, c11, f, p - b);\n"
     "    o.c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
+    "    o.h = float4(height(i), (i.shade & 128) && (i.shade & 2) && at(i).y <= 32 - abs(at(i).x - 32) / 2 ? 1 : 0, 0, (i.glow & 128) ? 0 : o.c.a);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
     "    return o;\n"
     "}\n";
 
 static const char k_light_shader[] =
-    "cbuffer C : register(b0) { float2 frame_size; float strength; float add; float2 origin; float2 pad; };\n"
+    "cbuffer C : register(b0) { float2 frame_size; float strength; float add; float2 origin; float2 pad; float4 sun; float4 ambient; };\n"
     "struct LI { float2 pos : POSITION; float2 uv : TEXCOORD0; float3 col : COLOR0; };\n"
     "struct LV { float4 pos : SV_Position; float2 uv : TEXCOORD0; float3 col : COLOR0; };\n"
     "LV vs_light(LI i) {\n"
@@ -340,10 +348,29 @@ static const char k_light_shader[] =
     "Texture2D scene : register(t0);\n"
     "Texture2D emis : register(t1);\n"
     "Texture2D light : register(t2);\n"
+    "Texture2D heights : register(t3);\n"
+    "#define STEPS 110\n"
+    "float shade(int2 p, float2 size) {\n"
+    "    float4 h0 = heights.Load(int3(p, 0));\n"
+    "    float occ = 0;\n"
+    "    if (sun.w <= 0 || h0.a < 0.5 || h0.g < 0.5) return 0;\n"
+    "    [loop] for (int k = 1; k <= STEPS; k++) {\n"
+    "        int2 q = (int2)floor(p + sun.xy * k + 0.5);\n"
+    "        if (q.x < 0 || q.y < 0 || q.x >= size.x || q.y >= size.y) break;\n"
+    "        float4 hq = heights.Load(int3(q, 0));\n"
+    "        if (hq.a > 0.5) {\n"
+    "            float over = hq.r - (h0.r + sun.z * k);\n"
+    "            if (over > 3 && over < 320) occ = max(occ, saturate((over - 3) / 6) * (1 - 0.35 * k / STEPS));\n"
+    "        }\n"
+    "    }\n"
+    "    return occ * sun.w;\n"
+    "}\n"
     "float4 ps_comp(float4 pos : SV_Position) : SV_Target {\n"
     "    int3 p = int3(pos.xy - origin, 0);\n"
+    "    float2 size;\n"
     "    float4 c = scene.Load(p);\n"
-    "    float3 l = light.Load(p).rgb;\n"
+    "    heights.GetDimensions(size.x, size.y);\n"
+    "    float3 l = saturate(light.Load(p).rgb) - ambient.rgb * shade(p.xy, size);\n"
     "    return float4(c.rgb * saturate(l + emis.Load(p).r) + c.rgb * add, c.a);\n"
     "}\n";
 
@@ -375,6 +402,7 @@ typedef struct CityVertex {
     uint32_t hat, glow;
     uint32_t look[3];
     uint32_t shade;
+    float z;
 } CityVertex;
 
 typedef struct LightVertex {
@@ -382,8 +410,11 @@ typedef struct LightVertex {
     float col[3];
 } LightVertex;
 
+#define SUN_TAN 1.4f /* the sun's height: it rises 1.4 for each unit across (54 degrees up) */
 typedef struct LightConsts {
     float frame_size[2], strength, add, origin[2], pad[2];
+    float sun[4];     /* the sun's shadows: a step towards the sun (window pixels), the ray's rise a step, how dark */
+    float ambient[4]; /* the ambient light (the sun's part, which a shadow takes) */
 } LightConsts;
 
 /* the times of day (FreeSynd's grades): the ambient light the light map starts with, a part of the city added
@@ -668,6 +699,7 @@ static int make_city(void)
         {"TEXCOORD", 3, DXGI_FORMAT_R32_UINT, 0, 36, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 4, DXGI_FORMAT_R32G32B32_UINT, 0, 40, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 5, DXGI_FORMAT_R32_UINT, 0, 52, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 6, DXGI_FORMAT_R32_FLOAT, 0, 56, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
     static const D3D11_INPUT_ELEMENT_DESC light_layout[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -742,7 +774,11 @@ static int make_city(void)
     if (FAILED(ID3D11Device_CreateBlendState(g_dev, &bl, &g_blend))) return 0;
     bl.IndependentBlendEnable = TRUE;
     bl.RenderTarget[1] = bl.RenderTarget[0];
+    bl.RenderTarget[2] = bl.RenderTarget[0];
+    bl.RenderTarget[2].SrcBlend = D3D11_BLEND_SRC_ALPHA; /* a height where the pixel is opaque, over what is under */
+    bl.RenderTarget[2].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
     if (FAILED(ID3D11Device_CreateBlendState(g_dev, &bl, &g_blend_lit))) return 0;
+    bl.RenderTarget[2] = bl.RenderTarget[3];
     bl.IndependentBlendEnable = FALSE;
     /* the lights add up */
     bl.RenderTarget[0].DestBlend = bl.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
@@ -890,7 +926,7 @@ void gpu_shutdown(void)
     RELEASE(g_add);
     {
         int k;
-        for (k = 0; k < 3; k++) {
+        for (k = 0; k < 4; k++) {
             RELEASE(g_lit_srv[k]);
             RELEASE(g_lit_rtv[k]);
             RELEASE(g_lit_tex[k]);
@@ -964,12 +1000,12 @@ static int texture(int w, int h)
 /* the textures of the lit city, w x h */
 static int lit_targets(int w, int h)
 {
-    static const DXGI_FORMAT formats[3] = {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
-                                           DXGI_FORMAT_R16G16B16A16_FLOAT};
+    static const DXGI_FORMAT formats[4] = {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                           DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT};
     D3D11_TEXTURE2D_DESC td;
     int k;
     if (g_lit_tex[0] != NULL && w == g_lit_w && h == g_lit_h) return 1;
-    for (k = 0; k < 3; k++) {
+    for (k = 0; k < 4; k++) {
         RELEASE(g_lit_srv[k]);
         RELEASE(g_lit_rtv[k]);
         RELEASE(g_lit_tex[k]);
@@ -981,7 +1017,7 @@ static int lit_targets(int w, int h)
     td.SampleDesc.Count = 1;
     td.Usage = D3D11_USAGE_DEFAULT;
     td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-    for (k = 0; k < 3; k++) {
+    for (k = 0; k < 4; k++) {
         td.Format = formats[k];
         if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_lit_tex[k])) ||
             FAILED(ID3D11Device_CreateRenderTargetView(g_dev, (ID3D11Resource *)g_lit_tex[k], NULL, &g_lit_rtv[k])) ||
@@ -1051,7 +1087,8 @@ static void draw_city(RECT dst, int fw, int fh)
     UINT stride = sizeof(CityVertex), offset = 0;
     static LightVertex *gverts;
     static int gverts_cap;
-    int i, n, nv = 0, nlv = 0, ngv = 0, time = (int)g_time, lit_time;
+    int i, n, nv = 0, nlv = 0, ngv = 0, time = (int)g_time, lit_time, sun_on = 0;
+    float sun_a = 0;
     float sx = (float)(dst.right - dst.left) / (float)fw, sy = (float)(dst.bottom - dst.top) / (float)fh, zoom;
     AcquireSRWLockExclusive(&g_city_lock);
     if (!g_city_on) {
@@ -1092,6 +1129,13 @@ static void draw_city(RECT dst, int fw, int fh)
     }
     n = g_city_n;
     zoom = g_city_scale;
+    /* the sun's shadows: on, and where the sun is (each quad carries it: the first's) */
+    for (i = 0; i < n; i++)
+        if (g_city_quads[i].shade & HOST_SHADE_ON) {
+            sun_on = 1;
+            sun_a = (float)((g_city_quads[i].shade >> 8) & 255) / 255.0f;
+            break;
+        }
     if (n * 6 > verts_cap) {
         CityVertex *v = (CityVertex *)realloc(verts, sizeof *v * (size_t)n * 6);
         if (v == NULL) {
@@ -1127,6 +1171,7 @@ static void draw_city(RECT dst, int fw, int fh)
             c[k].look[1] = q->look[1];
             c[k].look[2] = q->look[2];
             c[k].shade = q->shade;
+            c[k].z = q->z;
         }
         verts[nv++] = c[0];
         verts[nv++] = c[1];
@@ -1197,7 +1242,8 @@ static void draw_city(RECT dst, int fw, int fh)
     cc.sun[1] = k_relief[lit_time].sun[1];
     cc.sun[2] = k_relief[lit_time].sun[2];
     memset(cc.shadow, 0, sizeof cc.shadow);
-    cc.shadow[0] = k_times[lit_time].strength; /* the shadows as strong as the time's light (night: faint) */
+    cc.shadow[0] = sun_on ? k_times[lit_time].strength : 0; /* the faces away from the sun (the shadows on the
+                                                              * ground: traced per pixel in the light map) */
     cc.sun[3] = (float)(GetTickCount64() % 1000000u) / 1000.0f; /* the water's time: its drift repeats each 1000 s */
     if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_city_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
         memcpy(map.pData, &cc, sizeof cc);
@@ -1205,7 +1251,7 @@ static void draw_city(RECT dst, int fw, int fh)
     }
     {
         ID3D11ShaderResourceView *srv[4] = {g_atlas_srv, g_natlas_srv, g_mat_srv[0], g_mat_srv[1]};
-        int lit = time >= 0 && lit_targets(dst.right - dst.left, dst.bottom - dst.top);
+        int lit = (time >= 0 || sun_on) && lit_targets(dst.right - dst.left, dst.bottom - dst.top);
         ID3D11DeviceContext_IASetInputLayout(g_ctx, g_city_layout);
         ID3D11DeviceContext_IASetVertexBuffers(g_ctx, 0, 1, &g_city_vb, &stride, &offset);
         ID3D11DeviceContext_IASetPrimitiveTopology(g_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -1222,16 +1268,18 @@ static void draw_city(RECT dst, int fw, int fh)
             ID3D11DeviceContext_Draw(g_ctx, (UINT)nv, 0);
         } else {
             static const float clear[4] = {0, 0, 0, 0};
-            ID3D11ShaderResourceView *none[3] = {NULL, NULL, NULL};
+            ID3D11ShaderResourceView *none[4] = {NULL, NULL, NULL, NULL};
+            static const float no_height[4] = {-30000, 0, 0, 0};
             D3D11_VIEWPORT vp = {0, 0, (float)(dst.right - dst.left), (float)(dst.bottom - dst.top), 0, 1};
             D3D11_VIEWPORT back = {(float)dst.left, (float)dst.top, vp.Width, vp.Height, 0, 1};
             D3D11_RECT lsc = {sc.left - dst.left, sc.top - dst.top, sc.right - dst.left, sc.bottom - dst.top};
             float ambient[4] = {k_times[lit_time].ambient[0], k_times[lit_time].ambient[1], k_times[lit_time].ambient[2], 1};
-            ID3D11RenderTargetView *scene_rtv[2] = {g_lit_rtv[0], g_lit_rtv[1]};
+            ID3D11RenderTargetView *scene_rtv[3] = {g_lit_rtv[0], g_lit_rtv[1], g_lit_rtv[3]};
             LightConsts lc;
             UINT lstride = sizeof(LightVertex);
             /* the city and what glows in it, in their textures */
-            ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 2, scene_rtv, NULL);
+            ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 3, scene_rtv, NULL);
+            ID3D11DeviceContext_ClearRenderTargetView(g_ctx, g_lit_rtv[3], no_height);
             ID3D11DeviceContext_ClearRenderTargetView(g_ctx, g_lit_rtv[0], clear);
             ID3D11DeviceContext_ClearRenderTargetView(g_ctx, g_lit_rtv[1], clear);
             ID3D11DeviceContext_OMSetBlendState(g_ctx, g_blend_lit, NULL, 0xFFFFFFFFu);
@@ -1247,6 +1295,17 @@ static void draw_city(RECT dst, int fw, int fh)
             lc.add = k_times[lit_time].add;
             lc.origin[0] = (float)dst.left;
             lc.origin[1] = (float)dst.top;
+            {
+                /* the sun towards world (-cos a, -sin a), rising SUN_TAN for each unit across: on the screen a
+                 * frame pixel is (x - y) / 8 across, ((x + y) / 2 - z) / 8 down; a step one frame pixel long */
+                float c = cosf(sun_a * 1.5708f), s = sinf(sun_a * 1.5708f), dx = (s - c) / 8.0f;
+                float dy = (-(c + s) / 2.0f - SUN_TAN) / 8.0f, len = sqrtf(dx * dx + dy * dy), px = sx * zoom;
+                lc.sun[0] = dx / len * px;
+                lc.sun[1] = dy / len * px;
+                lc.sun[2] = SUN_TAN / len;
+                lc.sun[3] = sun_on ? 0.62f * k_times[lit_time].strength : 0.0f; /* how dark (night: faint) */
+                memcpy(lc.ambient, ambient, sizeof lc.ambient);
+            }
             if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_comp_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
                 memcpy(map.pData, &lc, sizeof lc);
                 ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_comp_cb, 0);
@@ -1285,10 +1344,10 @@ static void draw_city(RECT dst, int fw, int fh)
             ID3D11DeviceContext_VSSetShader(g_ctx, g_vs, NULL, 0);
             ID3D11DeviceContext_PSSetShader(g_ctx, g_comp_ps, NULL, 0);
             ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
-            ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 3, g_lit_srv);
+            ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 4, g_lit_srv);
             ID3D11DeviceContext_OMSetBlendState(g_ctx, g_blend, NULL, 0xFFFFFFFFu);
             ID3D11DeviceContext_Draw(g_ctx, 3, 0);
-            ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 3, none);
+            ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 4, none);
         }
         if (ngv > 0) draw_glows(dst, fw, fh, sc, gverts, ngv);
         ID3D11DeviceContext_RSSetState(g_ctx, NULL);
