@@ -47,7 +47,7 @@
 #include "../rt/rt.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
-#define STBI_NO_STDIO
+#define STBI_ONLY_PNG /* the HD texture pack (render.c) */
 #define STBI_NO_HDR
 #define STBI_NO_LINEAR
 #include "../third_party/stb_image.h"
@@ -2897,6 +2897,11 @@ static volatile int g_routes_on = 1; /* game_set_routes; SYND_ROUTES=off: the ga
 void game_set_routes(int on)
 {
     g_routes_on = on != 0;
+}
+
+void game_set_hd(int on)
+{
+    render_set_hd(on);
 }
 
 /* a file of the running game's DATA folder, unpacked when it is packed (rnc.c): its bytes (malloc'd, *size of

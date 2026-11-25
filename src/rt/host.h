@@ -60,6 +60,8 @@ typedef struct HostCityQuad {
     uint32_t hat;     /* a colour (0x00RRGGBB) for the image's hat pixels (alpha 254) in its top rows (the top byte:
                        * how many; 0: none) */
 } HostCityQuad;
+/* HostCityQuad.hat of a tile with material pixels: this bit, the tile's map y in bits 10-19, its x in bits 0-9 */
+#define HOST_CITY_WORLD 0x100000u
 #define HOST_GLOW_SIGNAL 0x40u /* HostCityQuad.glow: its bright, strongly coloured pixels shine too (lamps) */
 /* a light in the city (a lamp): a soft ellipse of light, centre x, y, radii rx, ry (frame pixels) */
 typedef struct HostCityLight {
@@ -84,9 +86,17 @@ void host_menu_sides(const HostMenuSides *s);
 int host_city_gpu(void);
 /* forget every image (new data); then define image `image`: w x h pixels 0xAARRGGBB, row stride w, `scale` (1, 2
  * or 4) of them to a pixel of the frame each way; alpha 255 opaque, 254 a hat pixel (HostCityQuad.hat's colour), 253 a
- * hat's shine (its colour brighter), 0 transparent */
+ * hat's shine (its colour brighter), 240 + K (in a tile drawn with HOST_CITY_WORLD) material K's, 0 transparent */
 void host_city_reset(void);
 void host_city_image(int image, int w, int h, int scale, const uint32_t *pixels);
+/* the normals of image `image` (defined just before; w x h 0x??XXYYZZ, x right, y down, z out of the picture, 128 0):
+ * the light picks out its relief.  Without: flat */
+void host_city_normals(int image, int w, int h, const uint32_t *pixels);
+/* ground material `k` (0-11): w x h pixels 0x00RRGGBB repeating without a seam, and its normals (x along its rows,
+ * y down its columns, z up out of the ground); a tile's pixels of alpha 240 + k show it at their place on the ground
+ * (HostCityQuad.hat: HOST_CITY_WORLD and the tile's map place), 4 of its pixels a game pixel.  Kept across
+ * host_city_reset */
+void host_city_material(int k, int w, int h, const uint32_t *colour, const uint32_t *normals);
 /* the city of the next frame: quads drawn in order, inside the rectangle x0..x1, y0..y1 of the frame, each image
  * `scale` times its size (the zoom); the lights show when the platform lights the city for a time of day darker
  * than the mission's own look */

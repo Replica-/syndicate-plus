@@ -246,6 +246,23 @@ void host_city_image(int image, int w, int h, int scale, const uint32_t *pixels)
     (void)pixels;
 }
 
+void host_city_normals(int image, int w, int h, const uint32_t *pixels)
+{
+    (void)image;
+    (void)w;
+    (void)h;
+    (void)pixels;
+}
+
+void host_city_material(int k, int w, int h, const uint32_t *colour, const uint32_t *normals)
+{
+    (void)k;
+    (void)w;
+    (void)h;
+    (void)colour;
+    (void)normals;
+}
+
 void host_city_frame(const HostCityQuad *quads, int n, int x0, int y0, int x1, int y1, float scale,
                      const HostCityLight *lights, int nlights)
 {

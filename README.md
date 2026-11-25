@@ -153,12 +153,24 @@ Traffic lights glow at dusk and night in the colours of their lamps lit (red, am
 road on its side; billboards light up, and throw their picture's colour out in front of them, wider further
 out; the small signs on walls shine and light the wall and the pavement in their own colours.  Other small coloured lights in the objects glow too.  Held B also outlines in cyan the edges of the floor the squad walks on.
 
+*HD textures* (window menu and the Escape menu; on by default) draws the city's tiles from an HD pack in `hd`
+beside the saves when it is there (`tile_NNN.png`, 4 times a tile's size, `tile_NNN_n.png` its normals): normal
+maps pick out their relief in the light of the time of day (the sun from the top left by day, low from the left at
+dusk and from the right at dawn, faint at night).  The ground is laid in materials (`material_KK.png`, 1024 x 1024
+squares that repeat without a seam, and their normals): a tile's pixels of alpha 240 + K show material K at their
+place on the map, 8 x 8 tiles before it repeats, so tiles side by side never show a seam (the image's edges are
+filtered without going see-through, too).  Material 11 is water: black, its ripples drifting, reflecting the sky
+(more at a grazing angle) and the sun's glints (only `material_11_n.png`, the ripples, is used).  The pack's own
+`hd/tile_lights.ini` sets how its tiles light up (over the defaults, under the user's `tile_lights.ini`).  A tile with `tile_NNN_orig.png` (the tile it was made from) is re-tinted to
+each mission's colours; without, it keeps its own.  `tools/hd_city/` makes the pack (Fooocus and DeepBump, from the
+game's own tiles: Mission 1's, in a cyberpunk look); the pack is not part of this repository.
+
 Configure Company shows every colour and logo in grids under its panel, one click each: the game's 8 colours and
 18 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world
 map and its menus), and the 40 logos in the colour chosen.  The team selection has RELOAD ALL above the agent's
 weapons: every weapon of the squad's four agents reloaded as the game's own RELOAD does an agent's (paid for a round
 at a time), only when the funds pay for all of them.  Escape in a mission opens a menu in the game's
-briefing look while the mission waits, the region's name and the mission's number at its top: Resume, time of day, full screen, frames a second,
+briefing look while the mission waits, the region's name and the mission's number at its top: Resume, time of day, HD textures, full screen, frames a second,
 the volumes, squad routes, and Abort mission (the game's Escape).  *Squad finds routes* (on by default): a move order the game's straight walk
 would not do well (another level, a gap or a wall between, or passing close to one) is walked as a route over the
 map's floors and stairs: A* on the tiles (with the game's own tile types), a step beside a wall costing more so the

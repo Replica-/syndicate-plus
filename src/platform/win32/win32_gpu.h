@@ -28,6 +28,9 @@ void gpu_city_reset(void);
 void gpu_menu_side_images(const uint32_t *const px[4], int w, int h);
 void gpu_menu_sides(const HostMenuSides *s);
 void gpu_city_image(int id, int w, int h, int scale, const uint32_t *pixels);
+void gpu_city_normals(int id, int w, int h, const uint32_t *pixels);
+/* ground material k (host.h: host_city_material); any thread, uploaded at the next city drawn */
+void gpu_city_material(int k, int w, int h, const uint32_t *colour, const uint32_t *normals);
 void gpu_city_frame(const HostCityQuad *quads, int n, int x0, int y0, int x1, int y1,
                     float scale, const HostCityLight *lights, int nlights);
 /* the time of day the city is lit for: 0 as the mission is (its colours; its lights glow as dark as its palette is),

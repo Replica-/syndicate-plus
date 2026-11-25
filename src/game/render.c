@@ -68,7 +68,8 @@ static uint16_t rd16(uint32_t a)
 static uint8_t g_types[256]; /* the tiles' types (COL01.DAT), render_set_tile_types */
 static int g_have_types;
 
-/* the images the GPU has (host_city_image, in true colour): the tiles 0-255, the sprites from 256 */
+/* the images the GPU has (host_city_image, in true colour): the tiles 0-255 (from the HD pack, when it has them),
+ * the sprites from 256 */
 #define IMAGE_SPRITES 256
 static uint8_t g_defined[IMAGE_SPRITES + 4096];
 
@@ -208,11 +209,14 @@ static uint32_t shine(uint32_t c)
 
 /* an image (palette indices, 255 transparent) to the GPU in true colour: the hat's colours marked (alpha 254 its
  * colour, 253 its shine) */
+static int hd_define(int image, const uint8_t *px);
+
 static void define_image(int image, const uint8_t *px, int w, int h)
 {
     static uint32_t rgb[256 * 256];
     int i, head = image >= IMAGE_SPRITES && is_head(image - IMAGE_SPRITES);
     if (w * h > 256 * 256) return;
+    if (image < IMAGE_SPRITES && hd_define(image, px)) return;
     for (i = 0; i < w * h; i++) {
         uint32_t a = px[i] == HAT_INDEX ? 0xFE000000u : head && px[i] == HAT_SHINE ? 0xFD000000u : 0xFF000000u;
         rgb[i] = px[i] == 255 ? 0 : a | (g_image_pal[px[i]] & 0xFFFFFFu);
@@ -228,6 +232,9 @@ static uint32_t sprite_colour(const uint32_t *pal, uint8_t c, int row, uint32_t 
     return pal[c];
 }
 static int g_put_head; /* the sprite being put is a head (sprite_colour) */
+
+static int g_put_tx = -1, g_put_ty; /* the map place of the tile being put (-1: not a tile of the map) */
+static int hd_has_materials(int image);
 
 static void emit(int image, const uint8_t *px, int w, int h, float x, float y, int flipped, uint32_t hat, int glow)
 {
@@ -249,7 +256,10 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->image = (uint16_t)image;
     q->flip = (uint8_t)(flipped != 0);
     q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0));
-    q->hat = image < IMAGE_SPRITES ? 0 : hat; /* a sprite: its hat's rows, colour */
+    q->hat = image >= IMAGE_SPRITES ? hat /* a sprite: its hat's rows, colour */
+             : g_put_tx >= 0 && hd_has_materials(image)
+                   ? HOST_CITY_WORLD | (uint32_t)(g_put_ty & 1023) << 10 | (uint32_t)(g_put_tx & 1023)
+                   : 0; /* a tile with materials: its place on the map */
 }
 
 
@@ -348,6 +358,167 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
     }
 }
 
+/* ---- the HD texture pack (render.h) ---- */
+#include "../third_party/stb_image.h" /* (its code: additions.c) */
+#define HD_SCALE 4
+#define HD_W (TILE_W * HD_SCALE)
+#define HD_H (TILE_H * HD_SCALE)
+static int g_hd = 1;
+static volatile int g_hd_want = 1; /* render_set_hd (any thread); g_hd follows it at the next city drawn */
+typedef struct HdTile {
+    int state;          /* 0 not looked for, 1 loaded, 2 none */
+    uint8_t *rgba;      /* HD_W x HD_H */
+    uint8_t *normals;   /* HD_W x HD_H RGB(A) */
+    uint8_t *orig;      /* TILE_W x TILE_H RGBA: the colours it was made in */
+    int materials;      /* some of its pixels are a material's (alpha HD_MATERIAL + its number) */
+} HdTile;
+static HdTile g_hd_tiles[NB_TILES];
+/* the ground materials (hd/material_KK.png, 1024 x 1024, repeating without a seam, and _n its normals): a tile's
+ * pixels of alpha HD_MATERIAL + K show material K, laid on the ground in world space (4 texture pixels a game pixel:
+ * 8 x 8 tiles before it repeats), so tiles side by side never show a seam or the same pattern */
+#define HD_MATERIAL 240
+#define HD_MATERIALS 12
+#define HD_MAT_SIZE 1024
+static int g_hd_materials_loaded;
+
+static uint8_t *hd_load(int id, const char *suffix, int w, int h)
+{
+    char path[1200];
+    int iw, ih, n;
+    uint8_t *p;
+    snprintf(path, sizeof path, "%s/hd/tile_%03d%s.png", rt_user_dir, id, suffix);
+    p = stbi_load(path, &iw, &ih, &n, 4);
+    if (p != NULL && (iw != w || ih != h)) {
+        stbi_image_free(p);
+        p = NULL;
+    }
+    return p;
+}
+
+static const char *g_dump_tiles;
+
+void render_dump_tiles(const char *path)
+{
+    g_dump_tiles = path;
+}
+
+static void dump_tiles(const uint32_t *pal)
+{
+    FILE *f = fopen(g_dump_tiles, "wb");
+    int i, k;
+    g_dump_tiles = NULL;
+    if (f == NULL) return;
+    for (i = 0; i < NB_TILES; i++) {
+        const uint8_t *t = tile(i);
+        for (k = 0; k < TILE_W * TILE_H; k++) {
+            uint32_t c = t != NULL && t[k] != 255 ? 0xFF000000u | pal[t[k]] : 0;
+            fwrite(&c, 4, 1, f);
+        }
+    }
+    fwrite(g_types, 1, sizeof g_types, f);
+    fclose(f);
+}
+
+void render_set_hd(int on)
+{
+    g_hd_want = on != 0;
+}
+
+static int hd_has_materials(int image)
+{
+    return g_hd && image >= 0 && image < NB_TILES && g_hd_tiles[image].materials;
+}
+
+static void hd_materials(void)
+{
+    static uint32_t rgb[HD_MAT_SIZE * HD_MAT_SIZE], nrm[HD_MAT_SIZE * HD_MAT_SIZE];
+    int k, i;
+    g_hd_materials_loaded = 1;
+    for (k = 0; k < HD_MATERIALS; k++) {
+        char path[1200];
+        int w, h, n;
+        uint8_t *c, *nm;
+        snprintf(path, sizeof path, "%s/hd/material_%02d.png", rt_user_dir, k);
+        c = stbi_load(path, &w, &h, &n, 4);
+        if (c == NULL) continue;
+        if (w != HD_MAT_SIZE || h != HD_MAT_SIZE) {
+            stbi_image_free(c);
+            continue;
+        }
+        snprintf(path, sizeof path, "%s/hd/material_%02d_n.png", rt_user_dir, k);
+        nm = stbi_load(path, &w, &h, &n, 4);
+        if (nm != NULL && (w != HD_MAT_SIZE || h != HD_MAT_SIZE)) {
+            stbi_image_free(nm);
+            nm = NULL;
+        }
+        for (i = 0; i < HD_MAT_SIZE * HD_MAT_SIZE; i++) {
+            const uint8_t *p = c + i * 4, *q = nm != NULL ? nm + i * 4 : NULL;
+            rgb[i] = 0xFF000000u | (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
+            nrm[i] = q != NULL ? 0xFF000000u | (uint32_t)q[0] << 16 | (uint32_t)q[1] << 8 | q[2] : 0xFF8080FFu;
+        }
+        host_city_material(k, HD_MAT_SIZE, HD_MAT_SIZE, rgb, nrm);
+        stbi_image_free(c);
+        if (nm != NULL) stbi_image_free(nm);
+    }
+}
+
+/* tile `image` (its pixels px, palette indices) from the pack, with its normals; 0 if not in the pack.  With the tile it
+ * was made from (tile_NNN_orig.png) its colours are brought to the tile's (its mean colour, each channel, the tile's
+ * mean colour in this palette: as bright and tinted as the game draws it); without, it keeps its own colours in every
+ * mission (the time of day still lights it) */
+static int hd_define(int image, const uint8_t *px)
+{
+    static uint32_t rgb[HD_W * HD_H], nrm[HD_W * HD_H];
+    HdTile *t = &g_hd_tiles[image];
+    float now[3] = {0, 0, 0}, was[3] = {0, 0, 0}, f[3];
+    int x, y, ch;
+    if (!g_hd) return 0;
+    if (!g_hd_materials_loaded) hd_materials();
+    if (t->state == 0) {
+        t->rgba = hd_load(image, "", HD_W, HD_H);
+        t->normals = t->rgba != NULL ? hd_load(image, "_n", HD_W, HD_H) : NULL;
+        t->orig = t->rgba != NULL ? hd_load(image, "_orig", TILE_W, TILE_H) : NULL;
+        t->state = t->rgba != NULL ? 1 : 2;
+    }
+    if (t->state != 1) return 0;
+    for (y = 0; y < TILE_H * TILE_W; y++)
+        if (px[y] != 255)
+            for (ch = 0; ch < 3; ch++)
+                now[ch] += (float)((g_image_pal[px[y]] >> (16 - 8 * ch)) & 255) * (HD_SCALE * HD_SCALE);
+    for (y = 0; y < HD_H; y++)
+        for (x = 0; x < HD_W; x++)
+            if (t->rgba[(y * HD_W + x) * 4 + 3] >= 128 && px[(y / HD_SCALE) * TILE_W + x / HD_SCALE] != 255)
+                for (ch = 0; ch < 3; ch++) was[ch] += (float)t->rgba[(y * HD_W + x) * 4 + ch];
+    for (ch = 0; ch < 3; ch++) f[ch] = t->orig != NULL && was[ch] > 0 ? now[ch] / was[ch] : 1.0f;
+    for (y = 0; y < HD_H; y++)
+        for (x = 0; x < HD_W; x++) {
+            const uint8_t *h = t->rgba + (y * HD_W + x) * 4;
+            uint32_t out = 0;
+            if (h[3] < 128 || px[(y / HD_SCALE) * TILE_W + x / HD_SCALE] == 255) {
+                rgb[y * HD_W + x] = 0;
+                continue;
+            }
+            for (ch = 0; ch < 3; ch++) {
+                float v = (float)h[ch] * f[ch];
+                out |= (uint32_t)(v > 255.0f ? 255.0f : v) << (16 - 8 * ch);
+            }
+            /* a material's pixel keeps its alpha (the material's number) */
+            if (h[3] >= HD_MATERIAL && h[3] < HD_MATERIAL + HD_MATERIALS) {
+                rgb[y * HD_W + x] = (uint32_t)h[3] << 24 | out;
+                t->materials = 1;
+            } else {
+                rgb[y * HD_W + x] = 0xFF000000u | out;
+            }
+            if (t->normals != NULL) {
+                const uint8_t *n = t->normals + (y * HD_W + x) * 4;
+                nrm[y * HD_W + x] = 0xFF000000u | (uint32_t)n[0] << 16 | (uint32_t)n[1] << 8 | n[2];
+            }
+        }
+    host_city_image(image, HD_W, HD_H, HD_SCALE, rgb);
+    if (t->normals != NULL) host_city_normals(image, HD_W, HD_H, nrm);
+    return 1;
+}
+
 /* `hat`: the colour of the hat: colour 6 of the sprites that are heads, whose colour 6 is all in their top
  * HAT_ROWS rows (what the agents hold uses colour 6 too, anywhere in it) */
 #define HAT_ROWS 5
@@ -380,14 +551,25 @@ static int hat_rows(int id, const uint8_t *s, int sw, int sh)
 static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, float fay, uint32_t hat)
 {
     uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), f = frames + (uint32_t)frame * 8u;
-    uint32_t e = rd16(f);
-    int guard = 0;
+    uint32_t e = rd16(f), e0 = e;
+    int guard = 0, top = 0x7FFFFFFF;
+    /* the frame's topmost element: the head (the hat's colour is also in what the agents hold, as the minigun) */
+    if (hat != 0)
+        for (;;) {
+            uint32_t ea = elements + e * 10u;
+            int sw, sh, oy = (int16_t)rd16(ea + 4u);
+            if (sprite(rd16(ea) / 6, &sw, &sh) != NULL && oy < top) top = oy;
+            e = rd16(ea + 8u);
+            if (e == 0 || ++guard > 64) break;
+        }
+    e = e0;
+    guard = 0;
     for (;;) {
         uint32_t ea = elements + e * 10u;
         int sw, sh, id = rd16(ea) / 6, ox = (int16_t)rd16(ea + 2u), oy = (int16_t)rd16(ea + 4u);
         const uint8_t *s = sprite(id, &sw, &sh);
         if (s != NULL) {
-            int rows = hat != 0 ? hat_rows(id, s, sw, sh) : 0;
+            int rows = hat != 0 && (is_head(id) || oy == top) ? hat_rows(id, s, sw, sh) : 0;
             g_put_head = is_head(id);
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
                 rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
@@ -636,22 +818,11 @@ static int name_index(const char *v, const char *const *names, int n)
 
 static void tile_light_forget(int id);
 
-static void tile_settings_load(void)
+/* the settings in a tile_lights.ini over those set before */
+static void tile_settings_read(const char *path)
 {
-    char path[1200], line[256];
-    FILE *f;
-    int k;
-    g_tile_set_loaded = 1;
-    memset(g_tile_set, 0, sizeof g_tile_set);
-    for (k = 0; k < (int)(sizeof k_tile_lights / sizeof k_tile_lights[0]); k++) {
-        RenderTileSetting *t = &g_tile_set[k_tile_lights[k].tile];
-        t->glow = k_tile_lights[k].glow;
-        t->light = k_tile_lights[k].light;
-        t->radius = k_tile_lights[k].radius;
-        t->set = 1;
-    }
-    snprintf(path, sizeof path, "%s/%s", rt_user_dir, TILE_LIGHTS_FILE);
-    f = fopen(path, "r");
+    char line[256];
+    FILE *f = fopen(path, "r");
     if (f == NULL) return;
     /* tile=N glow=none|bright|full light=auto|none|on radius=R colour=auto|r,g,b */
     while (fgets(line, sizeof line, f) != NULL) {
@@ -669,6 +840,29 @@ static void tile_settings_load(void)
         g_tile_set[id] = t;
     }
     fclose(f);
+}
+
+/* the defaults, then the HD pack's (hd/tile_lights.ini: its tiles drawn otherwise, as the tower bases' pads without
+ * their light), then the user's */
+static void tile_settings_load(void)
+{
+    char path[1200];
+    int k;
+    g_tile_set_loaded = 1;
+    memset(g_tile_set, 0, sizeof g_tile_set);
+    for (k = 0; k < (int)(sizeof k_tile_lights / sizeof k_tile_lights[0]); k++) {
+        RenderTileSetting *t = &g_tile_set[k_tile_lights[k].tile];
+        t->glow = k_tile_lights[k].glow;
+        t->light = k_tile_lights[k].light;
+        t->radius = k_tile_lights[k].radius;
+        t->set = 1;
+    }
+    if (g_hd) {
+        snprintf(path, sizeof path, "%s/hd/%s", rt_user_dir, TILE_LIGHTS_FILE);
+        tile_settings_read(path);
+    }
+    snprintf(path, sizeof path, "%s/%s", rt_user_dir, TILE_LIGHTS_FILE);
+    tile_settings_read(path);
 }
 
 int render_tile_setting(int id, RenderTileSetting *out)
@@ -1298,6 +1492,14 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     static Obj objs[2048];
     uint32_t map, cols;
     if (g_ra.map == 0) return;
+    if (g_dump_tiles != NULL && g_have_types) dump_tiles(pal);
+    if (g_hd != g_hd_want) {
+        /* HD textures on or off: the GPU's images made again */
+        g_hd = g_hd_want;
+        lights_forget(); /* the pack's light settings in or out */
+        memset(g_defined, 0, sizeof g_defined);
+        host_city_reset();
+    }
     if (rgb == NULL && memcmp(g_image_pal, pal, sizeof g_image_pal) != 0) {
         /* another palette: the GPU's images are made again in its colours */
         memcpy(g_image_pal, pal, sizeof g_image_pal);
@@ -1434,8 +1636,11 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         float ffx, ffy;
                         project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
                         g_translucent = g_cut >= 0 && tz >= g_cut;
+                        g_put_tx = tx;
+                        g_put_ty = ty;
                         put(&t, tid, tl, TILE_W, TILE_H, fx + render_tile_dx, fy + render_tile_dy,
                             ffx + (float)render_tile_dx, ffy + (float)render_tile_dy, 0, 0);
+                        g_put_tx = -1;
                         g_translucent = 0;
                         if (t.gpu) tile_lights_at(tid, ffx + (float)render_tile_dx, ffy + (float)render_tile_dy);
                         if (g_ndrawn < NB_DRAWN) {

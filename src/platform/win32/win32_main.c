@@ -57,6 +57,7 @@
 #define SC_APP_FPS 0x10D0u
 #define SC_APP_TIME 0x1300u /* + 0x10 * time (0 the mission's own look, 1 day, 2 dusk, 3 night, 4 dawn) */
 #define SC_APP_ROUTES 0x10F0u
+#define SC_APP_HD 0x10A0u
 #define SC_APP_MUSIC_VOL 0x1100u /* + 0x10 * step (0..4): off, 25%, 50%, 75%, 100% */
 #define SC_APP_SOUND_VOL 0x1200u
 #define WM_APP_GAME_DONE (WM_APP + 1)
@@ -114,6 +115,16 @@ void host_city_reset(void)
 void host_city_image(int image, int w, int h, int scale, const uint32_t *pixels)
 {
     gpu_city_image(image, w, h, scale, pixels);
+}
+
+void host_city_material(int k, int w, int h, const uint32_t *colour, const uint32_t *normals)
+{
+    gpu_city_material(k, w, h, colour, normals);
+}
+
+void host_city_normals(int image, int w, int h, const uint32_t *pixels)
+{
+    gpu_city_normals(image, w, h, pixels);
 }
 
 void host_city_frame(const HostCityQuad *quads, int n, int x0, int y0, int x1, int y1, float scale,
@@ -845,7 +856,15 @@ static void set_time(int t)
     if (g_ini[0]) WritePrivateProfileStringW(L"video", L"time", k_time_names[t], g_ini);
 }
 
-static int g_routes = 1;
+static int g_routes = 1, g_hd = 1;
+
+static void toggle_hd(void)
+{
+    g_hd = !g_hd;
+    game_set_hd(g_hd);
+    CheckMenuItem(GetSystemMenu(g_hwnd, FALSE), SC_APP_HD, g_hd ? MF_CHECKED : MF_UNCHECKED);
+    if (g_ini[0]) WritePrivateProfileStringW(L"video", L"hd", g_hd ? L"1" : L"0", g_ini);
+}
 
 static void toggle_routes(void)
 {
@@ -965,12 +984,12 @@ static void save_capture(void)
 }
 
 /* ==== the options of the mission's menu (Escape): the window menu's, changed on the window's thread ======== */
-enum { OPT_TIME, OPT_FULL, OPT_FPS, OPT_MUSIC, OPT_SOUND, OPT_ROUTES, NB_OPTS };
+enum { OPT_TIME, OPT_HD, OPT_FULL, OPT_FPS, OPT_MUSIC, OPT_SOUND, OPT_ROUTES, NB_OPTS };
 
 
 int host_options(HostOption *o, int max)
 {
-    static const char *const names[NB_OPTS] = {"TIME OF DAY", "FULL SCREEN",
+    static const char *const names[NB_OPTS] = {"TIME OF DAY", "HD TEXTURES", "FULL SCREEN",
                                                "FRAMES A SECOND", "MUSIC VOLUME", "SOUND VOLUME", "SQUAD ROUTES"};
     static const char *const times[5] = {"MISSION", "DAY", "DUSK", "NIGHT", "DAWN"};
     int k, n = max < NB_OPTS ? max : NB_OPTS;
@@ -983,6 +1002,7 @@ int host_options(HostOption *o, int max)
         case OPT_MUSIC: snprintf(o[k].value, sizeof o[k].value, "%d%%", g_music_vol); break;
         case OPT_SOUND: snprintf(o[k].value, sizeof o[k].value, "%d%%", g_sound_vol); break;
         case OPT_ROUTES: snprintf(o[k].value, sizeof o[k].value, "%s", g_routes ? "ON" : "OFF"); break;
+        case OPT_HD: snprintf(o[k].value, sizeof o[k].value, "%s", g_hd ? "ON" : "OFF"); break;
         }
     }
     return n;
@@ -1002,6 +1022,7 @@ static void option_step(int index, int dir)
     case OPT_MUSIC: set_volumes((g_music_vol / 25 + 5 + dir) % 5 * 25, g_sound_vol); break;
     case OPT_SOUND: set_volumes(g_music_vol, (g_sound_vol / 25 + 5 + dir) % 5 * 25); break;
     case OPT_ROUTES: toggle_routes(); break;
+    case OPT_HD: toggle_hd(); break;
     default: break;
     }
 }
@@ -1035,6 +1056,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             for (k = 0; k < 5; k++)
                 AppendMenuW(times, MF_STRING | (g_time == k ? MF_CHECKED : 0), SC_APP_TIME + 0x10u * (UINT)k, items[k]);
             AppendMenuW(sm, MF_POPUP, (UINT_PTR)times, L"&Time of day (missions)");
+            AppendMenuW(sm, MF_STRING | (g_hd ? MF_CHECKED : 0), SC_APP_HD, L"H&D textures (missions)");
         }
         {
             AppendMenuW(sm, MF_STRING | (g_routes ? MF_CHECKED : 0), SC_APP_ROUTES, L"Squad finds &routes (stairs, bridges)");
@@ -1103,6 +1125,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM w, LPARAM l)
             return 0;
         case SC_APP_ROUTES:
             toggle_routes();
+            return 0;
+        case SC_APP_HD:
+            toggle_hd();
             return 0;
 
         case SC_APP_TIME: case SC_APP_TIME + 0x10u: case SC_APP_TIME + 0x20u: case SC_APP_TIME + 0x30u:
@@ -1496,6 +1521,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
         gpu_set_time(g_time);
         g_routes = GetPrivateProfileIntW(L"game", L"routes", 1, g_ini) != 0;
         game_set_routes(g_routes);
+        g_hd = GetPrivateProfileIntW(L"video", L"hd", 1, g_ini) != 0;
+        game_set_hd(g_hd);
 
     }
     rt_set_show_fps(g_fps_on);

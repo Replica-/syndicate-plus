@@ -37,6 +37,8 @@ void game_set_routes(int on);
  * both are there): the screen until it is made, `revolt` the one offered first; 1 American Revolt, 0 Syndicate, -1
  * the program is quitting */
 int game_pick_first(int revolt);
+/* the HD texture pack (rt_user_dir/hd) instead of the game's tiles, where it has them (on by default) */
+void game_set_hd(int on);
 
 #ifdef __cplusplus
 }

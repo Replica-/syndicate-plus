@@ -46,8 +46,16 @@ static ID3D11BlendState *g_blend;
 static ID3D11BlendState *g_blend_lit; /* the city into the picture and its glows */
 static ID3D11RasterizerState *g_scissor;
 static ID3D11Buffer *g_cb, *g_city_cb, *g_city_vb;
-static ID3D11Texture2D *g_tex, *g_atlas;
-static ID3D11ShaderResourceView *g_srv, *g_atlas_srv; /* the images */
+static ID3D11Texture2D *g_tex, *g_atlas, *g_natlas;
+static ID3D11ShaderResourceView *g_srv, *g_atlas_srv, *g_natlas_srv; /* the images, their normals */
+/* the ground materials (gpu_city_material): two arrays of NB_MATERIALS squares, their colours and their normals,
+ * with their mipmaps; sampled repeating (g_wrap) */
+#define NB_MATERIALS 12
+static ID3D11Texture2D *g_mat[2];
+static ID3D11ShaderResourceView *g_mat_srv[2];
+static ID3D11SamplerState *g_wrap;
+static int g_mat_size;                            /* their size (0: none yet) */
+static uint32_t *g_mat_new[NB_MATERIALS][2];      /* to upload */
 static int g_tex_w, g_tex_h, g_city_vb_cap;
 static int g_win_w, g_win_h;
 /* offscreen (gpu_init(NULL): the headless tests): the picture is drawn into a texture and read back */
@@ -123,8 +131,12 @@ static const char k_shader[] =
 
 /* the city: an image's corner, its texels there, its rectangle in the atlas, its hat colour */
 static const char k_city_shader[] =
-    "cbuffer C : register(b0) { float2 frame_size; float scale; float pad; };\n"
+    "cbuffer C : register(b0) { float2 frame_size; float scale; float bump; float4 sun; };\n"
     "Texture2D<float4> atlas : register(t0);\n"
+    "Texture2D<float4> normals : register(t1);\n"
+    "Texture2DArray<float4> mat : register(t2);\n"
+    "Texture2DArray<float4> matn : register(t3);\n"
+    "SamplerState wrap : register(s0);\n"
     "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2; uint glow : TEXCOORD3; };\n"
     "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1; nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3; };\n"
     "V vs(VI i) {\n"
@@ -133,18 +145,52 @@ static const char k_city_shader[] =
     "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat; o.glow = i.glow;\n"
     "    return o;\n"
     "}\n"
+    "float texels(V i) { return (float)(1u << ((i.glow >> 4) & 3)); }\n" /* the image's texels a frame pixel */
+    /* a tile's texel p on the ground (the tile's top a 32 x 32 square of the map, its place in the quad's hat), in
+     * materials' squares (8 x 8 tiles); the material of a texel (alpha 240 + its number), -1 none */
+    "float2 world(int2 p, V i) {\n"
+    "    float2 l = ((float2)(p - (int2)i.rect.xy) + 0.5) / texels(i);\n"
+    "    float u = l.y + (l.x - 32) * 0.5, v = l.y - (l.x - 32) * 0.5;\n"
+    "    return float2(u + 32.0 * (i.hat & 1023u), v + 32.0 * ((i.hat >> 10) & 1023u)) / 256.0;\n"
+    "}\n"
+    "int material(float a, V i) {\n"
+    "    int k = (int)round(a * 255) - 240;\n"
+    "    return (i.hat & 0x100000u) && k >= 0 && k < 12 ? k : -1;\n"
+    "}\n"
+    "float matlod() { return log2(max(1.0, 4.0 / scale)); }\n" /* 4 texels a game pixel */
+    /* the water (material WATER): black, its ripples (two layers of the material's normals drifting apart, `sun.w`
+     * the time in seconds) reflecting the sky (Fresnel: more at a grazing angle) and the sun's glints.  In world
+     * space: u, v along the ground, up; the eye is down the picture and 30 degrees up */
+    "#define WATER 11\n"
+    "float3 water(int2 p, V i) {\n"
+    "    float2 w = world(p, i);\n"
+    "    float t = sun.w;\n"
+    "    float3 a = matn.SampleLevel(wrap, float3(w + float2(0.013, 0.007) * t, WATER), matlod()).rgb * 2 - 1;\n"
+    "    float3 b = matn.SampleLevel(wrap, float3(w * 1.37 + float2(-0.009, 0.012) * t, WATER), matlod()).rgb * 2 - 1;\n"
+    "    float3 n = normalize(float3((a.xy + b.xy) * 0.6, 1));\n"
+    "    float3 e = float3(0.6124, 0.6124, 0.5);\n"
+    "    float3 r = reflect(-e, n);\n"
+    "    float3 l = normalize(sun.x * float3(0.7071, -0.7071, 0) + sun.y * float3(0.3536, 0.3536, -0.866) + sun.z * e);\n"
+    "    float fr = 0.02 + 0.98 * pow(1 - saturate(dot(n, e)), 5);\n"
+    "    float3 sky = lerp(float3(0.75, 0.82, 0.95), float3(0.12, 0.15, 0.2), saturate(r.z * 1.6));\n"
+    "    float spec = pow(saturate(dot(r, l)), 200) * 12 * bump;\n"
+    "    return saturate(float3(0.003, 0.004, 0.005) + fr * sky + fr * spec * float3(1, 0.95, 0.85));\n"
+    "}\n"
     "float4 texel(int2 p, V i) {\n"
     "    float4 t;\n"
+    "    int m;\n"
     "    if (p.x < (int)i.rect.x || p.y < (int)i.rect.y || p.x >= (int)i.rect.z || p.y >= (int)i.rect.w) return 0;\n"
     "    t = atlas.Load(int3(p, 0));\n"
     "    if (t.a < 0.5) return 0;\n"
+    "    m = material(t.a, i);\n"
+    "    if (m == WATER) return float4(water(p, i), 1);\n"
+    "    if (m >= 0) return float4(mat.SampleLevel(wrap, float3(world(p, i), m), matlod()).rgb, 1);\n"
     "    if (t.a < 0.998 && p.y - (int)i.rect.y < (int)(i.hat >> 24)) {\n" /* alpha 254: the hat's colour, 253 its shine */
     "        float3 h = float3((i.hat >> 16) & 255, (i.hat >> 8) & 255, i.hat & 255) / 255.0;\n"
     "        return float4(t.a > 0.994 ? h : saturate(h * 1.5 + 20.0 / 255), 1);\n"
     "    }\n"
     "    return float4(t.rgb, 1);\n"
     "}\n"
-    "float texels(V i) { return (float)(1u << ((i.glow >> 4) & 3)); }\n" /* the image's texels a frame pixel */
     /* how much of a texel keeps its brightness in the dark (FreeSynd's): all of it (glow 2), its bright pixels
      * by their brightness (1), a road's white lights (3), nothing (0); with 64 its lamps too (bright, strongly
      * coloured: HOST_GLOW_SIGNAL) */
@@ -158,12 +204,37 @@ static const char k_city_shader[] =
     "    else if (glow == 3 && l >= 0.8 && max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b)) < 60.0 / 255) s = 0.6;\n"
     "    return float4(s, s, s, 1) * c.a;\n"
     "}\n"
+    /* the relief (the image's normals, x right, y down, z out of the picture) in the sun's light of the time of day
+     * (`sun`, `bump` how much it shows): brighter facing it, darker away; a flat normal changes nothing */
+    "float relief(V i) {\n"
+    "    int2 q = (int2)floor(i.tex);\n"
+    "    float3 n = normals.Load(int3(q, 0)).rgb * 2 - 1;\n"
+    "    int m = material(atlas.Load(int3(q, 0)).a, i);\n"
+    "    if (m == WATER) return 1;\n" /* lit by its own reflections */
+    "    if (m >= 0) {\n" /* the ground's u goes right and down the picture, its v left and down, its up out of it */
+    "        float3 g = matn.SampleLevel(wrap, float3(world(q, i), m), matlod()).rgb * 2 - 1;\n"
+    "        n = float3((g.x - g.y) * 0.7071, (g.x + g.y) * 0.3536, g.z);\n"
+    "    }\n"
+    "    float3 l = normalize(sun.xyz);\n"
+    "    return lerp(1, saturate(dot(normalize(n), l)) / l.z, bump);\n"
+    "}\n"
+    /* the four texels around a point filtered: their colours by their weights among the opaque ones only (a
+     * transparent texel brings no colour in), the coverage that of the nearest (`r` the point's place between
+     * them): an image's edge is not half see-through, so tiles side by side meet without a seam */
+    "float4 filtered(float4 a, float4 b, float4 c, float4 d, float2 f, float2 r) {\n"
+    "    float4 w = float4((1 - f.x) * (1 - f.y), f.x * (1 - f.y), (1 - f.x) * f.y, f.x * f.y) * float4(a.a, b.a, c.a, d.a);\n"
+    "    float s = w.x + w.y + w.z + w.w;\n"
+    "    float n = r.y < 0.5 ? (r.x < 0.5 ? a.a : b.a) : (r.x < 0.5 ? c.a : d.a);\n"
+    "    if (s <= 0 || n <= 0) return 0;\n"
+    "    return float4((a.rgb * w.x + b.rgb * w.y + c.rgb * w.z + d.rgb * w.w) / s, 1) * n;\n"
+    "}\n"
     "float4 ps(V i) : SV_Target {\n"
     "    float2 p = i.tex - 0.5;\n"
     "    float2 b = floor(p);\n"
     "    float2 f = saturate((p - b - 0.5) * scale / texels(i) + 0.5);\n"
     "    int2 q = (int2)b;\n"
-    "    float4 c = lerp(lerp(texel(q, i), texel(q + int2(1, 0), i), f.x), lerp(texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f.x), f.y);\n"
+    "    float4 c = filtered(texel(q, i), texel(q + int2(1, 0), i), texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f, p - b);\n"
+    "    c.rgb *= lerp(relief(i), 1, glowing(c, i.glow).r / max(c.a, 1e-4));\n" /* light is not shaded */
     "    if (i.glow & 128) c *= 60.0 / 255.0;\n" /* drawn see-through (B held) */
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
     "}\n"
@@ -177,7 +248,8 @@ static const char k_city_shader[] =
     "    int2 q = (int2)b;\n"
     "    float4 c00 = texel(q, i), c10 = texel(q + int2(1, 0), i), c01 = texel(q + int2(0, 1), i);\n"
     "    float4 c11 = texel(q + int2(1, 1), i);\n"
-    "    o.c = lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);\n"
+    "    o.c = filtered(c00, c10, c01, c11, f, p - b);\n"
+    "    o.c.rgb *= lerp(relief(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
     "    return o;\n"
@@ -212,8 +284,21 @@ typedef struct Consts {
 } Consts;
 
 typedef struct CityConsts {
-    float frame_size[2], scale, pad;
+    float frame_size[2], scale, bump, sun[4];
 } CityConsts;
+
+/* the HD tiles' relief at each time of day (k_times): where the sun is (x right, y down, z out of the picture) and
+ * how much the relief shows: from the top left by day, low from the left at dusk and from the right at dawn
+ * (longer, stronger relief), faint from above at night */
+static const struct {
+    float sun[3], bump;
+} k_relief[5] = {
+    {{-0.45f, -0.55f, 0.7f}, 0.6f},
+    {{-0.45f, -0.55f, 0.7f}, 0.6f},
+    {{-0.85f, -0.25f, 0.45f}, 0.75f},
+    {{0.0f, -0.3f, 0.95f}, 0.3f},
+    {{0.85f, -0.25f, 0.45f}, 0.7f},
+};
 
 typedef struct CityVertex {
     float x, y, u, v;
@@ -251,6 +336,7 @@ typedef struct Image {
     int w, h, ax, ay; /* size, place in the atlas (w 0: not defined) */
     int scale;        /* its pixels to a frame pixel each way: 1, 2 or 4 */
     uint32_t *pixels; /* to upload (NULL once uploaded) */
+    uint32_t *normals; /* its normals to upload (NULL: none, or uploaded) */
 } Image;
 
 static SRWLOCK g_city_lock = SRWLOCK_INIT;
@@ -279,6 +365,7 @@ void gpu_city_reset(void)
     AcquireSRWLockExclusive(&g_city_lock);
     for (i = 0; i < NB_IMAGES; i++) {
         free(g_images[i].pixels);
+        free(g_images[i].normals);
         memset(&g_images[i], 0, sizeof g_images[i]);
     }
     g_shelf_x = g_shelf_y = g_shelf_h = 0;
@@ -315,6 +402,77 @@ void gpu_city_image(int id, int w, int h, int scale, const uint32_t *pixels)
     im->pixels = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)(w * h));
     if (im->pixels != NULL) memcpy(im->pixels, pixels, sizeof(uint32_t) * (size_t)(w * h));
     ReleaseSRWLockExclusive(&g_city_lock);
+}
+
+void gpu_city_normals(int id, int w, int h, const uint32_t *pixels)
+{
+    Image *im;
+    if (id < 0 || id >= NB_IMAGES) return;
+    AcquireSRWLockExclusive(&g_city_lock);
+    im = &g_images[id];
+    if (im->w == w && im->h == h) {
+        free(im->normals);
+        im->normals = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)(w * h));
+        if (im->normals != NULL) memcpy(im->normals, pixels, sizeof(uint32_t) * (size_t)(w * h));
+    }
+    ReleaseSRWLockExclusive(&g_city_lock);
+}
+
+void gpu_city_material(int k, int w, int h, const uint32_t *colour, const uint32_t *normals)
+{
+    int j;
+    if (k < 0 || k >= NB_MATERIALS || w != h || w <= 0 || w > 4096) return;
+    AcquireSRWLockExclusive(&g_city_lock);
+    if (g_mat_size == 0) g_mat_size = w;
+    if (w == g_mat_size)
+        for (j = 0; j < 2; j++) {
+            const uint32_t *src = j ? normals : colour;
+            free(g_mat_new[k][j]);
+            g_mat_new[k][j] = (uint32_t *)malloc(sizeof(uint32_t) * (size_t)w * (size_t)w);
+            if (g_mat_new[k][j] != NULL) memcpy(g_mat_new[k][j], src, sizeof(uint32_t) * (size_t)w * (size_t)w);
+        }
+    ReleaseSRWLockExclusive(&g_city_lock);
+}
+
+/* the materials given since the last city drawn, to the GPU (on the drawing thread, under g_city_lock) */
+static void upload_materials(void)
+{
+    int k, j, any = 0;
+    UINT mips = 1;
+    for (k = 0; k < NB_MATERIALS; k++) any |= g_mat_new[k][0] != NULL;
+    if (!any) return;
+    while ((1 << (mips - 1)) < g_mat_size) mips++;
+    for (j = 0; j < 2; j++) {
+        if (g_mat[j] == NULL) {
+            D3D11_TEXTURE2D_DESC td;
+            memset(&td, 0, sizeof td);
+            td.Width = td.Height = (UINT)g_mat_size;
+            td.MipLevels = mips;
+            td.ArraySize = NB_MATERIALS;
+            td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            td.SampleDesc.Count = 1;
+            td.Usage = D3D11_USAGE_DEFAULT;
+            td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+            td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+            if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_mat[j])) ||
+                FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_mat[j], NULL, &g_mat_srv[j]))) {
+                RELEASE(g_mat[j]);
+                RELEASE(g_mat_srv[j]);
+                continue;
+            }
+        }
+        for (k = 0; k < NB_MATERIALS; k++)
+            if (g_mat_new[k][j] != NULL)
+                ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_mat[j],
+                                                      (UINT)k * mips /* mip 0 of slice k */, NULL, g_mat_new[k][j],
+                                                      (UINT)g_mat_size * 4, 0);
+        ID3D11DeviceContext_GenerateMips(g_ctx, g_mat_srv[j]);
+    }
+    for (k = 0; k < NB_MATERIALS; k++)
+        for (j = 0; j < 2; j++) {
+            free(g_mat_new[k][j]);
+            g_mat_new[k][j] = NULL;
+        }
 }
 
 void gpu_set_time(int time)
@@ -486,7 +644,9 @@ static int make_city(void)
     td.Usage = D3D11_USAGE_DEFAULT;
     td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_atlas)) ||
-        FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_atlas, NULL, &g_atlas_srv)))
+        FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_atlas, NULL, &g_atlas_srv)) ||
+        FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_natlas)) ||
+        FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_natlas, NULL, &g_natlas_srv)))
         return 0;
     memset(&bd, 0, sizeof bd);
     bd.ByteWidth = sizeof(CityConsts);
@@ -604,7 +764,12 @@ shaders:
     cbd.Usage = D3D11_USAGE_DYNAMIC;
     cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    if (FAILED(ID3D11Device_CreateSamplerState(g_dev, &smp, &g_linear)) ||
+    if (FAILED(ID3D11Device_CreateSamplerState(g_dev, &smp, &g_linear))) {
+        gpu_shutdown();
+        return 0;
+    }
+    smp.AddressU = smp.AddressV = smp.AddressW = D3D11_TEXTURE_ADDRESS_WRAP; /* the materials repeat */
+    if (FAILED(ID3D11Device_CreateSamplerState(g_dev, &smp, &g_wrap)) ||
         FAILED(ID3D11Device_CreateBuffer(g_dev, &cbd, NULL, &g_cb))) {
         gpu_shutdown();
         return 0;
@@ -633,6 +798,13 @@ void gpu_shutdown(void)
     RELEASE(g_tex);
     RELEASE(g_atlas_srv);
     RELEASE(g_atlas);
+    RELEASE(g_natlas_srv);
+    RELEASE(g_natlas);
+    RELEASE(g_mat_srv[0]);
+    RELEASE(g_mat_srv[1]);
+    RELEASE(g_mat[0]);
+    RELEASE(g_mat[1]);
+    RELEASE(g_wrap);
     RELEASE(g_city_vb);
     RELEASE(g_city_cb);
     RELEASE(g_light_vb);
@@ -813,14 +985,18 @@ static void draw_city(RECT dst, int fw, int fh)
         ReleaseSRWLockExclusive(&g_city_lock);
         return;
     }
+    upload_materials();
     if (g_atlas_reset) {
         /* everything transparent */
-        static uint32_t clear[ATLAS]; /* 0: transparent */
+        static uint32_t clear[ATLAS], flat[ATLAS]; /* 0: transparent; the normal out of the picture */
         D3D11_BOX box = {0, 0, 0, ATLAS, 1, 1};
+        if (flat[0] == 0)
+            for (i = 0; i < ATLAS; i++) flat[i] = 0xFF8080FFu;
         for (i = 0; i < ATLAS; i++) {
             box.top = (UINT)i;
             box.bottom = (UINT)i + 1;
             ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_atlas, 0, &box, clear, ATLAS * 4, 0);
+            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_natlas, 0, &box, flat, ATLAS * 4, 0);
         }
         g_atlas_reset = 0;
     }
@@ -832,6 +1008,13 @@ static void draw_city(RECT dst, int fw, int fh)
                                                   (UINT)im->w * 4, 0);
             free(im->pixels);
             im->pixels = NULL;
+        }
+        if (im->normals != NULL && im->pixels == NULL) {
+            D3D11_BOX box = {(UINT)im->ax, (UINT)im->ay, 0, (UINT)(im->ax + im->w), (UINT)(im->ay + im->h), 1};
+            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_natlas, 0, &box, im->normals,
+                                                  (UINT)im->w * 4, 0);
+            free(im->normals);
+            im->normals = NULL;
         }
     }
     n = g_city_n;
@@ -932,11 +1115,17 @@ static void draw_city(RECT dst, int fw, int fh)
     cc.frame_size[0] = (float)fw;
     cc.frame_size[1] = (float)fh;
     cc.scale = sx * zoom > 1.0f ? sx * zoom : 1.0f; /* window pixels a texel */
+    cc.bump = k_relief[lit_time].bump;
+    cc.sun[0] = k_relief[lit_time].sun[0];
+    cc.sun[1] = k_relief[lit_time].sun[1];
+    cc.sun[2] = k_relief[lit_time].sun[2];
+    cc.sun[3] = (float)(GetTickCount64() % 1000000u) / 1000.0f; /* the water's time: its drift repeats each 1000 s */
     if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_city_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
         memcpy(map.pData, &cc, sizeof cc);
         ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_city_cb, 0);
     }
     {
+        ID3D11ShaderResourceView *srv[4] = {g_atlas_srv, g_natlas_srv, g_mat_srv[0], g_mat_srv[1]};
         int lit = time >= 0 && lit_targets(dst.right - dst.left, dst.bottom - dst.top);
         ID3D11DeviceContext_IASetInputLayout(g_ctx, g_city_layout);
         ID3D11DeviceContext_IASetVertexBuffers(g_ctx, 0, 1, &g_city_vb, &stride, &offset);
@@ -945,7 +1134,8 @@ static void draw_city(RECT dst, int fw, int fh)
         ID3D11DeviceContext_VSSetConstantBuffers(g_ctx, 0, 1, &g_city_cb);
         ID3D11DeviceContext_PSSetShader(g_ctx, lit ? g_city_lit_ps : g_city_ps, NULL, 0);
         ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_city_cb);
-        ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 1, &g_atlas_srv);
+        ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 4, srv);
+        ID3D11DeviceContext_PSSetSamplers(g_ctx, 0, 1, &g_wrap);
         ID3D11DeviceContext_RSSetState(g_ctx, g_scissor);
         ID3D11DeviceContext_OMSetBlendState(g_ctx, g_blend, NULL, 0xFFFFFFFFu);
         if (!lit) {
