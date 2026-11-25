@@ -183,6 +183,36 @@ static const char k_city_shader[] =
     "    return lerp(a, t.SampleLevel(wrap, float3(w * 1.13, GRAVEL), matlod()), patch);\n"
     "}\n"
     "float damp(float2 w, int m) { return m == DIRT ? 0.82 + 0.3 * fbm(w * 1.1 + 21.0) : 1; }\n"
+    /* rubble on the dirt: in a grid of `cell` (materials' squares), a stone in some cells (`chance`), its size,
+     * shape, turn and tint its own; shaded as a rounded rock lit from the top left, a dark edge where it sits in the
+     * dirt; in world space (no seams, no repeats) */
+    "float3 stones(float2 w, float3 c, float cell, float chance, float rmin, float rmax, float seed) {\n"
+    "    float2 g = w / cell, id = floor(g), f = g - id;\n"
+    "    [unroll] for (int dy = -1; dy <= 1; dy++)\n"
+    "    [unroll] for (int dx = -1; dx <= 1; dx++) {\n"
+    "        float2 cid = id + float2(dx, dy);\n"
+    "        float h = hash2(cid + seed);\n"
+    "        if (h > chance) continue;\n"
+    "        float2 ctr = float2(dx, dy) + 0.2 + 0.6 * float2(hash2(cid + seed + 1.7), hash2(cid + seed + 2.9));\n"
+    "        float r = lerp(rmin, rmax, hash2(cid + seed + 3.3)), an = hash2(cid + seed + 4.1) * 6.2832;\n"
+    "        float2 d = f - ctr;\n"
+    "        d = float2(d.x * cos(an) + d.y * sin(an), d.y * cos(an) - d.x * sin(an)) * float2(1, 1.45);\n"
+    "        float q = length(d) / (r * (1 + 0.18 * sin(atan2(d.y, d.x) * 3 + h * 40)));\n"
+    "        if (q < 1) {\n"
+    "            float3 n = normalize(float3(d / r * 0.9, sqrt(saturate(1 - q * q))));\n"
+    "            float lit = 0.45 + 0.75 * saturate(dot(n, normalize(float3(-0.55, -0.45, 0.7))));\n"
+    "            float t = hash2(cid + seed + 5.3);\n"
+    "            float3 tint = lerp(float3(0.25, 0.235, 0.20), float3(0.29, 0.23, 0.15), t) * (0.7 + 0.45 * hash2(cid + seed + 6.1));\n"
+    "            c = tint * lit;\n"
+    "        } else if (q < 1.25) c *= lerp(0.55, 1, (q - 1) / 0.25);\n"
+    "    }\n"
+    "    return c;\n"
+    "}\n"
+    "float3 rubble(float2 w, float3 c) {\n"
+    "    c = stones(w, c, 1.0 / 14, 0.07, 0.22, 0.36, 11.0);\n" /* a few rocks, 6 to 10 game pixels */
+    "    c = stones(w, c, 1.0 / 40, 0.16, 0.22, 0.40, 37.0);\n" /* stones, 2 to 4 */
+    "    return stones(w, c, 1.0 / 90, 0.20, 0.25, 0.45, 71.0);\n" /* pebbles */
+    "}\n"
     /* the water (material WATER): black, its ripples (two layers of the material's normals drifting apart, `sun.w`
      * the time in seconds) reflecting the sky (Fresnel: more at a grazing angle) and the sun's glints.  In world
      * space: u, v along the ground, up; the eye is down the picture and 30 degrees up */
@@ -209,6 +239,7 @@ static const char k_city_shader[] =
     "    if (t.a < 0.5) return 0;\n"
     "    m = material(t.a, i);\n"
     "    if (m == WATER) return float4(water(p, i), 1);\n"
+    "    if (m == DIRT) return float4(rubble(world(p, i), ground(world(p, i), m, mat).rgb * damp(world(p, i), m)), 1);\n"
     "    if (m >= 0) return float4(ground(world(p, i), m, mat).rgb * damp(world(p, i), m), 1);\n"
     "    {\n" /* a pedestrian's part (alpha 160 + 16 x part + shade: 0 hair, 1 skin, 2 clothes, 3 trousers): its own colour at the pixel's shade (0.3 + 0.1 x shade of it), else the pixel as drawn */
     "        uint code = (uint)round(t.a * 255), part = (code - 160) / 16, c = part == 0 ? i.look.x : part == 1 ? i.look.y : i.look.z;\n"
