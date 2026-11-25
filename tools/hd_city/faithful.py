@@ -31,10 +31,13 @@ GRAINS = {
 }
 STRENGTH = 0.45
 # the roads in asphalt greys and white markings (the screenshot's palette makes them teal and pink): its colours
-# there -> the road's; the other markings (arrows, bays, kerbs) keep the palette's orange (roadgrey.py is no longer
-# run: it made them grey, and the roads lost their markings)
+# there -> the road's; its rust and ochre (the grooves, ridges, arrows and bays) in lighter asphalt greys: a road is
+# a road, its pattern shows in its greys; the yellow and white markings as they are
 ROAD_COLOURS = {(60, 73, 69): (50, 52, 56), (52, 56, 65): (36, 37, 40), (190, 154, 154): (222, 222, 212),
-                (77, 89, 121): (72, 74, 80), (101, 101, 101): (92, 92, 94)}   # how much the grain lightens and darkens
+                (77, 89, 121): (72, 74, 80), (101, 101, 101): (92, 92, 94),
+                (174, 93, 60): (64, 66, 70), (203, 134, 81): (80, 82, 86), (255, 166, 97): (96, 97, 100),
+                (113, 85, 4): (58, 60, 63), (150, 121, 24): (70, 72, 75)}
+# how much the grain lightens and darkens
 DARKER = 0.88     # as the redrawn tiles
 patch_settings[os.getpid()] = PatchSettings(sharpness=2.0, adaptive_cfg=7.0)
 neg = pipeline.clip_encode(texts=['text, watermark, lines, stripes, grid, tiles, stones, cobbles, perspective'],

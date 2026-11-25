@@ -27,7 +27,12 @@ Python, "DeepBump" with DeepBump's, the others with any Python 3 with Pillow and
 6. `mark.py HD` - each ground tile's top marked with its material (alpha 240 + K), the trench's tops as water; roads
    and pavements keep their own tops; the tower bases' pads and the painted shadows and light patches drawn as plain pavement.
 7. `normals.py HD` (DeepBump) - each tile's normals, seen among copies of itself (no seam at its edges).
-8. `install.py HD/out SAVE/hd` - the pack where the game looks for it, with `tile_lights.ini` (the pack's tile lights:
+7a. `pavemat.py HD` (Fooocus) - the pavement's slabs redrawn as a seamless material (6 versions), `pavement.py HD`
+   the chosen one (4) with lighter grooves as material 7, then its normals (`matnormals.py`); `mark.py` lays it on the
+   pavement tiles (`paving.py` is the earlier, drawn version).
+7b. `grass.py HD` (after steps 6 and 7) - the grass tiles (210): the grass material on top, HD tufts rising from it,
+   dark soil sides.
+8. `install.py HD/out SAVE/hd` - the pack where the game looks for it, the buildings' orange muted on the way, with `tile_lights.ini` (the pack's tile lights:
    the pads' light off).
 
 `tops.py` is an earlier step (one repeating square per tile top) that the materials replaced.  Steps 4, 6 and 7

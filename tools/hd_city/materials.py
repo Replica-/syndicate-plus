@@ -23,15 +23,22 @@ STYLE = ('seamless tileable top-down orthographic photograph of a surface textur
 NEG = ('neon, glowing, fluorescent, saturated colours, psychedelic, abstract, perspective, horizon, sky, people, cars, text, watermark, logo, blurry, lowres, cartoon, vignette, frame, '
        'border, grid, tiles, repeated pattern, shadows of objects, blocks, bricks, slabs, paving stones, cobbles')
 MATERIALS = [
-    'dry dirt ground mixed with fine gravel, many small grey pebbles and grit scattered in brown soil, granular, '
-    'loose, no cracks',                                                                     # 0 dirt and gravel
+    'coarse sand and grit, tiny stones, dusty ground',                                     # 0 dirt (see OWN)
     'close-up of uniform dark asphalt tarmac, fine aggregate grain, slightly wet, faint oil stains, seamless, continuous surface',  # 1 asphalt
     'close-up of a continuous poured concrete floor, fine grit, grime and stains, damp patches, seamless',          # 2 concrete
     'dark gunmetal steel roof plates with rivets and seams, rain streaks, scratches',                   # 3 roof plates
     'black tar roof membrane, wet, small puddles, grit',                                                # 4 tar roof
     'close-up of a continuous dark steel diamond tread plate, worn, scratched, damp',                                     # 5 grating
+    'patchy grass seen from directly above, olive green tufts and bare dark soil patches',  # 6 grass (see OWN)
 ]
-SMALLER = {0: 2}
+SMALLER = {6: 2}
+# materials made with a style, negative and seed of their own (the user's picks: the dirt, number 4 of 20; the
+# grass, number 3 of 4)
+GROUND = ('seamless tileable top-down orthographic photograph of a ground texture, flat, even diffuse lighting, '
+          'realistic, highly detailed, sharp, physically based material scan')
+GROUND_NEG = ('perspective, horizon, sky, people, cars, text, watermark, logo, blurry, lowres, cartoon, vignette, '
+              'frame, border, grid, tiles, bricks, slabs, paving stones, cobbles, neon, ')
+OWN = {0: (GROUND, GROUND_NEG + 'plants, leaves', 7003), 6: (GROUND, GROUND_NEG + 'flowers, leaves, trees', 8002)}
 patch_settings[os.getpid()] = PatchSettings(sharpness=2.0, adaptive_cfg=7.0)
 neg = pipeline.clip_encode(texts=[NEG], pool_top_k=1)
 os.makedirs(os.path.join(HD, 'mat'), exist_ok=True)
@@ -54,10 +61,12 @@ def wrap(t):
 for k, prompt in enumerate(MATERIALS):
     if only and k not in only:
         continue
-    pos = pipeline.clip_encode(texts=[prompt + ', ' + STYLE], pool_top_k=1)
+    style, k_neg, seed = OWN.get(k, (STYLE, None, 5000 + k))
+    pos = pipeline.clip_encode(texts=[prompt + ', ' + style], pool_top_k=1)
     circular(True)
-    img = pipeline.process_diffusion(positive_cond=pos, negative_cond=neg, steps=30, switch=30, width=1024, height=1024,
-                                     image_seed=5000 + k, callback=None, sampler_name='dpmpp_2m_sde_gpu',
+    img = pipeline.process_diffusion(positive_cond=pos, negative_cond=pipeline.clip_encode(texts=[k_neg], pool_top_k=1)
+                                     if k_neg else neg, steps=30, switch=30, width=1024, height=1024,
+                                     image_seed=seed, callback=None, sampler_name='dpmpp_2m_sde_gpu',
                                      scheduler_name='karras', latent=None, denoise=1.0, tiled=False, cfg_scale=4.0,
                                      disable_preview=True)[0]
     circular(False)

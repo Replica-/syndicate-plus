@@ -6,7 +6,8 @@ from PIL import Image
 HD = sys.argv[1]
 # (mean brightness 0..255, saturation, tint multiplier r,g,b)
 GRADE = {1: (44, 0.4, (0.95, 1.0, 1.08)), 2: (66, 0.4, (0.95, 1.0, 1.06)),
-         3: (54, 0.5, (0.95, 1.0, 1.1)), 4: (30, 0.4, (1.0, 1.0, 1.05)), 5: (56, 0.4, (0.95, 1.0, 1.08))}
+         3: (54, 0.5, (0.95, 1.0, 1.1)), 4: (30, 0.4, (1.0, 1.0, 1.05)), 5: (56, 0.4, (0.95, 1.0, 1.08)),
+         6: (58, 0.85, (1.0, 1.0, 0.85))}   # 6: grass (grass.py)
 # (colours from dark to light, the brightness percentiles they are at)
 TWO_TONE = {0: (((26, 21, 8), (62, 49, 15), (70, 55, 18), (72, 74, 76)), (3, 45, 65, 97))}
 for k, (lum, sat, tint) in GRADE.items():

@@ -9,6 +9,7 @@ from PIL import Image
 HD = sys.argv[1]
 W, H, S = 64, 48, 4
 MATERIAL = {13: 0, 14: 0, 76: 3, 79: 3, 160: 3, 168: 3, 169: 3, 170: 3, 159: 5}
+MATERIAL.update({t: 7 for t in (35, 36, 41, 207, 42, 43, 251, 252, 203)})   # the pavements: pavemat.py's slabs
 SAME = {207: 36, 42: 36, 43: 36, 251: 36, 252: 36, 203: 36}
 WATER, WATER_TILES = 11, [156, 158, 165, 166, 167]
 KEEP = [(255, 190, 0), (223, 255, 255)]          # markings kept on the other ground: yellow, white
