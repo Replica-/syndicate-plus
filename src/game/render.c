@@ -1754,6 +1754,10 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                 objs[nobj].key = (x >> 8) + (y >> 8);
             }
             objs[nobj].z = z >> 7;
+            /* a car is about a level high: drawn after the tiles of the level above its own in its row too (a tall
+             * tile beside it, a pipe or a wall, no longer covers it with its upper half); what it drives under (a
+             * bridge, a walkway) is higher and still covers it */
+            if (li == LIST_CARS) objs[nobj].z++;
             /* a person lying (a body, falling or dead: its frame low, wider than high; standing ones are 25 to 36
              * high, firing ones up to 49 wide) reaches into the cells beside it, and its ends below its cell's
              * lower edges, over the floor of the next row: drawn after every level of its own row (not under a
