@@ -32,6 +32,9 @@ Python, "DeepBump" with DeepBump's, the others with any Python 3 with Pillow and
    pavement tiles (`paving.py` is the earlier, drawn version).
 7b. `grass.py HD` (after steps 6 and 7) - the grass tiles (210): the grass material on top, HD tufts rising from it,
    dark soil sides.
+7c. `sprites.py HD SPRITES --denoise D --tag T id...` (Fooocus) - HD sprites (the trees: 1571, 1572 at 0.5, 1589 at
+   0.65), from the sprites the game draws (`SYND_DUMP_SPRITES=SPRITES`, a mission run headless with `--gpu`); the
+   picks copied to `HD/sprites/`.
 8. `install.py HD/out SAVE/hd` - the pack where the game looks for it, the buildings' orange muted on the way, with `tile_lights.ini` (the pack's tile lights:
    the pads' light off).
 

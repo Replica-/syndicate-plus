@@ -50,4 +50,8 @@ for f in glob.glob(os.path.join(mat, 'graded_[0-9][0-9].png')):
     shutil.copy(f, os.path.join(dst, 'material_%s.png' % k))
     if os.path.exists(f[:-4] + '_n.png'): shutil.copy(f[:-4] + '_n.png', os.path.join(dst, 'material_%s_n.png' % k))
 shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tile_lights.ini'), dst)
+# the HD sprites (sprites.py; the user's picks copied to HDDIR/sprites)
+spr = os.path.join(os.path.dirname(os.path.abspath(src)), 'sprites')
+for f in glob.glob(os.path.join(spr, '[0-9][0-9][0-9][0-9].png')):
+    shutil.copy(f, os.path.join(dst, 'sprite_%s' % os.path.basename(f)))
 print('materials', len(glob.glob(os.path.join(dst, 'material_[0-9][0-9].png'))))
