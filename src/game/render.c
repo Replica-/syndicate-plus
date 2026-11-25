@@ -1267,21 +1267,35 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define LYING_H 20    /* a lying person's frame is at most this high */
 #define HEADLIGHT_COLOUR 0xFFF5D7u
 #define REAR_LIGHT_COLOUR 0xFF281Eu
+#define HEADLAMP_GLOW 0xFFF5DCu      /* the lamps on the car: white */
+#define TAIL_GLOW 0x8A140Cu          /* red, dim */
+#define BRAKE_GLOW 0xFF2A18u         /* red, bright */
+#define CAR_LAMP_FRONT 165.0f        /* where they are on the car (world units from its middle) */
+#define CAR_LAMP_REAR 165.0f
+#define CAR_LAMP_SIDE 34.0f
+#define CAR_LAMP_HIGH 40
+static float g_car_speed[64];
 
 #define SHOT_LIGHT_RX 46.0f          /* a shot's light (a muzzle flash, an impact): its radius */
 #define SHOT_LIGHT_COLOUR 0xFFB860u  /* warm */
 
-static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_t vx, int32_t vy)
+static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_t vx, int32_t vy, int heading)
 {
     float fx, fy;
     if (li == LIST_CARS && i < 64) {
         float d = sqrtf((float)vx * vx + (float)vy * vy);
-        int k;
+        int k, braking;
         if (d > 2.0f) {
             g_car_dir[i][0] = (float)vx / d;
             g_car_dir[i][1] = (float)vy / d;
         }
-        if (g_car_dir[i][0] == 0 && g_car_dir[i][1] == 0) return;
+        if (g_car_dir[i][0] == 0 && g_car_dir[i][1] == 0) { /* never seen moving: the way it faces */
+            g_car_dir[i][0] = sinf((float)heading * 6.2832f / 256.0f);
+            g_car_dir[i][1] = cosf((float)heading * 6.2832f / 256.0f);
+        }
+        /* slowing down (its speed a tick under the speed it kept) or standing: braking */
+        braking = d < 2.0f || d < g_car_speed[i] * 0.85f;
+        g_car_speed[i] = g_car_speed[i] * 0.8f + d * 0.2f;
         /* the cone of the headlights (circles growing ahead), their lamps, the rear lights */
         for (k = 0; k <= 3; k++) {
             float ahead = 160.0f + 180.0f * (float)k;
@@ -1290,7 +1304,19 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
                       k == 0 ? 14.0f : 10.0f + 8.0f * k, HEADLIGHT_COLOUR);
         }
         project_f(x - (int32_t)(g_car_dir[i][0] * 160.0f), y - (int32_t)(g_car_dir[i][1] * 160.0f), z, &fx, &fy);
-        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, 16, 16, REAR_LIGHT_COLOUR);
+        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, braking ? 26.0f : 16.0f, braking ? 22.0f : 16.0f,
+                  REAR_LIGHT_COLOUR);
+        /* the lamps themselves glow (seen by day too): two white at the front, two red at the back, brighter while
+         * it slows down or stands (its brake lights) */
+        for (k = 0; k < 4; k++) {
+            float along = k < 2 ? CAR_LAMP_FRONT : -CAR_LAMP_REAR, side = (k & 1) ? CAR_LAMP_SIDE : -CAR_LAMP_SIDE;
+            int32_t lx = x + (int32_t)(g_car_dir[i][0] * along - g_car_dir[i][1] * side);
+            int32_t ly = y + (int32_t)(g_car_dir[i][1] * along + g_car_dir[i][0] * side);
+            float r = k < 2 ? 3.5f : braking ? 4.5f : 2.5f;
+            project_f(lx, ly, z + CAR_LAMP_HIGH, &fx, &fy);
+            add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, r, r * 0.8f,
+                      HOST_LIGHT_GLOW | (k < 2 ? HEADLAMP_GLOW : braking ? BRAKE_GLOW : TAIL_GLOW));
+        }
     }
 }
 
@@ -1851,7 +1877,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             }
             if (t.gpu && li == LIST_CARS)
                 object_lights(li, (int)i, x, y, z, t256 >= 0 ? sb->pos[n][0] - sa->pos[n][0] : 0,
-                              t256 >= 0 ? sb->pos[n][1] - sa->pos[n][1] : 0);
+                              t256 >= 0 ? sb->pos[n][1] - sa->pos[n][1] : 0, M[a + CAR_HEADING]);
             /* a car is two tiles long and more: drawn with the row of tiles its end nearest the viewer is in (with
              * its middle's, the floor of the rows in front of it is drawn over its nose or its tail) */
             if (li == LIST_CARS) {
