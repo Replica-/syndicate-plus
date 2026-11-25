@@ -9,7 +9,7 @@ HD = sys.argv[1]
 W, H, S = 64, 48, 4
 GRASS, TILES = 6, [210, 12, 18, 19, 20, 21, 22, 23, 27, 211, 212, 213, 214, 215]
 OWN_SIDES = [12, 18, 19, 20, 21, 22, 23, 27, 211, 212, 213, 214, 215]   # their sides upscale.py's (layered blocks)
-TUFTS, BLADES = 16, (12, 22)             # tufts a tile, blades a tuft
+TUFTS, BLADES = 64, (14, 26)             # tufts a tile (8 x 8, each a little off its place: the ground mostly tufts), blades a tuft
 SOIL = np.array([38, 31, 22], np.float32)
 ys, xs = np.mgrid[0:H * S, 0:W * S]
 fx, fy = (xs + 0.5) / S, (ys + 0.5) / S
@@ -40,9 +40,12 @@ for t in TILES:
     layer = Image.new('RGBA', (W * S * Z, H * S * Z), (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
     roots = []
-    while len(roots) < TUFTS:
-        u, v = rng.uniform(1.5, 30.5, 2)
-        roots.append((u, v))
+    n8 = int(round(TUFTS ** 0.5))
+    for gu in range(n8):
+        for gv in range(n8):
+            u = (gu + 0.5 + rng.uniform(-0.45, 0.45)) * 32 / n8
+            v = (gv + 0.5 + rng.uniform(-0.45, 0.45)) * 32 / n8
+            roots.append((float(np.clip(u, 0.8, 31.2)), float(np.clip(v, 0.8, 31.2))))
     roots.sort(key=lambda r: r[0] + r[1])
     for u, v in roots:
         x0, y0 = 32 + (u - v), (u + v) / 2            # game pixels
