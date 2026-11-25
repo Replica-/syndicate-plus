@@ -16,6 +16,7 @@ config.update_files()
 from modules.upscaler import perform_upscale
 
 W, H, S = 64, 48, 4
+DARKER = 0.82     # as the redrawn tiles (faithful.py's 0.88, a little more: the brick walls)
 for t in ids:
     base = Image.open(os.path.join(HD, 'base', '%03d.png' % t)).convert('RGBA')
     a = np.asarray(base)
@@ -27,7 +28,7 @@ for t in ids:
     canvas.alpha_composite(base, (W, 32))
     up = perform_upscale(np.asarray(canvas.convert('RGB').filter(ImageFilter.GaussianBlur(0.5))))
     up = np.asarray(Image.fromarray(up).resize((W * 3 * S, (H + 64) * S), Image.LANCZOS))
-    rgb = up[32 * S:(32 + H) * S, W * S:2 * W * S]
+    rgb = (up[32 * S:(32 + H) * S, W * S:2 * W * S].astype(np.float32) * DARKER).clip(0, 255)
     alpha = np.asarray(base.resize((W * S, H * S), Image.NEAREST))[..., 3:]
     Image.fromarray(np.concatenate([rgb, alpha], -1).astype(np.uint8), 'RGBA').save(os.path.join(HD, 'out', '%03d.png' % t))
     print('upscaled', t, flush=True)

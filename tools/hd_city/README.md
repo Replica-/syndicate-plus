@@ -36,7 +36,8 @@ Python, "DeepBump" with DeepBump's, the others with any Python 3 with Pillow and
    0.65), from the sprites the game draws (`SYND_DUMP_SPRITES=SPRITES`, a mission run headless with `--gpu`); the
    picks copied to `HD/sprites/`; `spritecolour.py HD SPRITES id...` gives them the game's colours (the trees' yellow).
 7d. `upscale.py HD id...` (Fooocus's ESRGAN) - tiles no redraw covered, 4x as the game draws them (45: pavement with
-   floor lights, its top the pavement material, its lights kept).
+   floor lights, its top the pavement material, its lights kept; 177: the brick wall, its rows running on from tile
+   to tile, where the redraw made each tile a box of its own).
 8. `install.py HD/out SAVE/hd` - the pack where the game looks for it, the buildings' orange muted on the way, with `tile_lights.ini` (the pack's tile lights:
    the pads' light off).
 
