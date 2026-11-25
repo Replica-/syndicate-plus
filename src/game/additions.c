@@ -1761,9 +1761,16 @@ static uint32_t hsv(float h, float sat, float v)
     return (uint32_t)((r + m) * 255.0f) << 16 | (uint32_t)((g + m) * 255.0f) << 8 | (uint32_t)((b + m) * 255.0f);
 }
 
+/* a hue for the city's clothes (k 0-999): no pinks, magentas or purples (hues 270-345 skipped) */
+static float dystopian(uint32_t k)
+{
+    float h = (float)k * 285.0f / 1000.0f;            /* 0 .. 285 */
+    return h < 270.0f ? h : h + 75.0f;                  /* 270 .. 285 -> 345 .. 360 (reds) */
+}
+
 /* a pedestrian's own colours, the same each time for the same person (from its number): hair black, browns, auburn,
- * blonde or grey (now and then dyed: any colour), skin anywhere from deep brown to fair, clothes in any colour, from
- * soft to vivid */
+ * blonde or grey (now and then dyed, muted), skin anywhere from deep brown to fair, clothes in muted, dark city colours
+ * (a dystopia: no pinks) */
 static int ped_look(int ped, uint32_t look[3])
 {
     static const uint32_t hair[] = {0x141010, 0x1E1612, 0x2C1E16, 0x3E2A1C, 0x553A26, 0x6E4A2C, 0x8A3C1C, 0xA8551E,
@@ -1774,12 +1781,12 @@ static int ped_look(int ped, uint32_t look[3])
     h ^= h >> 15;
     h *= 0x2C1B3C6Du;
     h ^= h >> 12;
-    look[0] = (h & 15) == 0 ? hsv((float)((h >> 4) % 360), 0.7f, 0.75f) : hair[(h >> 4) % (sizeof hair / sizeof hair[0])];
+    look[0] = (h & 31) == 0 ? hsv(dystopian((h >> 4) % 1000), 0.45f, 0.5f) : hair[(h >> 4) % (sizeof hair / sizeof hair[0])];
     t = (float)((h >> 9) & 255) / 255.0f;                /* deep brown .. fair */
     u = (float)((h >> 17) & 7) / 7.0f - 0.5f;            /* a little warmer or cooler */
     look[1] = hsv(18.0f + 10.0f * u + 8.0f * t, 0.62f - 0.32f * t, 0.32f + 0.62f * t);
-    look[2] = hsv((float)((h * 2246822519u >> 8) % 360), 0.3f + 0.6f * (float)((h >> 20) & 15) / 15.0f,
-                  0.3f + 0.45f * (float)((h >> 24) & 15) / 15.0f);
+    look[2] = hsv(dystopian((h * 2246822519u >> 8) % 1000), 0.12f + 0.38f * (float)((h >> 20) & 15) / 15.0f,
+                  0.24f + 0.36f * (float)((h >> 24) & 15) / 15.0f);
     return 1;
 }
 
