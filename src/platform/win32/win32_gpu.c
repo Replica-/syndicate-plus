@@ -158,6 +158,30 @@ static const char k_city_shader[] =
     "    return (i.hat & 0x100000u) && k >= 0 && k < 12 ? k : -1;\n"
     "}\n"
     "float matlod() { return log2(max(1.0, 4.0 / scale)); }\n" /* 4 texels a game pixel */
+    /* the dirt (material DIRT) over big fields: sampled at two sizes blended by a soft noise (its square's repeat no
+     * longer lines up), patches of gravel (material GRAVEL) and damp, darker and lighter stretches; all in world space
+     * (`w` in materials' squares, 8 tiles each) */
+    "#define DIRT 0\n"
+    "#define GRAVEL 8\n"
+    "float hash2(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }\n"
+    "float vnoise(float2 p) {\n"
+    "    float2 i = floor(p), f = frac(p);\n"
+    "    f = f * f * (3 - 2 * f);\n"
+    "    return lerp(lerp(hash2(i), hash2(i + float2(1, 0)), f.x), lerp(hash2(i + float2(0, 1)), hash2(i + 1), f.x), f.y);\n"
+    "}\n"
+    "float fbm(float2 p) { return vnoise(p) * 0.55 + vnoise(p * 2.1 + 5.3) * 0.3 + vnoise(p * 4.3 + 9.1) * 0.15; }\n"
+    "float4 ground(float2 w, int m, Texture2DArray<float4> t) {\n"
+    "    float4 a, b;\n"
+    "    float mix, patch;\n"
+    "    if (m != DIRT) return t.SampleLevel(wrap, float3(w, m), matlod());\n"
+    "    a = t.SampleLevel(wrap, float3(w, DIRT), matlod());\n"
+    "    b = t.SampleLevel(wrap, float3(w * 0.71 + float2(0.37, 0.61), DIRT), matlod());\n"
+    "    mix = smoothstep(0.3, 0.7, fbm(w * 1.7 + 11.0));\n"
+    "    a = lerp(a, b, mix);\n"
+    "    patch = smoothstep(0.58, 0.72, fbm(w * 2.3 + 3.0));\n"
+    "    return lerp(a, t.SampleLevel(wrap, float3(w * 1.13, GRAVEL), matlod()), patch);\n"
+    "}\n"
+    "float damp(float2 w, int m) { return m == DIRT ? 0.82 + 0.3 * fbm(w * 1.1 + 21.0) : 1; }\n"
     /* the water (material WATER): black, its ripples (two layers of the material's normals drifting apart, `sun.w`
      * the time in seconds) reflecting the sky (Fresnel: more at a grazing angle) and the sun's glints.  In world
      * space: u, v along the ground, up; the eye is down the picture and 30 degrees up */
@@ -184,7 +208,7 @@ static const char k_city_shader[] =
     "    if (t.a < 0.5) return 0;\n"
     "    m = material(t.a, i);\n"
     "    if (m == WATER) return float4(water(p, i), 1);\n"
-    "    if (m >= 0) return float4(mat.SampleLevel(wrap, float3(world(p, i), m), matlod()).rgb, 1);\n"
+    "    if (m >= 0) return float4(ground(world(p, i), m, mat).rgb * damp(world(p, i), m), 1);\n"
     "    if (t.a < 0.998 && p.y - (int)i.rect.y < (int)(i.hat >> 24)) {\n" /* alpha 254: the hat's colour, 253 its shine */
     "        float3 h = float3((i.hat >> 16) & 255, (i.hat >> 8) & 255, i.hat & 255) / 255.0;\n"
     "        return float4(t.a > 0.994 ? h : saturate(h * 1.5 + 20.0 / 255), 1);\n"
@@ -212,7 +236,7 @@ static const char k_city_shader[] =
     "    int m = material(atlas.Load(int3(q, 0)).a, i);\n"
     "    if (m == WATER) return 1;\n" /* lit by its own reflections */
     "    if (m >= 0) {\n" /* the ground's u goes right and down the picture, its v left and down, its up out of it */
-    "        float3 g = matn.SampleLevel(wrap, float3(world(q, i), m), matlod()).rgb * 2 - 1;\n"
+    "        float3 g = ground(world(q, i), m, matn).rgb * 2 - 1;\n"
     "        n = float3((g.x - g.y) * 0.7071, (g.x + g.y) * 0.3536, g.z);\n"
     "    }\n"
     "    float3 l = normalize(sun.xyz);\n"

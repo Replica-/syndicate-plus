@@ -31,14 +31,15 @@ MATERIALS = [
     'close-up of a continuous dark steel diamond tread plate, worn, scratched, damp',                                     # 5 grating
     'patchy grass seen from directly above, olive green tufts and bare dark soil patches',  # 6 grass (see OWN)
 ]
-SMALLER = {6: 2}
+SMALLER = {6: 2, 8: 2}
 # materials made with a style, negative and seed of their own (the user's picks: the dirt, number 4 of 20; the
 # grass, number 3 of 4)
 GROUND = ('seamless tileable top-down orthographic photograph of a ground texture, flat, even diffuse lighting, '
           'realistic, highly detailed, sharp, physically based material scan')
 GROUND_NEG = ('perspective, horizon, sky, people, cars, text, watermark, logo, blurry, lowres, cartoon, vignette, '
               'frame, border, grid, tiles, bricks, slabs, paving stones, cobbles, neon, ')
-OWN = {0: (GROUND, GROUND_NEG + 'plants, leaves', 7003), 6: (GROUND, GROUND_NEG + 'flowers, leaves, trees', 8002)}
+OWN = {0: (GROUND, GROUND_NEG + 'plants, leaves', 7003), 6: (GROUND, GROUND_NEG + 'flowers, leaves, trees', 8002),
+       8: (GROUND, GROUND_NEG + 'plants, leaves', 7000)}
 patch_settings[os.getpid()] = PatchSettings(sharpness=2.0, adaptive_cfg=7.0)
 neg = pipeline.clip_encode(texts=[NEG], pool_top_k=1)
 os.makedirs(os.path.join(HD, 'mat'), exist_ok=True)
