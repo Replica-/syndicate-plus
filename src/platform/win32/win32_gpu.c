@@ -261,8 +261,8 @@ static const char k_city_shader[] =
     "    float2 r = at(i);\n"
     "    float a = ((i.shade >> 8) & 255) / 255.0;\n"
     "    if (!(i.shade & 1)) return 1;\n"
-    "    if (r.x >= 32 && r.y > 32 - (r.x - 32) / 2 + 3) return 1 - shadow.x * 0.42 * (1 - a);\n"
-    "    if (r.x < 32 && r.y > 16 + r.x / 2 + 3) return 1 - shadow.x * 0.42 * a;\n"
+    "    if (r.x >= 32 && r.y > 32 - (r.x - 32) / 2 + 3) return 1 - shadow.x * 0.9 * (1 - a);\n"
+    "    if (r.x < 32 && r.y > 16 + r.x / 2 + 3) return 1 - shadow.x * 0.9 * a;\n"
     "    return 1;\n"
     "}\n"
     /* in the shadow (FreeSynd's: a whole cell is or is not; a tile's top's edges softened against its neighbours
