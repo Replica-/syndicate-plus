@@ -137,12 +137,12 @@ static const char k_city_shader[] =
     "Texture2DArray<float4> mat : register(t2);\n"
     "Texture2DArray<float4> matn : register(t3);\n"
     "SamplerState wrap : register(s0);\n"
-    "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2; uint glow : TEXCOORD3; };\n"
-    "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1; nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3; };\n"
+    "struct VI { float2 pos : POSITION; float2 tex : TEXCOORD0; float4 rect : TEXCOORD1; uint hat : TEXCOORD2; uint glow : TEXCOORD3; uint3 look : TEXCOORD4; };\n"
+    "struct V { float4 pos : SV_Position; float2 tex : TEXCOORD0; nointerpolation float4 rect : TEXCOORD1; nointerpolation uint hat : TEXCOORD2; nointerpolation uint glow : TEXCOORD3; nointerpolation uint3 look : TEXCOORD4; };\n"
     "V vs(VI i) {\n"
     "    V o;\n"
     "    o.pos = float4(i.pos.x / frame_size.x * 2 - 1, 1 - i.pos.y / frame_size.y * 2, 0, 1);\n"
-    "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat; o.glow = i.glow;\n"
+    "    o.tex = i.tex; o.rect = i.rect; o.hat = i.hat; o.glow = i.glow; o.look = i.look;\n"
     "    return o;\n"
     "}\n"
     "float texels(V i) { return (float)(1u << ((i.glow >> 4) & 3)); }\n" /* the image's texels a frame pixel */
@@ -189,9 +189,9 @@ static const char k_city_shader[] =
     "float3 water(int2 p, V i) {\n"
     "    float2 w = world(p, i);\n"
     "    float t = sun.w;\n"
-    "    float3 a = matn.SampleLevel(wrap, float3(w + float2(0.013, 0.007) * t, WATER), matlod()).rgb * 2 - 1;\n"
-    "    float3 b = matn.SampleLevel(wrap, float3(w * 1.37 + float2(-0.009, 0.012) * t, WATER), matlod()).rgb * 2 - 1;\n"
-    "    float3 n = normalize(float3((a.xy + b.xy) * 0.6, 1));\n"
+    "    float3 a = matn.SampleLevel(wrap, float3(w + float2(0.006, 0.0035) * t, WATER), matlod()).rgb * 2 - 1;\n"
+    "    float3 b = matn.SampleLevel(wrap, float3(w * 1.37 + float2(-0.0045, 0.006) * t, WATER), matlod()).rgb * 2 - 1;\n"
+    "    float3 n = normalize(float3((a.xy + b.xy) * 0.28, 1));\n"
     "    float3 e = float3(0.6124, 0.6124, 0.5);\n"
     "    float3 r = reflect(-e, n);\n"
     "    float3 l = normalize(sun.x * float3(0.7071, -0.7071, 0) + sun.y * float3(0.3536, 0.3536, -0.866) + sun.z * e);\n"
@@ -209,7 +209,13 @@ static const char k_city_shader[] =
     "    m = material(t.a, i);\n"
     "    if (m == WATER) return float4(water(p, i), 1);\n"
     "    if (m >= 0) return float4(ground(world(p, i), m, mat).rgb * damp(world(p, i), m), 1);\n"
-    "    if (t.a < 0.998 && p.y - (int)i.rect.y < (int)(i.hat >> 24)) {\n" /* alpha 254: the hat's colour, 253 its shine */
+    "    {\n" /* a pedestrian's hair, skin, clothes (alpha 252, 251, 250, 249 lighter): its own colours */
+    "        uint code = (uint)round(t.a * 255), c = code == 252 ? i.look.x : code == 251 ? i.look.y : i.look.z;\n"
+    "        if (code >= 249 && code <= 252 && c != 0)\n"
+    "            return float4(saturate(float3((c >> 16) & 255, (c >> 8) & 255, c & 255) / 255.0 * (code == 249 ? 1.35 : 1)), 1);\n"
+    "        if (code >= 249 && code <= 252) return float4(t.rgb, 1);\n"
+    "    }\n"
+    "    if (t.a < 0.998 && t.a > 252.5 / 255 && p.y - (int)i.rect.y < (int)(i.hat >> 24)) {\n" /* alpha 254: the hat's colour, 253 its shine */
     "        float3 h = float3((i.hat >> 16) & 255, (i.hat >> 8) & 255, i.hat & 255) / 255.0;\n"
     "        return float4(t.a > 0.994 ? h : saturate(h * 1.5 + 20.0 / 255), 1);\n"
     "    }\n"
@@ -226,6 +232,8 @@ static const char k_city_shader[] =
     "    if (glow == 2) s = 1;\n"
     "    else if (glow == 1) s = saturate((l - 0.62) / 0.18);\n"
     "    else if (glow == 3 && l >= 0.8 && max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b)) < 60.0 / 255) s = 0.6;\n"
+    /* a road's yellow markings (bright, yellow: red and green well over blue) shine too */
+    "    else if (glow == 3 && c.r > 0.55 * c.a && c.g > 0.4 * c.a && c.r - c.b > 0.35 * c.a && c.g - c.b > 0.25 * c.a) s = 0.85;\n"
     "    return float4(s, s, s, 1) * c.a;\n"
     "}\n"
     /* the relief (the image's normals, x right, y down, z out of the picture) in the sun's light of the time of day
@@ -328,6 +336,7 @@ typedef struct CityVertex {
     float x, y, u, v;
     float rect[4];
     uint32_t hat, glow;
+    uint32_t look[3];
 } CityVertex;
 
 typedef struct LightVertex {
@@ -619,6 +628,7 @@ static int make_city(void)
         {"TEXCOORD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 2, DXGI_FORMAT_R32_UINT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 3, DXGI_FORMAT_R32_UINT, 0, 36, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 4, DXGI_FORMAT_R32G32B32_UINT, 0, 40, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
     static const D3D11_INPUT_ELEMENT_DESC light_layout[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -1074,6 +1084,9 @@ static void draw_city(RECT dst, int fw, int fh)
             c[k].rect[3] = (float)(im->ay + im->h);
             c[k].hat = q->hat;
             c[k].glow = q->glow | (im->scale == 4 ? 0x20u : im->scale == 2 ? 0x10u : 0u);
+            c[k].look[0] = q->look[0];
+            c[k].look[1] = q->look[1];
+            c[k].look[2] = q->look[2];
         }
         verts[nv++] = c[0];
         verts[nv++] = c[1];

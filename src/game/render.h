@@ -89,6 +89,8 @@ extern int render_tile_dx, render_tile_dy, render_obj_dx, render_obj_dy;
 extern int render_gpu_changed;
 /* the colour of the hat of a person (0: as drawn), for agents */
 extern uint32_t (*render_hat_colour)(int ped);
+/* a pedestrian's own colours (hair, skin, clothes, 0x00RRGGBB) to draw it in; 0: not a pedestrian (as drawn) */
+extern int (*render_ped_look)(int ped, uint32_t look[3]);
 /* the HD texture pack (rt_user_dir/hd: tile_NNN.png 4 times a tile's size, tile_NNN_n.png its normals,
  * tile_NNN_orig.png the tile it was made from): its tiles instead of the game's, on the GPU (on by default) */
 void render_set_hd(int on);

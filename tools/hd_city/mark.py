@@ -49,4 +49,17 @@ for t in WATER_TILES:
     mk = WTOP & (out[..., 3] > 0)                    # all of its top, to its edges: no seam between them
     out[..., 3][mk] = 240 + WATER
     Image.fromarray(out, 'RGBA').save(f'{HD}/out/{t:03d}.png')
+# the roads' rims: faithful.py replaced their tops up to the diamond's edge, the texels out to the stepped edge kept
+# the redraw's rust (a dotted line where tiles meet): their colour taken from just inside the top
+ROADS = [100, 102, 103, 104, 106, 107, 108, 109, 110, 111, 112, 113, 119, 120, 121, 122, 123]
+d = np.abs(fx - 32) / 32 + np.abs(fy - 16) / 16
+RIM = (d > 0.985) & (d <= 1.0 + 2.5 / 16) & (fy < 16 + 1e-6 + 16 * 0)
+for t in ROADS:
+    out = load(t)
+    rim = RIM & (out[..., 3] > 0) | ((d > 0.985) & (d <= 1.0 + 2.5 / 16) & (out[..., 3] > 0) & (fy >= 16) & (d <= 1.0 + 1.0 / 16))
+    k = 0.975 / np.maximum(d, 1e-3)
+    sx = np.clip(((32 + (fx - 32) * k) * S).astype(int), 0, W * S - 1)
+    sy = np.clip(((16 + (fy - 16) * k) * S).astype(int), 0, H * S - 1)
+    out[..., :3][rim] = out[..., :3][sy[rim], sx[rim]]
+    Image.fromarray(out, 'RGBA').save(f'{HD}/out/{t:03d}.png')
 print('marked', len(MATERIAL), 'water', len(WATER_TILES), 'same', len(SAME))

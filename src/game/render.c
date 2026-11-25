@@ -207,9 +207,25 @@ static uint32_t shine(uint32_t c)
     return r;
 }
 
+/* a pedestrian's own colours (render_ped_look): in the people's heads (sprites 1-32) their hair (blonde: LOOK_HAIR;
+ * red is the hats' colour, HAT_INDEX: the hat's colour is the hair's) and skin; in the rest of them their clothes
+ * (the jackets' blue and the coats' ochre, their lighter shades); the image's alpha for them: 252 hair, 251 skin, 250
+ * clothes, 249 lighter (255: none) */
+#define LOOK_HAIR 11
+#define LOOK_SKIN 9
+static uint32_t g_obj_look[3]; /* the person being drawn: hair, skin, clothes (0: as drawn) */
+
+static int look_code(int id, uint8_t c)
+{
+    if (id >= 1 && id <= 32) return c == LOOK_HAIR ? 252 : c == LOOK_SKIN ? 251 : 255;
+    if (id > 32 && id < 450) return c == 7 || c == 5 ? 250 : c == 13 || c == 15 ? 249 : 255;
+    return 255;
+}
+
 /* an image (palette indices, 255 transparent) to the GPU in true colour: the hat's colours marked (alpha 254 its
  * colour, 253 its shine) */
 static int hd_define(int image, const uint8_t *px);
+static int hd_sprite(int image, const uint8_t *px, int w, int h);
 
 static void define_image(int image, const uint8_t *px, int w, int h)
 {
@@ -217,21 +233,38 @@ static void define_image(int image, const uint8_t *px, int w, int h)
     int i, head = image >= IMAGE_SPRITES && is_head(image - IMAGE_SPRITES);
     if (w * h > 256 * 256) return;
     if (image < IMAGE_SPRITES && hd_define(image, px)) return;
+    if (image >= IMAGE_SPRITES && !head && hd_sprite(image, px, w, h)) return;
     for (i = 0; i < w * h; i++) {
         uint32_t a = px[i] == HAT_INDEX ? 0xFE000000u : head && px[i] == HAT_SHINE ? 0xFD000000u : 0xFF000000u;
+        if (image >= IMAGE_SPRITES && a == 0xFF000000u) a = (uint32_t)look_code(image - IMAGE_SPRITES, px[i]) << 24;
         rgb[i] = px[i] == 255 ? 0 : a | (g_image_pal[px[i]] & 0xFFFFFFu);
     }
     host_city_image(image, w, h, 1, rgb);
 }
 
 /* a pixel of a sprite drawn on the CPU: the hat's colours in `hat`'s top rows (head: a head sprite) */
+static int g_put_head; /* the sprite being put is a head (sprite_colour) */
+static int g_put_sprite = -1; /* the sprite being put (-1: a tile) */
 static uint32_t sprite_colour(const uint32_t *pal, uint8_t c, int row, uint32_t hat, int head)
 {
+    int code;
     if (row < (int)(hat >> 24) && c == HAT_INDEX) return hat & 0xFFFFFFu;
     if (row < (int)(hat >> 24) && head && c == HAT_SHINE) return shine(hat & 0xFFFFFFu);
+    if (g_put_sprite >= 0 && (code = look_code(g_put_sprite, c)) != 255) {
+        uint32_t l = g_obj_look[code == 252 ? 0 : code == 251 ? 1 : 2];
+        if (l != 0 && code == 249) {
+            uint32_t r = 0;
+            int k;
+            for (k = 0; k < 24; k += 8) {
+                int v = (int)((l >> k) & 255) * 27 / 20;
+                r |= (uint32_t)(v > 255 ? 255 : v) << k;
+            }
+            return r;
+        }
+        if (l != 0) return l;
+    }
     return pal[c];
 }
-static int g_put_head; /* the sprite being put is a head (sprite_colour) */
 
 static int g_put_tx = -1, g_put_ty; /* the map place of the tile being put (-1: not a tile of the map) */
 static int hd_has_materials(int image);
@@ -256,6 +289,9 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->image = (uint16_t)image;
     q->flip = (uint8_t)(flipped != 0);
     q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0));
+    q->look[0] = image >= IMAGE_SPRITES ? g_obj_look[0] : 0;
+    q->look[1] = image >= IMAGE_SPRITES ? g_obj_look[1] : 0;
+    q->look[2] = image >= IMAGE_SPRITES ? g_obj_look[2] : 0;
     q->hat = image >= IMAGE_SPRITES ? hat /* a sprite: its hat's rows, colour */
              : g_put_tx >= 0 && hd_has_materials(image)
                    ? HOST_CITY_WORLD | (uint32_t)(g_put_ty & 1023) << 10 | (uint32_t)(g_put_tx & 1023)
@@ -360,6 +396,7 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
 
 /* ---- the HD texture pack (render.h) ---- */
 #include "../third_party/stb_image.h" /* (its code: additions.c) */
+#include "../third_party/stb_image_write.h" /* (its code: record.c) */
 #define HD_SCALE 4
 #define HD_W (TILE_W * HD_SCALE)
 #define HD_H (TILE_H * HD_SCALE)
@@ -519,6 +556,68 @@ static int hd_define(int image, const uint8_t *px)
     return 1;
 }
 
+/* the HD sprites (hd/sprite_NNNN.png, HD_SCALE times the sprite's size, RGBA): drawn in its place, in its own colours
+ * (the trees, ...); 0 if not in the pack.  SYND_DUMP_SPRITES=DIR writes each sprite the city draws to DIR/NNNN.png in
+ * this palette's colours (to redraw them) */
+static uint8_t g_hd_sprite_state[NB_SPRITES]; /* 0 not looked for, 1 loaded, 2 none */
+static uint8_t *g_hd_sprite[NB_SPRITES];
+
+static void dump_sprite(int id, const uint8_t *px, int w, int h)
+{
+    static uint8_t done[NB_SPRITES];
+    static uint8_t rgba[256 * 256 * 4];
+    const char *dir = getenv("SYND_DUMP_SPRITES");
+    char path[1200];
+    int i;
+    if (dir == NULL || done[id] || w * h > 256 * 256) return;
+    done[id] = 1;
+    if (getenv("SYND_DUMP_ALL_SPRITES") != NULL) { /* every sprite the game has, once */
+        static int all;
+        if (!all) {
+            int k, sw, sh;
+            const uint8_t *s;
+            all = 1;
+            for (k = 0; k < NB_SPRITES; k++)
+                if (k != id && (s = sprite(k, &sw, &sh)) != NULL && sw > 0 && sh > 0) dump_sprite(k, s, sw, sh);
+        }
+    }
+    for (i = 0; i < w * h; i++) {
+        uint32_t c = g_image_pal[px[i]];
+        rgba[i * 4] = (uint8_t)(c >> 16);
+        rgba[i * 4 + 1] = (uint8_t)(c >> 8);
+        rgba[i * 4 + 2] = (uint8_t)c;
+        rgba[i * 4 + 3] = px[i] == 255 ? 0 : 255;
+    }
+    snprintf(path, sizeof path, "%s/%04d.png", dir, id);
+    stbi_write_png(path, w, h, 4, rgba, w * 4);
+}
+
+static int hd_sprite(int image, const uint8_t *px, int w, int h)
+{
+    static uint32_t rgb[256 * HD_SCALE * 256 * HD_SCALE];
+    int id = image - IMAGE_SPRITES, i;
+    dump_sprite(id, px, w, h);
+    if (!g_hd || id < 0 || id >= NB_SPRITES || w * h > 256 * 256) return 0;
+    if (g_hd_sprite_state[id] == 0) {
+        char path[1200];
+        int iw, ih, n;
+        snprintf(path, sizeof path, "%s/hd/sprite_%04d.png", rt_user_dir, id);
+        g_hd_sprite[id] = stbi_load(path, &iw, &ih, &n, 4);
+        if (g_hd_sprite[id] != NULL && (iw != w * HD_SCALE || ih != h * HD_SCALE)) {
+            stbi_image_free(g_hd_sprite[id]);
+            g_hd_sprite[id] = NULL;
+        }
+        g_hd_sprite_state[id] = g_hd_sprite[id] != NULL ? 1 : 2;
+    }
+    if (g_hd_sprite_state[id] != 1) return 0;
+    for (i = 0; i < w * h * HD_SCALE * HD_SCALE; i++) {
+        const uint8_t *p = g_hd_sprite[id] + i * 4;
+        rgb[i] = p[3] < 128 ? 0 : 0xFF000000u | (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
+    }
+    host_city_image(image, w * HD_SCALE, h * HD_SCALE, HD_SCALE, rgb);
+    return 1;
+}
+
 /* `hat`: the colour of the hat: colour 6 of the sprites that are heads, whose colour 6 is all in their top
  * HAT_ROWS rows (what the agents hold uses colour 6 too, anywhere in it) */
 #define HAT_ROWS 5
@@ -571,9 +670,11 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
         if (s != NULL) {
             int rows = hat != 0 && (is_head(id) || oy == top) ? hat_rows(id, s, sw, sh) : 0;
             g_put_head = is_head(id);
+            g_put_sprite = id;
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
                 rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
             g_put_head = 0;
+            g_put_sprite = -1;
         }
         e = rd16(ea + 8u);
         if (e == 0 || ++guard > 64) break;
@@ -1403,6 +1504,7 @@ int render_gpu_changed;
 int render_tile_dx = 96, render_tile_dy = 40; /* a tile's top left corner from its projected corner */
 int render_obj_dx = 128, render_obj_dy = 56;  /* a frame's anchor from the projected position */
 uint32_t (*render_hat_colour)(int ped);       /* the colour of an agent's hat (0: as drawn) */
+int (*render_ped_look)(int ped, uint32_t look[3]); /* a pedestrian's hair, skin, clothes (0: not one) */
 
 typedef struct Obj {
     int key;      /* the diagonal row of tiles it stands in (tile x + tile y) */
@@ -1480,11 +1582,16 @@ static void draw_obj(const Target *t, const Obj *o)
         g_ped_fy[o->ped] = (int16_t)(fy + render_obj_dy);
         g_ped_drawn[o->ped] = 1;
         if (render_hat_colour != NULL && o->ped < 256) hat = render_hat_colour(o->ped);
+        /* a pedestrian: its own hair (the red heads' hair is the hats' colour: the hat's colour is the hair's), skin
+         * and clothes */
+        if (hat == 0 && render_ped_look != NULL && o->ped < 256 && render_ped_look(o->ped, g_obj_look))
+            hat = g_obj_look[0];
     }
     g_obj_glow = o->glow;
     draw_frame(t, o->frame, fx + render_obj_dx, fy + render_obj_dy, ffx + (float)render_obj_dx, ffy + (float)render_obj_dy,
                hat);
     g_obj_glow = 0;
+    g_obj_look[0] = g_obj_look[1] = g_obj_look[2] = 0;
 }
 
 void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y0, int x1, int y1, uint64_t now_us)

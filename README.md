@@ -161,9 +161,11 @@ squares that repeat without a seam, and their normals): a tile's pixels of alpha
 place on the map, 8 x 8 tiles before it repeats, so tiles side by side never show a seam (the image's edges are
 filtered without going see-through, too).  Material 11 is water: black, its ripples drifting, reflecting the sky
 (more at a grazing angle) and the sun's glints (only `material_11_n.png`, the ripples, is used).  The pack's own
-`hd/tile_lights.ini` sets how its tiles light up (over the defaults, under the user's `tile_lights.ini`).  A tile with `tile_NNN_orig.png` (the tile it was made from) is re-tinted to
+`sprite_NNNN.png` (4 times a sprite's size) is drawn in place of sprite NNNN (the trees; `SYND_DUMP_SPRITES=DIR` writes the sprites a mission draws, `SYND_DUMP_ALL_SPRITES=1` every one, to redraw them).  The roads' yellow markings shine at night like their white ones.  `hd/tile_lights.ini` sets how its tiles light up (over the defaults, under the user's `tile_lights.ini`).  A tile with `tile_NNN_orig.png` (the tile it was made from) is re-tinted to
 each mission's colours; without, it keeps its own.  `tools/hd_city/` makes the pack (Fooocus and DeepBump, from the
 game's own tiles: Mission 1's, in a cyberpunk look); the pack is not part of this repository.
+
+Pedestrians each have their own hair, skin and clothes colours (human hair and skin tones, muted city clothes; the same for the same person each time): their sprites' hair, skin and clothes colours are swapped as they are drawn, on the GPU.
 
 Configure Company shows every colour and logo in grids under its panel, one click each: the game's 8 colours and
 18 more (one of these goes on your agents' hats in true colour; the game keeps its nearest own colour for the world

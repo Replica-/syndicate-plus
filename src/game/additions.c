@@ -1750,6 +1750,25 @@ static uint32_t hat_colour(int ped)
     return c == g_overlay_pal[HAT_COLOUR] ? 0 : c;
 }
 
+/* a pedestrian's own colours, the same each time for the same person (from its number): human hair (black, dark
+ * and light brown, auburn, blonde, grey), skin from dark to light, and clothes in muted city colours */
+static int ped_look(int ped, uint32_t look[3])
+{
+    static const uint32_t hair[] = {0x16110E, 0x2A1D15, 0x3B2A1E, 0x4F3624, 0x6B4A2E, 0x7A3E1F, 0xA0763E, 0xC9A866,
+                                    0x8A8580, 0x24201D};
+    static const uint32_t skin[] = {0x5A3A28, 0x6E4630, 0x8A5A3C, 0xA06E4C, 0xB98462, 0xC99A78, 0xDAAE8E, 0xE6C2A6};
+    static const uint32_t cloth[] = {0x3A3F4A, 0x5A3A30, 0x2F4A3E, 0x6B5A42, 0x4A3050, 0x7A2E2A, 0x2E3E5E, 0x5E5E58,
+                                     0x8A6A3A, 0x3E2E24, 0x405A6A, 0x6A4A5A};
+    uint32_t h;
+    if (ped < 0 || ped >= NB_PEDS || PED_KIND(g_addrs->peds + (uint32_t)ped * PED_SIZE) != 1) return 0;
+    h = (uint32_t)ped * 2654435761u;
+    h ^= h >> 15;
+    look[0] = hair[h % (sizeof hair / sizeof hair[0])];
+    look[1] = skin[(h >> 8) % (sizeof skin / sizeof skin[0])];
+    look[2] = cloth[(h >> 16) % (sizeof cloth / sizeof cloth[0])];
+    return 1;
+}
+
 /* the pointer table's current entry (HPOINTER: 6 bytes, pointer to the pixels, width, height): from the pointer
  * to HSPR's table, +0x10 in Syndicate (0x445324), +0x14 in American Revolt */
 #define POINTER_CURRENT(ar) ((ar) ? 0x14u : 0x10u)
@@ -1790,6 +1809,7 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
     int x, y, slot, gpu;
     g_overlay_pal = pal;
     render_hat_colour = hat_colour;
+    render_ped_look = ped_look;
     move_view();
     /* B held: the buildings from the squad's level up see-through */
     {
