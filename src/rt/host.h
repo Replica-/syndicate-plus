@@ -66,7 +66,8 @@ typedef struct HostCityQuad {
 } HostCityQuad;
 /* HostCityQuad.shade: a solid tile (its face away from the sun darker); in the sun's shadow (a tile's cell, or the
  * cell what stands there is on); a tile's 4 neighbours in it (bits 2-5: x - 1, x + 1, y - 1, y + 1: its top's edges
- * softened against them); a slope going down from the sun; a tile */
+ * softened against them); a slope going down from the sun; a tile; bits 8-15 where the sun is (0: towards world -x,
+ * the top left of the screen, 255: towards -y, the top right) */
 #define HOST_SHADE_SOLID 0x01u
 #define HOST_SHADE_SHADOW 0x02u
 #define HOST_SHADE_SLOPE 0x40u

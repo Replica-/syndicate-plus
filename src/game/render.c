@@ -1542,8 +1542,27 @@ static int type_at(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
  * top of a floor, road, slope or roof (nothing solid on it) is in shadow when a solid tile is on that line, up to
  * SHADOW_LENGTH cells away; what stands on a shadowed cell is in it too.  A slope going down from the sun is a little
  * darker, the faces of solid tiles away from the sun too (the GPU's: HostCityQuad.shade) ---- */
-#define SHADOW_LENGTH 8
+#define SHADOW_LENGTH 5   /* cells at most */
+#define SUN_CELLS 0.6f    /* cells a shadow reaches for each level of height (a high sun: short shadows) */
+#define SUN_PERIOD 2400.0 /* seconds the sun takes to go across and back (it moves as the mission goes on) */
 int render_shadows = 1;
+static float g_sun = 0.3f; /* where the sun is: 0 towards world -x, 1 towards -y */
+static uint64_t g_sun_start;
+static uint32_t g_sun_map;
+
+/* the sun at a time of the mission (now_us; 0: where it was): it swings slowly between the top left and the top
+ * right of the screen and back */
+static void sun_at(uint64_t now_us, uint32_t map)
+{
+    double t;
+    if (now_us == 0) return;
+    if (map != g_sun_map || g_sun_start == 0 || now_us < g_sun_start) {
+        g_sun_map = map;
+        g_sun_start = now_us;
+    }
+    t = fmod((double)(now_us - g_sun_start) / 1e6 / SUN_PERIOD + 0.15, 1.0);
+    g_sun = (float)(t < 0.5 ? t * 2 : 2 - t * 2);
+}
 
 /* casts a shadow: not empty, not a mesh (fences, handrails), not the space over a train stop */
 static int solid_type(int t)
@@ -1561,9 +1580,14 @@ static int receives_shadow(uint32_t cols, int mx, int my, int mz, int x, int y, 
 static int in_shadow(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
 {
     int k;
+    float dx = cosf(g_sun * 1.5708f), dy = sinf(g_sun * 1.5708f);
     if (!g_have_types || !render_shadows || !receives_shadow(cols, mx, my, mz, x, y, z)) return 0;
-    for (k = 1; k <= SHADOW_LENGTH; k++)
-        if (solid_type(type_at(cols, mx, my, mz, x - k, y, z + k))) return 1;
+    /* towards the sun, k cells: what stands there at least k / SUN_CELLS levels higher */
+    for (k = 1; k <= SHADOW_LENGTH; k++) {
+        int cx = x - (int)floorf((float)k * dx + 0.5f), cy = y - (int)floorf((float)k * dy + 0.5f);
+        int up = (int)ceilf((float)k / SUN_CELLS);
+        if (z + up < mz && solid_type(type_at(cols, mx, my, mz, cx, cy, z + up))) return 1;
+    }
     return 0;
 }
 
@@ -1571,7 +1595,7 @@ static int in_shadow(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
 static uint32_t tile_shade(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
 {
     static const int nb[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
-    uint32_t s = HOST_SHADE_TILE;
+    uint32_t s = HOST_SHADE_TILE | (uint32_t)(g_sun * 255.0f) << 8;
     int e;
     if (!g_have_types || !render_shadows) return s;
     if (in_shadow(cols, mx, my, mz, x, y, z)) s |= HOST_SHADE_SHADOW;
@@ -1693,7 +1717,7 @@ static void draw_obj(const Target *t, const Obj *o)
     }
     g_obj_glow = o->glow;
     g_obj_shade = t->gpu && in_shadow(g_cols, g_mx, g_my, g_mz, o->x >> 8, o->y >> 8, (o->zw >> 7) - 1 < 0 ? 0 : (o->zw >> 7) - 1)
-                      ? HOST_SHADE_SHADOW : 0;
+                      ? HOST_SHADE_SHADOW | (uint32_t)(g_sun * 255.0f) << 8 : 0;
     draw_frame(t, o->frame, fx + render_obj_dx, fy + render_obj_dy, ffx + (float)render_obj_dx, ffy + (float)render_obj_dy,
                hat);
     g_obj_glow = 0;
@@ -1721,6 +1745,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         host_city_reset();
     }
     map = rd32(P_MAP);
+    sun_at(now_us, map);
     cols = map + 12u;
     int mx = (int)rd32(map), my = (int)rd32(map + 4u), mz = (int)rd32(map + 8u), nobj = 0, li, s, k = 0, n = 0, t256;
     const Snap *sa = NULL, *sb = NULL;

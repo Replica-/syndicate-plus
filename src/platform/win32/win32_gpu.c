@@ -258,8 +258,11 @@ static const char k_city_shader[] =
     /* a solid tile's face away from the sun (world +x: below the lower right edge of its top) darker */
     "float face(V i) {\n"
     "    float2 r = at(i);\n"
-    "    if (!(i.shade & 1) || r.x < 32 || r.y < 32 - (r.x - 32) / 2) return 1;\n"
-    "    return 1 - shadow.x * 0.45;\n"
+    "    float a = ((i.shade >> 8) & 255) / 255.0;\n"
+    "    if (!(i.shade & 1)) return 1;\n"
+    "    if (r.x >= 32 && r.y > 32 - (r.x - 32) / 2 + 3) return 1 - shadow.x * 0.35 * (1 - a);\n"
+    "    if (r.x < 32 && r.y > 16 + r.x / 2 + 3) return 1 - shadow.x * 0.35 * a;\n"
+    "    return 1;\n"
     "}\n"
     /* in the shadow (FreeSynd's: a whole cell is or is not; a tile's top's edges softened against its neighbours
      * in the other state): 0..1 */
@@ -272,15 +275,15 @@ static const char k_city_shader[] =
     "    float4 dist = float4(w.x, 1 - w.x, w.y, 1 - w.y);\n"
     "    [unroll] for (int e = 0; e < 4; e++) {\n"
     "        float n = (i.shade >> (e + 2)) & 1;\n"
-    "        float edge = lerp(0.5, own, smoothstep(0, 0.14, dist[e]));\n"
+    "        float edge = lerp(0.5, own, smoothstep(0, 0.5, dist[e]));\n"
     "        if (n != own) v = own > 0 ? min(v, edge) : max(v, edge);\n"
     "    }\n"
     "    return v;\n"
     "}\n"
     /* the light it keeps (FreeSynd's: 45% taken in a shadow, 20% on a slope down from the sun) */
     "float sunlit(V i) {\n"
-    "    float l = 0.45 * shaded(i);\n"
-    "    if ((i.shade & 128) && (i.shade & 64)) l = max(l, 0.2);\n"
+    "    float l = 0.32 * shaded(i);\n"
+    "    if ((i.shade & 128) && (i.shade & 64)) l = max(l, 0.12);\n"
     "    return 1 - shadow.x * l;\n"
     "}\n"
     /* the four texels around a point filtered: their colours by their weights among the opaque ones only (a

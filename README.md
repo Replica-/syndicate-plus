@@ -153,7 +153,7 @@ Traffic lights glow at dusk and night in the colours of their lamps lit (red, am
 road on its side; billboards light up, and throw their picture's colour out in front of them, wider further
 out; the small signs on walls shine and light the wall and the pavement in their own colours.  Other small coloured lights in the objects glow too.  Held B also outlines in cyan the edges of the floor the squad walks on.
 
-*Sun shadows* (window menu and the Escape menu; on by default, `[video] shadows`): as FreeSynd's, the sun at the top left: a floor, road or roof is in shadow when something solid stands within 8 cells towards the sun, a level higher a cell; what stands there is shaded too; the edges between shadowed and lit cells are soft, slopes going down from the sun a little darker, solid tiles' faces away from the sun darker; as strong as the time of day's light.
+*Sun shadows* (window menu and the Escape menu; on by default, `[video] shadows`): as FreeSynd's, the sun at the top left: a floor, road or roof is in shadow when something solid stands within 5 cells towards the sun, high enough (a high sun: short shadows); the sun swings slowly between the top left and the top right of the screen as the mission goes on (40 minutes there and back); what stands there is shaded too; the edges between shadowed and lit cells are soft, slopes going down from the sun a little darker, solid tiles' faces away from the sun darker; as strong as the time of day's light.
 
 *HD textures* (window menu and the Escape menu; on by default) draws the city's tiles from an HD pack in `hd`
 beside the saves when it is there (`tile_NNN.png`, 4 times a tile's size, `tile_NNN_n.png` its normals): normal
