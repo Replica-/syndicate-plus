@@ -41,6 +41,7 @@ Python, "DeepBump" with DeepBump's, the others with any Python 3 with Pillow and
    The other cities: every other tile of the set (133: `export.py` without IDS) upscaled the same way; `mark.py`
    lays the pavement material on their paving's colours (PAVE_ONLY), `grass.py` does their grass blocks (their own
    sides kept).
+7e. `effects.py HD SPRITES` - the bullet impacts (sprites 729-733) drawn in HD: a white-hot core, sparks, embers.
 8. `install.py HD/out SAVE/hd` - the pack where the game looks for it, the buildings' orange muted on the way, with `tile_lights.ini` (the pack's tile lights:
    the pads' light off).
 
