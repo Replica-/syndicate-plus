@@ -711,7 +711,7 @@ static int hat_rows(int id, const uint8_t *s, int sw, int sh)
 }
 static void add_light(float fx, float fy, float rx, float ry, uint32_t colour);
 
-#define FLASH_LIGHT_R 64.0f          /* a flash's light (a muzzle flash, an explosion): its radius */
+#define FLASH_LIGHT_R 56.0f          /* a flash's light (a muzzle flash, an explosion): its radius */
 #define FLASH_LIGHT_COLOUR 0xFFC878u
 /* a flash (a muzzle flash, an explosion, a flame): a small sprite mostly of bright yellow and white pixels */
 static int flash_sprite(int id, const uint8_t *s, int sw, int sh)
@@ -758,9 +758,24 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
             g_put_head = is_head(id);
             g_put_sprite = id;
             g_quad_z = g_obj_z - 8.0f * (float)oy; /* its feet at the anchor, 8 world units a pixel up */
-            if (t->gpu && flash_sprite(id, s, sw, sh)) /* it lights what is round it (by night most) */
-                add_light(fax + (float)ox + (float)sw / 2.0f, fay + (float)oy + (float)sh / 2.0f, FLASH_LIGHT_R,
-                          FLASH_LIGHT_R * 0.65f, FLASH_LIGHT_COLOUR);
+            if (t->gpu && (id < 729 || id > 733) && flash_sprite(id, s, sw, sh)) {
+                /* it lights what is round it (by night most): two or three pools a little apart, changing each
+                 * frame (a flicker, not a disc); the impacts' sparks light themselves (LIST_EFFECTS) */
+                static uint32_t flicker = 2463534242u;
+                float cx = fax + (float)ox + (float)sw / 2.0f, cy = fay + (float)oy + (float)sh / 2.0f;
+                int n, pools = 2 + (int)(flicker & 1u);
+                for (n = 0; n < pools; n++) {
+                    float jx, jy, r;
+                    flicker ^= flicker << 13;
+                    flicker ^= flicker >> 17;
+                    flicker ^= flicker << 5;
+                    jx = (float)((int)(flicker & 31u) - 16) * 0.9f;
+                    jy = (float)((int)((flicker >> 5) & 31u) - 16) * 0.5f;
+                    r = FLASH_LIGHT_R * (0.45f + 0.35f * (float)((flicker >> 10) & 15u) / 15.0f);
+                    add_light(cx + jx, cy + jy, r, r * (0.45f + 0.25f * (float)((flicker >> 14) & 7u) / 7.0f),
+                              FLASH_LIGHT_COLOUR);
+                }
+            }
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
                 rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
             g_put_head = 0;
@@ -1267,16 +1282,16 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define LYING_H 20    /* a lying person's frame is at most this high */
 #define HEADLIGHT_COLOUR 0xFFF5D7u
 #define REAR_LIGHT_COLOUR 0xFF281Eu
-#define HEADLAMP_GLOW 0xFFF5DCu      /* the lamps on the car: white */
-#define TAIL_GLOW 0x8A140Cu          /* red, dim */
-#define BRAKE_GLOW 0xFF2A18u         /* red, bright */
+#define HEADLAMP_GLOW 0xB4AE9Cu      /* the lamps on the car: white (a lens lit, not a ball of light) */
+#define TAIL_GLOW 0x5A0E08u          /* red, dim */
+#define BRAKE_GLOW 0xB41C10u         /* red, bright */
 #define CAR_LAMP_FRONT 205.0f        /* where they are on the car (world units from its middle) */
 #define CAR_LAMP_REAR 190.0f
 #define CAR_LAMP_SIDE 48.0f
 #define CAR_LAMP_HIGH 36
 static float g_car_speed[64];
 
-#define SHOT_LIGHT_RX 46.0f          /* a shot's light (a muzzle flash, an impact): its radius */
+#define SHOT_LIGHT_RX 13.0f          /* an impact's sparks: a small, local light */
 #define SHOT_LIGHT_COLOUR 0xFFB860u  /* warm */
 
 static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_t vx, int32_t vy, int heading)
@@ -1323,9 +1338,9 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
             float along = k < 2 ? CAR_LAMP_FRONT : -CAR_LAMP_REAR, side = (k & 1) ? CAR_LAMP_SIDE : -CAR_LAMP_SIDE;
             int32_t lx = mid_x + (int32_t)(face_x * along - face_y * side);
             int32_t ly = mid_y + (int32_t)(face_y * along + face_x * side);
-            float r = k < 2 ? 3.5f : braking ? 4.5f : 2.5f;
+            float r = k < 2 ? 2.4f : braking ? 2.6f : 2.0f;   /* small, flat: the lamp's own shape */
             project_f(lx, ly, z + CAR_LAMP_HIGH, &fx, &fy);
-            add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, r, r * 0.8f,
+            add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, r, r * 0.55f,
                       HOST_LIGHT_GLOW | (k < 2 ? HEADLAMP_GLOW : braking ? BRAKE_GLOW : TAIL_GLOW));
         }
     }
@@ -1883,7 +1898,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             if (t.gpu && li == LIST_EFFECTS) {
                 float sfx, sfy;
                 project_f(x, y, z, &sfx, &sfy);
-                add_light(sfx + (float)render_obj_dx, sfy + (float)render_obj_dy - 6.0f, SHOT_LIGHT_RX, SHOT_LIGHT_RX * 0.65f,
+                add_light(sfx + (float)render_obj_dx, sfy + (float)render_obj_dy - 2.0f, SHOT_LIGHT_RX, SHOT_LIGHT_RX * 0.6f,
                           SHOT_LIGHT_COLOUR);
             }
             if (t.gpu && li == LIST_CARS)

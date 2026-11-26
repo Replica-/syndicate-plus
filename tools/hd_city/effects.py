@@ -35,8 +35,8 @@ for sid, t in FRAMES.items():
     # the flash: a white-hot core ringed yellow and orange (opaque: the game's light flashes give the glow round it),
     # big at first, gone by the end
     flash = max(0.0, 1 - t * 2.5)
-    if flash > 0:
-        r = unit * 0.22 * (0.5 + 0.5 * flash)          # a hot point, not a ball
+    if flash > 0 and t == 0.0:                    # only the first frame: a pinpoint (then sparks only)
+        r = unit * 0.08
         for k, heat in ((1.0, 0.55), (0.72, 0.3), (0.45, 0.12), (0.22, 0.0)):
             rr = r * k
             d.ellipse((cx - rr, cy - rr * 0.62, cx + rr, cy + rr * 0.62), fill=hot(heat) + (255,))
