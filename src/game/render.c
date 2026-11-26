@@ -1005,6 +1005,8 @@ static const struct {
 #define LAMP_MAX_PIXELS (TILE_W * TILE_H / 8)
 #define LAMP_MAX_GROUND 48
 #define LAMP_RADIUS_ON 80     /* a tile whose light is on: from its centre */
+#define WINDOW_MAX_PIXELS (TILE_W * TILE_H / 3) /* more: a white wall, not windows */
+#define WINDOW_LIGHT_R 56.0f
 #define TILE_LIGHTS_FILE "tile_lights.ini"
 
 /* the settings of each tile (render_tile_setting): the defaults above, then tile_lights.ini in the user's folder */
@@ -1113,7 +1115,7 @@ int render_set_tile_setting(int id, const RenderTileSetting *in)
 #define NB_LIGHTS 1024
 
 typedef struct TileLight {
-    uint8_t known, glow, light;
+    uint8_t known, glow, light, spill; /* spill: windows' light (dimmer, cooler) */
     float ox, oy, radius, ry; /* the light's centre in the tile, its radii */
     uint32_t colour;
 } TileLight;
@@ -1237,6 +1239,16 @@ static const TileLight *tile_light(int id)
                 if (l->radius > 90) l->radius = 90;
             }
             l->ry = l->radius;
+        } else if (l->light == RENDER_LIGHT_AUTO && n > max_lamp_pixels(g_have_types ? g_types[id] : 0) &&
+                   n <= WINDOW_MAX_PIXELS && g_have_types && g_types[id] != 0x05 && !road_type(g_types[id])) {
+            /* rows of lit windows (a wall's bright pixels, more than a lamp's): a soft spill of their light round
+             * them, a little below (on the ground in front) */
+            l->light = RENDER_LIGHT_ON;
+            l->ox = (float)(sx / n);
+            l->oy = (float)(sy / n) + 6.0f;
+            if (l->radius == 0) l->radius = WINDOW_LIGHT_R;
+            l->ry = l->radius * 0.55f;
+            l->spill = 1;
         } else {
             l->light = RENDER_LIGHT_NONE;
             return l;
@@ -1300,8 +1312,6 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
     if (li == LIST_CARS && i < 64) {
         float d = sqrtf((float)vx * vx + (float)vy * vy);
         int k, braking;
-        int32_t mid_x, mid_y;
-        float face_x, face_y;
         if (d > 2.0f) {
             g_car_dir[i][0] = (float)vx / d;
             g_car_dir[i][1] = (float)vy / d;
@@ -1313,36 +1323,17 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
         /* slowing down (its speed a tick under the speed it kept) or standing: braking */
         braking = d < 2.0f || d < g_car_speed[i] * 0.85f;
         g_car_speed[i] = g_car_speed[i] * 0.8f + d * 0.2f;
-        /* the cone of the headlights (circles growing ahead), their lamps, the rear lights */
+        /* the light it gives off (no lamps drawn): the headlights' beam ahead (circles growing), the red glow behind,
+         * larger while it brakes */
         for (k = 0; k <= 3; k++) {
-            float ahead = 260.0f + 180.0f * (float)k;
+            float ahead = 240.0f + 200.0f * (float)k;
             project_f(x + (int32_t)(g_car_dir[i][0] * ahead), y + (int32_t)(g_car_dir[i][1] * ahead), z, &fx, &fy);
-            add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, k == 0 ? 14.0f : 14.0f + 12.0f * k,
-                      k == 0 ? 14.0f : 10.0f + 8.0f * k, HEADLIGHT_COLOUR);
+            add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, 18.0f + 14.0f * (float)k,
+                      14.0f + 10.0f * (float)k, HEADLIGHT_COLOUR);
         }
         project_f(x - (int32_t)(g_car_dir[i][0] * 250.0f), y - (int32_t)(g_car_dir[i][1] * 250.0f), z, &fx, &fy);
-        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, braking ? 26.0f : 16.0f, braking ? 22.0f : 16.0f,
+        add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, braking ? 34.0f : 22.0f, braking ? 26.0f : 17.0f,
                   REAR_LIGHT_COLOUR);
-        /* the lamps themselves glow (seen by day too): two white at the front, two red at the back, brighter while
-         * it slows down or stands (its brake lights) */
-        {
-            /* its place is its middle (its sprite is drawn centred on it); its lamps at its nose and tail, the way it
-             * faces (its heading: 0 +y, 64 +x) */
-            float hx = sinf((float)heading * 6.2832f / 256.0f), hy = cosf((float)heading * 6.2832f / 256.0f);
-            mid_x = x;
-            mid_y = y;
-            face_x = hx;
-            face_y = hy;
-        }
-        for (k = 0; k < 4; k++) {
-            float along = k < 2 ? CAR_LAMP_FRONT : -CAR_LAMP_REAR, side = (k & 1) ? CAR_LAMP_SIDE : -CAR_LAMP_SIDE;
-            int32_t lx = mid_x + (int32_t)(face_x * along - face_y * side);
-            int32_t ly = mid_y + (int32_t)(face_y * along + face_x * side);
-            float r = k < 2 ? 2.4f : braking ? 2.6f : 2.0f;   /* small, flat: the lamp's own shape */
-            project_f(lx, ly, z + CAR_LAMP_HIGH, &fx, &fy);
-            add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, r, r * 0.55f,
-                      HOST_LIGHT_GLOW | (k < 2 ? HEADLAMP_GLOW : braking ? BRAKE_GLOW : TAIL_GLOW));
-        }
     }
 }
 
@@ -1693,6 +1684,11 @@ static void tile_lights_at(int id, float fx, float fy)
     h->rx = l->radius * (float)g_zoom;
     h->ry = l->ry * (float)g_zoom;
     h->colour = l->colour;
+    if (l->spill) { /* windows: dimmer and a little cool */
+        uint32_t c = l->colour;
+        h->colour = (uint32_t)(((c >> 16) & 255) * 45 / 100) << 16 | (uint32_t)(((c >> 8) & 255) * 50 / 100) << 8 |
+                    (uint32_t)((c & 255) * 58 / 100);
+    }
 }
 
 void render_project(int32_t x, int32_t y, int32_t z, int *fx, int *fy)

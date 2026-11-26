@@ -475,7 +475,7 @@ static const struct {
     {{1.0f, 1.0f, 1.0f}, 0.0f, 0.8f},          /* the mission's own look: the lights add nothing to it */
     {{1.0f, 0.988f, 0.941f}, 0.25f, 0.96f},    /* day */
     {{0.922f, 0.627f, 0.451f}, 0.0f, 0.56f},   /* dusk */
-    {{0.275f, 0.322f, 0.549f}, 0.0f, 0.4f},    /* night */
+    {{0.34f, 0.38f, 0.60f}, 0.0f, 0.4f},       /* night: moonlit (the city still reads) */
     {{0.98f, 0.765f, 0.784f}, 0.0f, 0.68f},    /* dawn */
 };
 
