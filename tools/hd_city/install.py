@@ -29,7 +29,23 @@ def smooth_outline(a, t, base_dir):
     op = np.asarray(Image.open(p).convert('RGBA'))[..., 3] > 0
     if not (op & BLOCK1).any():
         return a
+    # the outline smoothed: the game's coverage scaled up smoothly, cut at half (its pixel steps become slanted lines:
+    # rails, fences, edges); inside the tile's own pixels kept
+    soft = np.asarray(Image.fromarray((op * 255).astype(np.uint8)).resize((W * S, H * S), Image.BILINEAR)
+                      .filter(ImageFilter.GaussianBlur(S * 0.35))) / 255 > 0.5
+    # only at solid parts' edges (a pixel with most of its 3 x 3 neighbours opaque): fine patterns (a fence's mesh) kept
+    cnt = np.zeros(op.shape, np.int32)
+    pad = np.pad(op, 1)
+    for dy in range(3):
+        for dx in range(3): cnt += pad[dy:dy + op.shape[0], dx:dx + op.shape[1]]
+    solid = np.asarray(Image.fromarray(((cnt >= 5) * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(3))
+                       .resize((W * S, H * S), Image.NEAREST)) > 0
+    soft = np.where(solid, soft, np.asarray(Image.fromarray((op * 255).astype(np.uint8)).resize((W * S, H * S), Image.NEAREST)) > 0)
+    a = a.copy()
+    lost = (a[..., 3] > 0) & ~soft
+    a[..., 3][lost] = 0
     have = a[..., 3] > 0
+    gain = soft & ~have
     # along the block's outline (a game pixel either side): the straight edge where the tile reaches it
     reach = np.asarray(Image.fromarray((have * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(2 * S + 1))) > 0
     d = np.minimum(np.minimum(fx - 0, 64 - fx), np.minimum(fy - np.abs(fx - 32) / 2, 48 - np.abs(fx - 32) / 2 - fy))
@@ -43,7 +59,7 @@ def smooth_outline(a, t, base_dir):
         cc[~mm & m2] = c2[~mm & m2]
         c, m = Image.fromarray(cc), Image.fromarray((m2 * 255).astype(np.uint8))
     out = a.copy()
-    grow = band & BLOCK & reach & ~have
+    grow = (band & BLOCK & reach & ~have) | gain
     out[..., :3][grow] = np.asarray(c)[grow]
     out[..., 3][grow] = 255
     out[..., 3][band & ~BLOCK] = 0
