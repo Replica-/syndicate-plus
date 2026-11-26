@@ -717,6 +717,13 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour);
 #define FLASH_LIGHT_R 56.0f          /* a flash's light (a muzzle flash, an explosion): its radius */
 #define FLASH_LIGHT_COLOUR 0xFFC878u
 #define FIRE_LIGHT_COLOUR 0xFF8A3Cu  /* a blaze's: orange-red */
+#define FIRE_LIGHT_R 150.0f
+/* a sprite with fire in it (the HD pack's dynamic fire: blazes, a destroyed car's flames, the explosion's fireball) */
+static int fire_sprite(int id)
+{
+    return (id >= 1756 && id <= 1759) || (id >= 1005 && id <= 1008) || (id >= 765 && id <= 773) ||
+           (id >= 992 && id <= 1002 && id != 996 && id != 997);
+}
 /* a flash (a muzzle flash, an explosion, a flame): a small sprite mostly of bright yellow and white pixels */
 static int flash_sprite(int id, const uint8_t *s, int sw, int sh)
 {
@@ -762,12 +769,13 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
             g_put_head = is_head(id);
             g_put_sprite = id;
             g_quad_z = g_obj_z - 8.0f * (float)oy; /* its feet at the anchor, 8 world units a pixel up */
-            if (t->gpu && (id < 729 || id > 733) && flash_sprite(id, s, sw, sh)) {
+            int burning = fire_sprite(id);
+            if (t->gpu && (id < 729 || id > 733) && (burning || flash_sprite(id, s, sw, sh))) {
                 /* it lights what is round it (by night most): two or three pools a little apart, changing each
                  * frame (a flicker, not a disc); the impacts' sparks light themselves (LIST_EFFECTS) */
                 static uint32_t flicker = 2463534242u;
                 float cx = fax + (float)ox + (float)sw / 2.0f, cy = fay + (float)oy + (float)sh / 2.0f;
-                int n, pools = 2 + (int)(flicker & 1u);
+                int n, pools = burning ? 4 : 2 + (int)(flicker & 1u); /* fire: brighter (the lights add up) */
                 for (n = 0; n < pools; n++) {
                     float jx, jy, r;
                     flicker ^= flicker << 13;
@@ -776,10 +784,10 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
                     jx = (float)((int)(flicker & 31u) - 16) * 0.9f;
                     jy = (float)((int)((flicker >> 5) & 31u) - 16) * 0.5f;
                     r = FLASH_LIGHT_R * (0.45f + 0.35f * (float)((flicker >> 10) & 15u) / 15.0f);
-                    if (sw >= 40) r *= 2.2f; /* a blaze: a big, red, flickering glow */
-                    add_light(cx + jx, cy + jy + (sw >= 40 ? (float)sh * 0.3f : 0.0f), r,
+                    if (burning) r = FIRE_LIGHT_R * (0.75f + 0.35f * (float)((flicker >> 10) & 15u) / 15.0f);
+                    add_light(cx + jx, cy + jy + (burning ? (float)sh * 0.3f : 0.0f), r,
                               r * (0.45f + 0.25f * (float)((flicker >> 14) & 7u) / 7.0f),
-                              sw >= 40 ? FIRE_LIGHT_COLOUR : FLASH_LIGHT_COLOUR);
+                              burning ? FIRE_LIGHT_COLOUR : FLASH_LIGHT_COLOUR);
                 }
             }
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
