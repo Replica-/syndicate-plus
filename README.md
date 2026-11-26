@@ -145,7 +145,9 @@ videos and the other screens' opening animations keep black sides.
 
 The window menu's *Time of day* lights the city at dusk or at night (the side panel stays as it is): the city is
 darker, with the time's colour, and lit by its lamps (found in the tiles), the cars' headlights and the flashes of
-the shots.  Ctrl+L in a mission opens the light editor: the tile under the pointer is outlined, G changes what of
+the shots.  Its default, *Mission*, takes each mission's time from its palette in the original (the five city
+palettes: amber and green by day, the cool grey-green one at night, red at dusk, sand at dawn), so missions differ in
+mood as they did.  Ctrl+L in a mission opens the light editor: the tile under the pointer is outlined, G changes what of
 it glows in the dark, L whether it lights what is around it, [ and ] the size of its light, C its colour; the
 settings are saved in `tile_lights.ini` beside the saves.
 

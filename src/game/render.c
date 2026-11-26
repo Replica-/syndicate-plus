@@ -1683,6 +1683,7 @@ static int type_at(uint32_t cols, int mx, int my, int mz, int x, int y, int z)
  * is (it moves through the mission) and which tiles are solid (their face away from the sun darker) ---- */
 #define SUN_PERIOD 2400.0 /* seconds the sun takes to go across and back (it moves as the mission goes on) */
 int render_shadows = 1;
+int render_mission_time;
 static float g_sun = 0.3f; /* where the sun is: 0 towards world -x, 1 towards -y */
 static uint64_t g_sun_start;
 static uint32_t g_sun_map;
@@ -1730,7 +1731,8 @@ static int flat_tile(int id)
 /* a tile's HostCityQuad.shade */
 static uint32_t tile_shade(uint32_t cols, int mx, int my, int mz, int x, int y, int z, int id)
 {
-    uint32_t s = HOST_SHADE_TILE | (uint32_t)(g_sun * 255.0f) << 8 | (render_shadows ? HOST_SHADE_ON : 0);
+    uint32_t s = HOST_SHADE_TILE | (uint32_t)(g_sun * 255.0f) << 8 | (render_shadows ? HOST_SHADE_ON : 0) |
+                 (uint32_t)(render_mission_time & 7) << 24;
     if (render_shadows && g_have_types && solid_type(type_at(cols, mx, my, mz, x, y, z))) s |= HOST_SHADE_SOLID;
     if (flat_tile(id)) s |= HOST_SHADE_FLAT;
     if (g_have_types && type_at(cols, mx, my, mz, x, y, z) == 0x0C) s |= HOST_SHADE_MESH;

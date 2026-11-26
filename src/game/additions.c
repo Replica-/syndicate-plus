@@ -477,6 +477,29 @@ static volatile int g_menu; /* the mission's menu (Escape) is open: the mission 
 static volatile int g_pick_active, g_pick_click; /* the choice of game is on screen (game_pick), a click on it */
 static volatile uint32_t g_pick_key;
 
+/* each mission's palette (bytes, by mission: HPALnn), in each program; its time of day: 1 amber day, 2 the cool
+ * grey-green night, 3 green day, 4 red dusk, 5 sand dusk (as dawn) */
+static uint32_t palette_table(void)
+{
+    switch (g_addrs->game) {
+    case GAME_SYN: return 0x444170u;
+    case GAME_SYN_S: return 0x442088u;
+    case GAME_SYN_G: return 0x4420ecu;
+    case GAME_AR: return 0x4540d8u;
+    case GAME_AR_S: return 0x451f18u;
+    case GAME_AR_G: return 0x451f80u;
+    default: return 0;
+    }
+}
+
+static void mission_time(void)
+{
+    static const int times[6] = {0, 1, 3, 1, 2, 4};
+    uint32_t t = palette_table();
+    int id = t != 0 ? M[t + RD16(g_addrs->mission)] : 0;
+    render_mission_time = id >= 1 && id <= 5 ? times[id] : 0;
+}
+
 static int in_mission(void)
 {
     return g_tick_us != 0 && (g_menu || host_time_us() - g_tick_us < 200000u);
@@ -3517,6 +3540,7 @@ static int on_frame_wait(uint32_t addr)
 static int on_mission_tick(uint32_t addr)
 {
     int slot = g_centre_slot;
+    mission_time();
     (void)addr;
     if (!in_mission()) {
         /* a new mission: the targets of the last one are not orders */

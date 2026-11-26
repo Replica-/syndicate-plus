@@ -77,7 +77,8 @@ typedef struct HostCityQuad {
 #define HOST_SHADE_LIGHT 0x40000u /* a spark, a flash: light, casts no shadow */
 #define HOST_SHADE_SLOPE 0x40u
 #define HOST_SHADE_TILE 0x80u
-#define HOST_SHADE_ON 0x10000u /* the sun's shadows on (per pixel, the GPU's) */
+#define HOST_SHADE_ON 0x10000u
+/* HostCityQuad.shade bits 24-26 of a tile: the time of day of the mission's own look (render_mission_time) */ /* the sun's shadows on (per pixel, the GPU's) */
 /* HostCityQuad.hat of a tile with material pixels: this bit, the tile's map y in bits 10-19, its x in bits 0-9 */
 #define HOST_CITY_WORLD 0x100000u
 #define HOST_GLOW_SIGNAL 0x40u /* HostCityQuad.glow: its bright, strongly coloured pixels shine too (lamps) */

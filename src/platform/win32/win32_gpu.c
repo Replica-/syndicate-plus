@@ -1263,6 +1263,7 @@ static void draw_city(RECT dst, int fw, int fh)
     UINT stride = sizeof(CityVertex), offset = 0;
     static LightVertex *gverts, *fverts, *sverts;
     static int gverts_cap;
+    int mission_time = 0;
     int i, n, nv = 0, nlv = 0, ngv = 0, nfv = 0, nsv = 0, time = (int)g_time, lit_time, sun_on = 0;
     float sun_a = 0;
     float sx = (float)(dst.right - dst.left) / (float)fw, sy = (float)(dst.bottom - dst.top) / (float)fh, zoom;
@@ -1310,6 +1311,7 @@ static void draw_city(RECT dst, int fw, int fh)
         if (g_city_quads[i].shade & HOST_SHADE_ON) {
             sun_on = 1;
             sun_a = (float)((g_city_quads[i].shade >> 8) & 255) / 255.0f;
+            mission_time = (int)((g_city_quads[i].shade >> 24) & 7);
             break;
         }
     if (n * 6 > verts_cap) {
@@ -1361,7 +1363,7 @@ static void draw_city(RECT dst, int fw, int fh)
     sc.right = dst.left + (LONG)((float)g_city_rect[2] * sx);
     sc.bottom = dst.top + (LONG)((float)g_city_rect[3] * sy);
     /* the mission's own look: the light map is white, the lights add nothing (only the glows show) */
-    if (time == 0) time = -1;
+    if (time == 0) time = mission_time > 0 && mission_time < NB_TIMES ? mission_time : -1; /* the mission's own: its palette's */
     lit_time = time >= 0 ? time : 0;
     /* the lights and the glows: a quad around each ellipse */
     if (g_city_nl * 6 > lverts_cap) {

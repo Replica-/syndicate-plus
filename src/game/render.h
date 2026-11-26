@@ -51,6 +51,8 @@ int render_map_size(int *mx, int *my, int *mz);
 /* how dark the mission's own palette makes it (0 day .. 1 night): its lights glow that much by default
  * (host_city_frame's `night`) */
 void render_set_mission_night(float night);
+/* the time of day the mission's own look shows (its palette's: 1 day, 2 dusk, 3 night, 4 dawn; 0 none) */
+extern int render_mission_time;
 int render_map_tile(int x, int y, int z);
 /* the tile seen at sx, sy of the frame in the last city drawn: its number and where it is drawn */
 int render_tile_at(int sx, int sy, int *id, int *rx, int *ry, int *rw, int *rh);
