@@ -713,6 +713,7 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour);
 
 #define FLASH_LIGHT_R 56.0f          /* a flash's light (a muzzle flash, an explosion): its radius */
 #define FLASH_LIGHT_COLOUR 0xFFC878u
+#define FIRE_LIGHT_COLOUR 0xFF8A3Cu  /* a blaze's: orange-red */
 /* a flash (a muzzle flash, an explosion, a flame): a small sprite mostly of bright yellow and white pixels */
 static int flash_sprite(int id, const uint8_t *s, int sw, int sh)
 {
@@ -772,8 +773,10 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
                     jx = (float)((int)(flicker & 31u) - 16) * 0.9f;
                     jy = (float)((int)((flicker >> 5) & 31u) - 16) * 0.5f;
                     r = FLASH_LIGHT_R * (0.45f + 0.35f * (float)((flicker >> 10) & 15u) / 15.0f);
-                    add_light(cx + jx, cy + jy, r, r * (0.45f + 0.25f * (float)((flicker >> 14) & 7u) / 7.0f),
-                              FLASH_LIGHT_COLOUR);
+                    if (sw >= 40) r *= 2.2f; /* a blaze: a big, red, flickering glow */
+                    add_light(cx + jx, cy + jy + (sw >= 40 ? (float)sh * 0.3f : 0.0f), r,
+                              r * (0.45f + 0.25f * (float)((flicker >> 14) & 7u) / 7.0f),
+                              sw >= 40 ? FIRE_LIGHT_COLOUR : FLASH_LIGHT_COLOUR);
                 }
             }
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,

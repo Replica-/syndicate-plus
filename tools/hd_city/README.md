@@ -42,6 +42,7 @@ Python, "DeepBump" with DeepBump's, the others with any Python 3 with Pillow and
    The other cities: every other tile of the set (133: `export.py` without IDS) upscaled the same way; `mark.py`
    lays the pavement material on their paving's colours (PAVE_ONLY), `grass.py` does their grass blocks (their own
    sides kept).
+7e2. `fire.py HD SPRITES` - the burning object's frames (blazes 1756-1759, tongues and smoke 992-1002) drawn in their own outlines.
 7e. `effects.py HD SPRITES` - the bullet impacts (sprites 729-733) drawn in HD: a white-hot core, sparks, embers.
 7f. `upscale_sprites.py HD SPRITES id...` (Fooocus's ESRGAN) - sprites 4x as the game draws them: the doors and
    their opening frames (1522-1547), and every other sprite from 450 up (the people, 1-449, keep the game's: their
