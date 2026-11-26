@@ -4,7 +4,7 @@ The tiles, their normals, the materials (HDDIR/mat/graded_KK.png) and tile_light
 saturation kept, ORANGE_VALUE of its brightness; the pavements' tops (paving.py's slabs) as they are."""
 import sys, os, glob, shutil
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 src, dst = sys.argv[1], sys.argv[2]
 ORANGE_SAT, ORANGE_VALUE = 0.5, 0.9
 PAVED = [35, 36, 41, 207, 42, 43, 251, 252, 203]   # (material pixels are never muted)
@@ -13,6 +13,41 @@ W, H, S = 64, 48, 4
 ys, xs = np.mgrid[0:H * S, 0:W * S]
 fx, fy = (xs + 0.5) / S, (ys + 0.5) / S
 TOP = np.abs(fx - 32) / 32 + np.abs(fy - 16) / 16 <= 1.0 + 3.0 / 16
+
+
+BLOCK = (np.abs(fx - 32) <= 32) & (fy >= np.abs(fx - 32) / 2) & (fy <= 48 - np.abs(fx - 32) / 2)   # a whole block, smooth
+ys1, xs1 = np.mgrid[0:H, 0:W]
+BLOCK1 = (np.abs(xs1 + 0.5 - 32) <= 32) & (ys1 + 0.5 >= np.abs(xs1 + 0.5 - 32) / 2) & (ys1 + 0.5 <= 48 - np.abs(xs1 + 0.5 - 32) / 2)
+
+
+def smooth_outline(a, t, base_dir):
+    """a tile that fills a whole block (its outline the block's, stepped): its outline the block's straight edges (tiles
+    side by side meet along a line, not a sawtooth); the pixels it gains coloured from their neighbours"""
+    p = os.path.join(base_dir, '%03d.png' % t)
+    if not os.path.exists(p):
+        return a
+    op = np.asarray(Image.open(p).convert('RGBA'))[..., 3] > 0
+    if not (op & BLOCK1).any():
+        return a
+    have = a[..., 3] > 0
+    # along the block's outline (a game pixel either side): the straight edge where the tile reaches it
+    reach = np.asarray(Image.fromarray((have * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(2 * S + 1))) > 0
+    d = np.minimum(np.minimum(fx - 0, 64 - fx), np.minimum(fy - np.abs(fx - 32) / 2, 48 - np.abs(fx - 32) / 2 - fy))
+    band = np.abs(d) <= 1.2
+    c = Image.fromarray(np.where(have[..., None], a[..., :3], 0).astype(np.uint8))
+    m = Image.fromarray((have * 255).astype(np.uint8))
+    for _ in range(3):                                   # spread the colours a few pixels outwards
+        c2 = np.asarray(c.filter(ImageFilter.MaxFilter(3))).astype(np.uint8)
+        m2 = np.asarray(m.filter(ImageFilter.MaxFilter(3))) > 0
+        cc = np.asarray(c).copy(); mm = np.asarray(m) > 0
+        cc[~mm & m2] = c2[~mm & m2]
+        c, m = Image.fromarray(cc), Image.fromarray((m2 * 255).astype(np.uint8))
+    out = a.copy()
+    grow = band & BLOCK & reach & ~have
+    out[..., :3][grow] = np.asarray(c)[grow]
+    out[..., 3][grow] = 255
+    out[..., 3][band & ~BLOCK] = 0
+    return out
 
 
 def muted(path, t):
@@ -37,6 +72,7 @@ def muted(path, t):
     pink[(a[..., 3] >= 240) & (a[..., 3] < 255)] = 0
     out = out + ((l * np.array([1.0, 0.97, 0.92]) * 0.85) - out) * (pink * 0.9)[..., None]
     a[..., :3] = out.clip(0, 255).astype(np.uint8)
+    a = smooth_outline(a, t, os.path.join(os.path.dirname(os.path.abspath(src)), 'base'))
     return Image.fromarray(a, 'RGBA')
 
 
