@@ -30,7 +30,7 @@ static ID3D11DeviceContext *g_ctx;
 static IDXGISwapChain1 *g_swap;
 static ID3D11RenderTargetView *g_rtv;
 static ID3D11VertexShader *g_vs, *g_city_vs, *g_light_vs;
-static ID3D11PixelShader *g_ps, *g_city_ps, *g_city_lit_ps, *g_light_ps, *g_comp_ps, *g_fire_ps;
+static ID3D11PixelShader *g_ps, *g_city_ps, *g_city_lit_ps, *g_light_ps, *g_comp_ps, *g_fire_ps, *g_smoke_ps;
 static ID3D11InputLayout *g_city_layout, *g_light_layout;
 static ID3D11BlendState *g_add;
 static ID3D11Buffer *g_light_vb, *g_comp_cb;
@@ -446,6 +446,20 @@ static const char k_light_shader[] =
     "    float a = saturate(f * 1.7);\n"
     "    return float4(c * a, a);\n"
     "}\n"
+    "float4 ps_smoke(LV i) : SV_Target {\n"
+    "    float t = fmod(sun.x, 400), seed = i.col.r * 255;\n"
+    "    float u = i.uv.x, h = 1 - (i.uv.y + 1) * 0.5;\n"
+    "    float2 q = float2(u * 1.8 + seed * 1.3, h * 2.2 - fmod(t * 0.9, 256));\n"
+    "    float n = fn(q) * 0.55 + fn(q * 2.1 + 5.7) * 0.3 + fn(q * 4.3 + 1.9) * 0.15;\n"
+    "    float wid = lerp(0.45, 1.0, h);\n"
+    "    float drift = (fn(float2(h * 1.2 - fmod(t * 0.5, 256), seed)) - 0.5) * 0.5 * h;\n"
+    "    float d = length(float2((u - drift) / wid, 0));\n"
+    "    float dens = saturate((1 - d) * 1.3 + (n - 0.5) * 1.4) * saturate((1 - h) * 1.6) * smoothstep(0.0, 0.25, h);\n"
+    "    float a = dens * 0.75;\n"
+    "    if (a < 0.02) return 0;\n"
+    "    float3 c = lerp(float3(0.10, 0.09, 0.085), float3(0.32, 0.30, 0.29), n);\n"
+    "    return float4(c * a, a);\n"
+    "}\n"
     "Texture2D scene : register(t0);\n"
     "Texture2D emis : register(t1);\n"
     "Texture2D light : register(t2);\n"
@@ -828,6 +842,7 @@ static int make_city(void)
     ID3DBlob *lpb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_light", "ps_4_0");
     ID3DBlob *cpb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_comp", "ps_4_0");
     ID3DBlob *fpb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_fire", "ps_4_0");
+    ID3DBlob *spb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_smoke", "ps_4_0");
     ID3DBlob *vsb = compile(k_city_shader, sizeof k_city_shader - 1, "vs", "vs_4_0");
     ID3DBlob *psb = compile(k_city_shader, sizeof k_city_shader - 1, "ps", "ps_4_0");
     D3D11_TEXTURE2D_DESC td;
@@ -853,6 +868,9 @@ static int make_city(void)
              fpb != NULL &&
              SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(fpb), ID3D10Blob_GetBufferSize(fpb),
                                                       NULL, &g_fire_ps)) &&
+             spb != NULL &&
+             SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(spb), ID3D10Blob_GetBufferSize(spb),
+                                                      NULL, &g_smoke_ps)) &&
              SUCCEEDED(ID3D11Device_CreateInputLayout(g_dev, light_layout, 3, ID3D10Blob_GetBufferPointer(lvb),
                                                       ID3D10Blob_GetBufferSize(lvb), &g_light_layout));
     RELEASE(vsb);
@@ -862,6 +880,7 @@ static int make_city(void)
     RELEASE(lpb);
     RELEASE(cpb);
     RELEASE(fpb);
+    RELEASE(spb);
     if (!ok) return 0;
     memset(&td, 0, sizeof td);
     td.Width = td.Height = ATLAS;
@@ -1044,6 +1063,7 @@ void gpu_shutdown(void)
     RELEASE(g_light_vs);
     RELEASE(g_light_ps);
     RELEASE(g_fire_ps);
+    RELEASE(g_smoke_ps);
     RELEASE(g_comp_ps);
     RELEASE(g_light_layout);
     RELEASE(g_add);
@@ -1199,7 +1219,7 @@ static void draw_glows(RECT dst, int fw, int fh, D3D11_RECT sc, const LightVerte
     ID3D11DeviceContext_VSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
     ID3D11DeviceContext_PSSetShader(g_ctx, ps, NULL, 0);
     ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
-    ID3D11DeviceContext_OMSetBlendState(g_ctx, ps == g_fire_ps ? g_blend : g_add, NULL, 0xFFFFFFFFu);
+    ID3D11DeviceContext_OMSetBlendState(g_ctx, ps == g_fire_ps || ps == g_smoke_ps ? g_blend : g_add, NULL, 0xFFFFFFFFu);
     ID3D11DeviceContext_Draw(g_ctx, (UINT)n, 0);
 }
 
@@ -1214,9 +1234,9 @@ static void draw_city(RECT dst, int fw, int fh)
     static LightVertex *lverts;
     static int lverts_cap;
     UINT stride = sizeof(CityVertex), offset = 0;
-    static LightVertex *gverts, *fverts;
+    static LightVertex *gverts, *fverts, *sverts;
     static int gverts_cap;
-    int i, n, nv = 0, nlv = 0, ngv = 0, nfv = 0, time = (int)g_time, lit_time, sun_on = 0;
+    int i, n, nv = 0, nlv = 0, ngv = 0, nfv = 0, nsv = 0, time = (int)g_time, lit_time, sun_on = 0;
     float sun_a = 0;
     float sx = (float)(dst.right - dst.left) / (float)fw, sy = (float)(dst.bottom - dst.top) / (float)fh, zoom;
     AcquireSRWLockExclusive(&g_city_lock);
@@ -1323,15 +1343,19 @@ static void draw_city(RECT dst, int fw, int fh)
         if (v != NULL) lverts = v;
         if (g != NULL) gverts = g;
         LightVertex *f = (LightVertex *)realloc(fverts, sizeof *f * (size_t)g_city_nl * 6);
+        LightVertex *sm = (LightVertex *)realloc(sverts, sizeof *sm * (size_t)g_city_nl * 6);
         if (f != NULL) fverts = f;
-        if (v != NULL && g != NULL && f != NULL) lverts_cap = gverts_cap = g_city_nl * 6;
+        if (sm != NULL) sverts = sm;
+        if (v != NULL && g != NULL && f != NULL && sm != NULL) lverts_cap = gverts_cap = g_city_nl * 6;
     }
     for (i = 0; i < g_city_nl && (i + 1) * 6 <= lverts_cap; i++) {
         const HostCityLight *l = &g_city_lights[i];
         LightVertex c[4], *out;
         int k, *count, glows = (l->colour & HOST_LIGHT_GLOW) != 0, fire = (l->colour & HOST_LIGHT_FIRE) != 0;
-        out = fire ? fverts : glows ? gverts : lverts;
-        count = fire ? &nfv : glows ? &ngv : &nlv;
+        int smoke = (l->colour & HOST_LIGHT_SMOKE) != 0;
+        out = smoke ? sverts : fire ? fverts : glows ? gverts : lverts;
+        count = smoke ? &nsv : fire ? &nfv : glows ? &ngv : &nlv;
+        fire |= smoke;
         for (k = 0; k < 4; k++) {
             c[k].x = l->x + ((k & 1) ? l->rx : -l->rx);
             c[k].y = fire ? l->y - ((k & 2) ? 0 : l->ry) : l->y + ((k & 2) ? l->ry : -l->ry);
@@ -1500,6 +1524,7 @@ static void draw_city(RECT dst, int fw, int fh)
             ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 4, none);
         }
         if (ngv > 0) draw_glows(dst, fw, fh, sc, gverts, ngv, g_light_ps);
+        if (nsv > 0) draw_glows(dst, fw, fh, sc, sverts, nsv, g_smoke_ps); /* the smoke under the flames */
         if (nfv > 0) draw_glows(dst, fw, fh, sc, fverts, nfv, g_fire_ps);
         ID3D11DeviceContext_RSSetState(g_ctx, NULL);
         ID3D11DeviceContext_IASetInputLayout(g_ctx, NULL);

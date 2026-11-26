@@ -721,8 +721,13 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour);
 /* a sprite with fire in it (the HD pack's dynamic fire: blazes, a destroyed car's flames, the explosion's fireball) */
 static int fire_sprite(int id)
 {
-    return (id >= 1756 && id <= 1759) || (id >= 1005 && id <= 1008) || (id >= 765 && id <= 773) ||
-           (id >= 992 && id <= 1002 && id != 996 && id != 997);
+    return (id >= 1756 && id <= 1759) || (id >= 1005 && id <= 1008) || (id >= 765 && id <= 773);
+}
+
+/* the bits rising from a fire (its small flames and smoke wisps), the explosion's smoke, smoke columns: GPU smoke */
+static int smoke_sprite(int id)
+{
+    return (id >= 992 && id <= 1002) || (id >= 774 && id <= 779) || id == 841 || id == 842;
 }
 /* a flash (a muzzle flash, an explosion, a flame): a small sprite mostly of bright yellow and white pixels */
 static int flash_sprite(int id, const uint8_t *s, int sw, int sh)
@@ -775,6 +780,9 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
                 by += fh2 * 0.15f;  /* its base below the sprite's: it fades in there (no edge) */
                 fh2 *= 1.15f;
                 add_light(bx, by, fw2, fh2, HOST_LIGHT_FIRE | (uint32_t)((id * 37 + ox * 13 + oy * 7) & 255) << 16);
+                if (id >= 1005 && id <= 1008) /* its smoke rising from the flame's top (the sprite's upper part) */
+                    add_light(bx, by - fh2 * 0.55f, fw2 * 1.6f, (float)sh * 1.1f,
+                              HOST_LIGHT_SMOKE | (uint32_t)((id * 53 + ox * 11) & 255) << 16);
             }
             int burning = fire_sprite(id);
             if (t->gpu && (id < 729 || id > 733) && (burning || flash_sprite(id, s, sw, sh))) {
@@ -798,7 +806,10 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
                 }
             }
             if ((id >= 729 && id <= 738) || flash_sprite(id, s, sw, sh)) g_obj_shade |= HOST_SHADE_LIGHT; /* no shadow */
-            if (!(t->gpu && g_hd && fire_sprite(id)))
+            if (t->gpu && g_hd && smoke_sprite(id)) /* the GPU draws the smoke (no sprite) */
+                add_light(fax + (float)ox + (float)sw / 2.0f, fay + (float)oy + (float)sh, (float)sw * 1.1f,
+                          (float)sh * 1.4f, HOST_LIGHT_SMOKE | (uint32_t)((id * 53 + ox * 11) & 255) << 16);
+            if (!(t->gpu && g_hd && (fire_sprite(id) || smoke_sprite(id))))
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
                 rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
             g_put_head = 0;
@@ -1329,6 +1340,8 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define CAR_LAMP_SIDE 48.0f
 #define CAR_LAMP_HIGH 36
 static float g_car_speed[64];
+static uint8_t g_car_dead[64]; /* seen burning or wrecked: no lights for the rest of the mission */
+static uint32_t g_car_map;
 
 #define SHOT_LIGHT_RX 13.0f          /* an impact's sparks: a small, local light */
 #define SHOT_LIGHT_COLOUR 0xFFB860u  /* warm */
@@ -1351,7 +1364,12 @@ static int wreck_frame(int frame)
 static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_t vx, int32_t vy, int heading, int frame)
 {
     float fx, fy;
-    if (li == LIST_CARS && i < 64 && wreck_frame(frame)) return; /* destroyed: no lights */
+    if (li == LIST_CARS && i < 64) { /* destroyed (once seen burning or wrecked: its later frames too): no lights */
+        uint32_t map = rd32(P_MAP);
+        if (map != g_car_map) { g_car_map = map; memset(g_car_dead, 0, sizeof g_car_dead); }
+        if (wreck_frame(frame)) g_car_dead[i] = 1;
+        if (g_car_dead[i]) return;
+    }
     if (li == LIST_CARS && i < 64) {
         float d = sqrtf((float)vx * vx + (float)vy * vy);
         int k, braking;

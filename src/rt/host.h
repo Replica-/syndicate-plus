@@ -89,6 +89,8 @@ typedef struct HostCityLight {
 #define HOST_LIGHT_GLOW 0x01000000u
 /* a fire, drawn by the GPU (no sprite): x, y its base, rx its half width, ry its height; the colour's red a seed */
 #define HOST_LIGHT_FIRE 0x02000000u
+/* smoke, drawn by the GPU (no sprite): as a fire's quad, soft grey puffs rising */
+#define HOST_LIGHT_SMOKE 0x04000000u
 /* the widescreen menus' sides, drawn at the display's resolution (not the frame's) under the frame where it is
  * see-through: 4 images set once (left, right in colour; left, right in green: w x h 0x00RRGGBB), 0 when the
  * platform does not draw them; then before each frame each side's place in the frame's columns (x0 to x1, all its
