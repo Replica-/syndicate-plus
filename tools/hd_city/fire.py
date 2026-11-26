@@ -66,3 +66,35 @@ for sid in IDS:
         out = np.dstack([heat8, heat8 * 0, heat8 * 0, np.where(body, 232, 0)]).astype(np.uint8)
     Image.fromarray(out, 'RGBA').save(os.path.join(HD, 'sprites', '%04d.png' % sid))
     print('fire', sid, 'smoke' if grey else '')
+
+# the burning car's sprites (its flames with their smoke trail 1005-1008, the explosion's puff 765-779, the smoke
+# columns 841-842): each pixel fire (alpha 232, heat in red) where the game drew it bright and warm, smoke (alpha 233,
+# density in red) where dark and grey; both drawn moving by the game's shader
+MIXED = list(range(765, 780)) + [841, 842] + list(range(1005, 1009))
+for sid in MIXED:
+    p = os.path.join(SRC, '%04d.png' % sid)
+    if not os.path.exists(p):
+        continue
+    spr = Image.open(p).convert('RGBA')
+    w, h = spr.size
+    a = np.asarray(spr).astype(np.float32)
+    W, H = w * S, h * S
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    op = a[..., 3] > 0
+    warm = op & (r > 120) & (r - b > 50)
+    lum = a[..., :3].mean(-1) / 255
+    heat_src = np.where(warm, lum, 0)
+    core = Image.fromarray((heat_src * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(3))
+    heat = np.asarray(core.resize((W, H), Image.BICUBIC).filter(ImageFilter.GaussianBlur(S * 0.9))).astype(np.float32) / 255
+    if heat.max() > 0:
+        heat = np.clip(heat / max(0.35, float(heat.max())) * 0.95, 0, 1)
+    fire_m = np.asarray(Image.fromarray((warm * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(3))
+                        .resize((W, H), Image.BILINEAR).filter(ImageFilter.GaussianBlur(S * 0.6))) / 255 > 0.3
+    body = np.asarray(spr.split()[3].resize((W, H), Image.BILINEAR).filter(ImageFilter.GaussianBlur(S * 1.2))) / 255
+    smoke_m = (body > 0.15) & ~fire_m
+    dens = np.clip(body * 1.4, 0, 1)
+    out = np.zeros((H, W, 4), np.uint8)
+    out[..., 0] = np.where(fire_m, heat * 255, dens * 255).astype(np.uint8)
+    out[..., 3] = np.where(fire_m, 232, np.where(smoke_m, 233, 0))
+    Image.fromarray(out, 'RGBA').save(os.path.join(HD, 'sprites', '%04d.png' % sid))
+    print('mixed', sid, int(fire_m.sum()), int(smoke_m.sum()))
