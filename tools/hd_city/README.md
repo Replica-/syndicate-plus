@@ -27,6 +27,7 @@ Python, "DeepBump" with DeepBump's, the others with any Python 3 with Pillow and
 6. `mark.py HD` - each ground tile's top marked with its material (alpha 240 + K), the trench's tops as water; roads
    and pavements keep their own tops; the tower bases' pads and the painted shadows and light patches drawn as plain pavement.
 7. `normals.py HD` (DeepBump) - each tile's normals, seen among copies of itself (no seam at its edges).
+7-. `roadmatch.py HD` (after the normals) - the roads' tops to one colour, their normals' mean lean taken away.
 7a. `pavemat.py HD` (Fooocus) - the pavement's slabs redrawn as a seamless material (6 versions), `pavement.py HD`
    the chosen one (4) with lighter grooves as material 7, then its normals (`matnormals.py`); `mark.py` lays it on the
    pavement tiles (`paving.py` is the earlier, drawn version).

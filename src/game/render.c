@@ -717,7 +717,7 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour);
 static int flash_sprite(int id, const uint8_t *s, int sw, int sh)
 {
     static uint8_t known[NB_SPRITES], flash[NB_SPRITES];
-    if (id < 0 || id >= NB_SPRITES) return 0;
+    if (id < 450 || id >= NB_SPRITES) return 0; /* the people's sprites never (a blonde head is yellow) */
     if (!known[id]) {
         int k, n = 0, hot = 0;
         known[id] = 1;
