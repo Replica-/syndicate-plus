@@ -43,7 +43,8 @@ Python, "DeepBump" with DeepBump's, the others with any Python 3 with Pillow and
    sides kept).
 7e. `effects.py HD SPRITES` - the bullet impacts (sprites 729-733) drawn in HD: a white-hot core, sparks, embers.
 7f. `upscale_sprites.py HD SPRITES id...` (Fooocus's ESRGAN) - sprites 4x as the game draws them: the doors and
-   their opening frames (1522-1547).
+   their opening frames (1522-1547), and every other sprite from 450 up (the people, 1-449, keep the game's: their
+   colours are swapped as they are drawn).
 7g. `crater.py HD` (after `upscale.py HD 209` and its normals) - tile 209 as a blast crater in the pavement, drawn
    from a height field: pit, broken rim, rubble, soot.
 8. `install.py HD/out SAVE/hd` - the pack where the game looks for it, the buildings' orange muted on the way, with `tile_lights.ini` (the pack's tile lights:
