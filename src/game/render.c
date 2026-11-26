@@ -729,7 +729,7 @@ static int flash_sprite(int id, const uint8_t *s, int sw, int sh)
             c = g_image_pal[s[k]];
             if (((c >> 16) & 255) >= 200 && ((c >> 8) & 255) >= 120) hot++; /* white, yellow, bright orange */
         }
-        flash[id] = n >= 4 && hot * 2 >= n;
+        flash[id] = (n >= 4 && hot * 2 >= n) || id == 1552 || (id >= 1562 && id <= 1565); /* + the fireballs */
     }
     return flash[id];
 }
