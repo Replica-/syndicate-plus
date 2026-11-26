@@ -437,7 +437,7 @@ static const char k_light_shader[] =
     "    float u = i.uv.x, h = 1 - (i.uv.y + 1) * 0.5;\n"
     "    float f = max(tongue(u, h, t, seed, 0.0, 0.75), max(tongue(u, h * 1.25, t, seed, -0.38, 0.45),\n"
     "                                                         tongue(u, h * 1.15, t, seed, 0.36, 0.5)));\n"
-    "    f *= smoothstep(0.0, 0.2, h) * (0.85 + 0.15 * fn(float2(u * 9, fmod(t * 6, 256))));\n"
+    "    f *= smoothstep(0.0, 0.3, h) * saturate(1.4 - abs(u) * 1.1) * (0.85 + 0.15 * fn(float2(u * 9, fmod(t * 6, 256))));\n"
     "    if (f < 0.02) return 0;\n"
     "    float heat = saturate(f * 1.3 - h * 0.45 + 0.05);\n"
     "    float3 c = heat < 0.4 ? lerp(float3(0.55, 0.06, 0.02), float3(1.0, 0.33, 0.04), heat / 0.4)\n"
