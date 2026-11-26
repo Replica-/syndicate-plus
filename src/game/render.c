@@ -1270,10 +1270,10 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define HEADLAMP_GLOW 0xFFF5DCu      /* the lamps on the car: white */
 #define TAIL_GLOW 0x8A140Cu          /* red, dim */
 #define BRAKE_GLOW 0xFF2A18u         /* red, bright */
-#define CAR_LAMP_FRONT 165.0f        /* where they are on the car (world units from its middle) */
-#define CAR_LAMP_REAR 165.0f
-#define CAR_LAMP_SIDE 34.0f
-#define CAR_LAMP_HIGH 40
+#define CAR_LAMP_FRONT 205.0f        /* where they are on the car (world units from its middle) */
+#define CAR_LAMP_REAR 190.0f
+#define CAR_LAMP_SIDE 48.0f
+#define CAR_LAMP_HIGH 36
 static float g_car_speed[64];
 
 #define SHOT_LIGHT_RX 46.0f          /* a shot's light (a muzzle flash, an impact): its radius */
@@ -1285,6 +1285,8 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
     if (li == LIST_CARS && i < 64) {
         float d = sqrtf((float)vx * vx + (float)vy * vy);
         int k, braking;
+        int32_t mid_x, mid_y;
+        float face_x, face_y;
         if (d > 2.0f) {
             g_car_dir[i][0] = (float)vx / d;
             g_car_dir[i][1] = (float)vy / d;
@@ -1298,20 +1300,29 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
         g_car_speed[i] = g_car_speed[i] * 0.8f + d * 0.2f;
         /* the cone of the headlights (circles growing ahead), their lamps, the rear lights */
         for (k = 0; k <= 3; k++) {
-            float ahead = 160.0f + 180.0f * (float)k;
+            float ahead = 260.0f + 180.0f * (float)k;
             project_f(x + (int32_t)(g_car_dir[i][0] * ahead), y + (int32_t)(g_car_dir[i][1] * ahead), z, &fx, &fy);
             add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, k == 0 ? 14.0f : 14.0f + 12.0f * k,
                       k == 0 ? 14.0f : 10.0f + 8.0f * k, HEADLIGHT_COLOUR);
         }
-        project_f(x - (int32_t)(g_car_dir[i][0] * 160.0f), y - (int32_t)(g_car_dir[i][1] * 160.0f), z, &fx, &fy);
+        project_f(x - (int32_t)(g_car_dir[i][0] * 250.0f), y - (int32_t)(g_car_dir[i][1] * 250.0f), z, &fx, &fy);
         add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, braking ? 26.0f : 16.0f, braking ? 22.0f : 16.0f,
                   REAR_LIGHT_COLOUR);
         /* the lamps themselves glow (seen by day too): two white at the front, two red at the back, brighter while
          * it slows down or stands (its brake lights) */
+        {
+            /* its place is its middle (its sprite is drawn centred on it); its lamps at its nose and tail, the way it
+             * faces (its heading: 0 +y, 64 +x) */
+            float hx = sinf((float)heading * 6.2832f / 256.0f), hy = cosf((float)heading * 6.2832f / 256.0f);
+            mid_x = x;
+            mid_y = y;
+            face_x = hx;
+            face_y = hy;
+        }
         for (k = 0; k < 4; k++) {
             float along = k < 2 ? CAR_LAMP_FRONT : -CAR_LAMP_REAR, side = (k & 1) ? CAR_LAMP_SIDE : -CAR_LAMP_SIDE;
-            int32_t lx = x + (int32_t)(g_car_dir[i][0] * along - g_car_dir[i][1] * side);
-            int32_t ly = y + (int32_t)(g_car_dir[i][1] * along + g_car_dir[i][0] * side);
+            int32_t lx = mid_x + (int32_t)(face_x * along - face_y * side);
+            int32_t ly = mid_y + (int32_t)(face_y * along + face_x * side);
             float r = k < 2 ? 3.5f : braking ? 4.5f : 2.5f;
             project_f(lx, ly, z + CAR_LAMP_HIGH, &fx, &fy);
             add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, r, r * 0.8f,
