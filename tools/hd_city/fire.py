@@ -54,8 +54,10 @@ for sid in IDS:
         t = heat * 1.15 + (licks - 0.5) * 0.45 - 0.25 * (1 - ys)   # cooler towards the tips
         col = ramp(FIRE, t)
     shape = (alpha > 0.45) & ((licks > 0.18 + 0.35 * (1 - ys)) | (alpha > 0.85))   # ragged edges, licks at the top
-    if grey:
-        out = np.dstack([col, np.where(shape, 255, 0)]).astype(np.uint8)
+    if grey:                                           # dynamic smoke (alpha 233, its density in red): soft, rising
+        dens = np.asarray(spr.split()[3].resize((W, H), Image.BILINEAR).filter(ImageFilter.GaussianBlur(S * 1.5))) / 255
+        body = dens > 0.05
+        out = np.dstack([np.clip(dens * 1.6, 0, 1) * 255, dens * 0, dens * 0, np.where(body, 233, 0)]).astype(np.uint8)
     else:                                              # dynamic: the game's shader draws the flames (alpha 232: fire,
         heat8 = (np.clip(heat * 1.15, 0, 1) * 255)     # red its heat), moving; the outline a little generous
         body = alpha > 0.3
