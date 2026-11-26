@@ -1323,7 +1323,7 @@ static float g_car_speed[64];
 #define SHOT_LIGHT_RX 13.0f          /* an impact's sparks: a small, local light */
 #define SHOT_LIGHT_COLOUR 0xFFB860u  /* warm */
 
-/* a frame showing a wreck (a destroyed car's sprites) */
+/* a frame showing a wreck, or a car on fire or blowing up (no lights then) */
 static int wreck_frame(int frame)
 {
     uint32_t elements = rd32(P_ELEMENTS), e = rd16(rd32(P_FRAMES) + (uint32_t)frame * 8u);
@@ -1331,7 +1331,8 @@ static int wreck_frame(int frame)
     if (e == 0) return 0;
     for (;;) {
         int id = rd16(elements + e * 10u) / 6;
-        if (id >= WRECK_FIRST && id <= WRECK_LAST) return 1;
+        if ((id >= WRECK_FIRST && id <= WRECK_LAST) || fire_sprite(id) || (id >= 765 && id <= 779) ||
+            (id >= 800 && id <= 809) || id == 841 || id == 842) return 1; /* burnt, burning, blowing up */
         e = rd16(elements + e * 10u + 8u);
         if (e == 0 || ++g > 64) return 0;
     }
