@@ -165,6 +165,7 @@ static const char k_city_shader[] =
     "#define DIRT 0\n"
     "#define GRAVEL 8\n"
     "#define PAVE 7\n"
+    "#define GRASS 6\n"
     "float hash2(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }\n"
     "float vnoise(float2 p) {\n"
     "    float2 i = floor(p), f = frac(p);\n"
@@ -175,11 +176,6 @@ static const char k_city_shader[] =
     "float4 ground(float2 w, int m, Texture2DArray<float4> t) {\n"
     "    float4 a, b;\n"
     "    float mix, patch;\n"
-    "    if (m == PAVE) {\n" /* two sizes blended (the square's repeat no longer lines up) */
-    "        a = t.SampleLevel(wrap, float3(w, PAVE), matlod());\n"
-    "        b = t.SampleLevel(wrap, float3(w * 0.5 + float2(0.23, 0.71), PAVE), matlod());\n"
-    "        return lerp(a, b, smoothstep(0.35, 0.65, fbm(w * 1.3 + 31.0)));\n"
-    "    }\n"
     "    if (m != DIRT) return t.SampleLevel(wrap, float3(w, m), matlod());\n"
     "    a = t.SampleLevel(wrap, float3(w, DIRT), matlod());\n"
     "    b = t.SampleLevel(wrap, float3(w * 0.71 + float2(0.37, 0.61), DIRT), matlod());\n"
@@ -200,13 +196,46 @@ static const char k_city_shader[] =
     "    return c;\n"
     "}\n"
     /* the pavement's wear: large grimy and worn stretches, and stains (oil, water) a slab or two across */
+    /* grass tufts, scattered on the ground in world space (no pattern): roots in a grid of jittered cells (game
+     * pixels), each tuft a few blades rising up the picture from its root, leaning, dark at the root, straw at the
+     * tip; the root lowest on the picture (nearest) in front */
+    "float3 tufts(float2 w, float3 c) {\n"
+    "    float2 g = w * 256, cell = floor(g / 2.6);\n"
+    "    float best = -1e9;\n"
+    "    float3 col = c;\n"
+    "    [loop] for (int du = -1; du <= 4; du++)\n"
+    "    [loop] for (int dv = -1; dv <= 4; dv++) {\n"
+    "        float2 id = cell + float2(du, dv);\n"
+    "        float h = hash2(id + 3.7);\n"
+    "        if (h > 0.8) continue;\n"
+    "        float2 root = (id + 0.15 + 0.7 * float2(hash2(id + 1.3), hash2(id + 7.9))) * 2.6;\n"
+    "        float2 d = root - g;\n"
+    "        float up = (d.x + d.y) * 0.5;\n" /* how far the root is below this pixel on the picture */
+    "        float dx = (g.x - g.y) - (root.x - root.y);\n" /* across the picture */
+    "        float depth = root.x + root.y;\n"
+    "        if (up <= 0 || depth < best) continue;\n"
+    "        [unroll] for (int k = 0; k < 4; k++) {\n"
+    "            float r1 = hash2(id + k * 11.1), r2 = hash2(id + k * 5.3 + 2.1);\n"
+    "            float len = 2.2 + 3.6 * r1, lean = (r2 - 0.5) * 1.6, off = (r1 - 0.5) * 1.4;\n"
+    "            float wid = 0.5 * (1 - up / len);\n"
+    "            if (up < len && abs(dx - off - lean * up) < wid) {\n"
+    "                float t = up / len;\n"
+    "                col = lerp(float3(0.12, 0.13, 0.05), lerp(float3(0.42, 0.42, 0.16), float3(0.62, 0.55, 0.28), r2), t)\n"
+    "                      * (0.8 + 0.4 * r1);\n"
+    "                best = depth;\n"
+    "                break;\n"
+    "            }\n"
+    "        }\n"
+    "    }\n"
+    "    return col;\n"
+    "}\n"
     "float3 pave_wear(float2 w, float3 c) {\n"
     "    float g = fbm(w * 0.9 + 41.0), worn = fbm(w * 1.7 + 63.0);\n"
-    "    c *= 0.72 + 0.5 * smoothstep(0.25, 0.75, g);\n" /* grimy (darker) to clean */
-    "    c = lerp(c, c * float3(1.08, 1.05, 1.0) + 0.02, smoothstep(0.58, 0.78, worn) * 0.8);\n" /* worn, paler */
+    "    c *= 0.88 + 0.22 * smoothstep(0.25, 0.75, g);\n" /* grimy (darker) to clean */
+    "    c = lerp(c, c * float3(1.08, 1.05, 1.0) + 0.02, smoothstep(0.62, 0.8, worn) * 0.4);\n" /* worn, paler */
     "    float s = fbm(w * 6.0 + 7.0);\n"
-    "    float stain = smoothstep(0.6, 0.72, s) * smoothstep(0.4, 0.6, fbm(w * 2.2 + 17.0));\n"
-    "    c = lerp(c, c * float3(0.5, 0.48, 0.47), stain * 0.85);\n" /* oil and water stains */
+    "    float stain = smoothstep(0.7, 0.78, s) * smoothstep(0.55, 0.7, fbm(w * 2.2 + 17.0));\n"
+    "    c = lerp(c, c * float3(0.5, 0.48, 0.47), stain * 0.6);\n" /* oil and water stains */
     "    return c;\n"
     "}\n"
     /* rubble on the dirt: in a grid of `cell` (materials' squares), a stone in some cells (`chance`), its size,
@@ -301,6 +330,7 @@ static const char k_city_shader[] =
     "    if (abs(t.a * 255 - 233) < 0.5) return smoke(p, t.r, i);\n"
     "    m = material(t.a, i);\n"
     "    if (m == WATER) return float4(water(p, i), 1);\n"
+    "    if (m == GRASS) return float4(tufts(world(p, i), ground(world(p, i), m, mat).rgb), 1);\n"
     "    if (m == PAVE) return float4(pave_wear(world(p, i), ground(world(p, i), m, mat).rgb), 1);\n"
     "    if (m == DIRT) return float4(rubble(world(p, i), dirt_variety(world(p, i), ground(world(p, i), m, mat).rgb * damp(world(p, i), m))), 1);\n"
     "    if (m >= 0) return float4(ground(world(p, i), m, mat).rgb * damp(world(p, i), m), 1);\n"
