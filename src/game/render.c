@@ -1297,6 +1297,8 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define LYING_H 20    /* a lying person's frame is at most this high */
 #define HEADLIGHT_COLOUR 0xFFF5D7u
 #define HEADLIGHT_STRENGTH 3
+#define WRECK_FIRST 1743 /* the sprites of a destroyed car */
+#define WRECK_LAST 1744
 #define REAR_LIGHT_COLOUR 0xFF281Eu
 #define HEADLAMP_GLOW 0xB4AE9Cu      /* the lamps on the car: white (a lens lit, not a ball of light) */
 #define TAIL_GLOW 0x5A0E08u          /* red, dim */
@@ -1310,9 +1312,24 @@ static float g_car_speed[64];
 #define SHOT_LIGHT_RX 13.0f          /* an impact's sparks: a small, local light */
 #define SHOT_LIGHT_COLOUR 0xFFB860u  /* warm */
 
-static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_t vx, int32_t vy, int heading)
+/* a frame showing a wreck (a destroyed car's sprites) */
+static int wreck_frame(int frame)
+{
+    uint32_t elements = rd32(P_ELEMENTS), e = rd16(rd32(P_FRAMES) + (uint32_t)frame * 8u);
+    int g = 0;
+    if (e == 0) return 0;
+    for (;;) {
+        int id = rd16(elements + e * 10u) / 6;
+        if (id >= WRECK_FIRST && id <= WRECK_LAST) return 1;
+        e = rd16(elements + e * 10u + 8u);
+        if (e == 0 || ++g > 64) return 0;
+    }
+}
+
+static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_t vx, int32_t vy, int heading, int frame)
 {
     float fx, fy;
+    if (li == LIST_CARS && i < 64 && wreck_frame(frame)) return; /* destroyed: no lights */
     if (li == LIST_CARS && i < 64) {
         float d = sqrtf((float)vx * vx + (float)vy * vy);
         int k, braking;
@@ -1905,7 +1922,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
             }
             if (t.gpu && li == LIST_CARS)
                 object_lights(li, (int)i, x, y, z, t256 >= 0 ? sb->pos[n][0] - sa->pos[n][0] : 0,
-                              t256 >= 0 ? sb->pos[n][1] - sa->pos[n][1] : 0, M[a + CAR_HEADING]);
+                              t256 >= 0 ? sb->pos[n][1] - sa->pos[n][1] : 0, M[a + CAR_HEADING], frame);
             /* a car is two tiles long and more: drawn with the row of tiles its end nearest the viewer is in (with
              * its middle's, the floor of the rows in front of it is drawn over its nose or its tail) */
             if (li == LIST_CARS) {
