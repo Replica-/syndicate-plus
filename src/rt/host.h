@@ -62,7 +62,7 @@ typedef struct HostCityQuad {
     uint32_t look[3]; /* a pedestrian's hair, skin and clothes (0x00RRGGBB; 0: as drawn) for the image's pixels of
                        * alpha 160 + 16 x part (0 hair, 1 skin, 2 clothes, 3 trousers: the clothes' darker and
                        * greyer) + shade (the colour at 0.3 + 0.1 x shade) */
-    uint32_t shade;   /* the sun's shadows (HOST_SHADE_*): bits 0-7 */
+    uint32_t shade;   /* the sun's shadows (HOST_SHADE_*): bits 0-7; bits 20-23 a see-through tile's levels above the cut */
     float z;          /* how high it stands (world units, a level 128): a tile, its top; anything else (upright),
                        * its top row, each row below 8 lower: the sun's shadows are traced from each pixel's */
 } HostCityQuad;

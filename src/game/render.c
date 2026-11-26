@@ -186,6 +186,7 @@ static int g_nquads, g_quads_cap;
 
 static int g_cut = -1;   /* the tiles of this level and above are drawn almost see-through (-1: none) */
 static int g_translucent; /* the tile being put is one of them */
+static int g_cut_above;   /* and its levels above the cut (the higher, the fainter) */
 #define SEE_THROUGH_ALPHA 60 /* of 255, as FreeSynd's */
 static uint32_t g_cols;     /* the map being drawn: its columns and size */
 static int g_mx, g_my, g_mz;
@@ -349,7 +350,7 @@ static void emit(int image, const uint8_t *px, int w, int h, float x, float y, i
     q->image = (uint16_t)image;
     q->flip = (uint8_t)(flipped != 0);
     q->glow = (uint8_t)(glow | (g_translucent ? 0x80 : 0));
-    q->shade = image >= IMAGE_SPRITES ? g_obj_shade : g_tile_shade;
+    q->shade = (image >= IMAGE_SPRITES ? g_obj_shade : g_tile_shade) | (g_translucent ? (uint32_t)g_cut_above << 20 : 0u);
     q->z = g_quad_z;
     q->look[0] = image >= IMAGE_SPRITES ? g_obj_look[0] : 0;
     q->look[1] = image >= IMAGE_SPRITES ? g_obj_look[1] : 0;
@@ -2023,6 +2024,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         float ffx, ffy;
                         project_f(tx * 256, ty * 256, tz * 128, &ffx, &ffy);
                         g_translucent = g_cut >= 0 && tz >= g_cut;
+                        g_cut_above = g_translucent ? (tz - g_cut > 15 ? 15 : tz - g_cut) : 0;
                         g_put_tx = tx;
                         g_put_ty = ty;
                         g_tile_shade = t.gpu ? tile_shade(cols, mx, my, mz, tx, ty, tz, tid) : 0;

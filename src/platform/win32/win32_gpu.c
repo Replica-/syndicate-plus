@@ -388,7 +388,7 @@ static const char k_city_shader[] =
     "    int2 q = (int2)b;\n"
     "    float4 c = filtered(texel(q, i), texel(q + int2(1, 0), i), texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f, p - b);\n"
     "    if (!on_fire(i)) c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(c, i.glow).r / max(c.a, 1e-4));\n" /* light is not shaded */
-    "    if (i.glow & 128) c *= 60.0 / 255.0;\n" /* drawn see-through (B held) */
+    "    if (i.glow & 128) c *= 0.24 * pow(0.4, (float)((i.shade >> 20) & 15));\n" /* drawn see-through (B held) */
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
     "}\n"
     /* lit: the picture and what glows in it (covering what glowed under it) */
@@ -413,7 +413,7 @@ static const char k_city_shader[] =
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
     "    if (on_fire(i)) o.e = float4(1, 1, 1, 1) * o.c.a;\n"
     "    o.h = float4(height(i), (i.shade & 128) && (i.shade & 2) && at(i).y <= 32 - abs(at(i).x - 32) / 2 + 2.5 ? 1 : (i.shade & 128) ? 0 : 0.5, (i.shade & 128) && (i.shade & 2) ? 300 : -14, (i.glow & 128) || (i.shade & 0x60000) || on_fire(i) ? 0 : o.c.a);\n"
-    "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
+    "    if (i.glow & 128) { float k = 0.24 * pow(0.4, (float)((i.shade >> 20) & 15)); o.c *= k; o.e *= k; }\n"
     "    return o;\n"
     "}\n";
 
