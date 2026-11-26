@@ -416,7 +416,7 @@ static const char k_light_shader[] =
     "    float4 c = scene.Load(p);\n"
     "    heights.GetDimensions(size.x, size.y);\n"
     "    float3 l = saturate(light.Load(p).rgb) - ambient.rgb * min(shade(p.xy, size), 0.5);\n"
-    "    return float4(c.rgb * saturate(l + emis.Load(p).r) + c.rgb * add, c.a);\n"
+    "    return float4(saturate(c.rgb * clamp(l + emis.Load(p).r, 0, 1.5) + c.rgb * add), c.a);\n" /* strong lights: hotspots */
     "}\n";
 
 typedef struct Consts {

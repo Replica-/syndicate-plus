@@ -1293,6 +1293,7 @@ static void add_light(float fx, float fy, float rx, float ry, uint32_t colour)
 #define CAR_HEADING 0x1au /* (8 bits) the way it faces: 0 +y, 64 +x, 128 -y, 192 -x */
 #define LYING_H 20    /* a lying person's frame is at most this high */
 #define HEADLIGHT_COLOUR 0xFFF5D7u
+#define HEADLIGHT_STRENGTH 3
 #define REAR_LIGHT_COLOUR 0xFF281Eu
 #define HEADLAMP_GLOW 0xB4AE9Cu      /* the lamps on the car: white (a lens lit, not a ball of light) */
 #define TAIL_GLOW 0x5A0E08u          /* red, dim */
@@ -1328,8 +1329,10 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
         for (k = 0; k <= 3; k++) {
             float ahead = 240.0f + 200.0f * (float)k;
             project_f(x + (int32_t)(g_car_dir[i][0] * ahead), y + (int32_t)(g_car_dir[i][1] * ahead), z, &fx, &fy);
-            add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, 18.0f + 14.0f * (float)k,
-                      14.0f + 10.0f * (float)k, HEADLIGHT_COLOUR);
+            int twice;
+            for (twice = 0; twice < HEADLIGHT_STRENGTH; twice++) /* the lights add up: as bright as HEADLIGHT_STRENGTH */
+                add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, 18.0f + 14.0f * (float)k,
+                          14.0f + 10.0f * (float)k, HEADLIGHT_COLOUR);
         }
         project_f(x - (int32_t)(g_car_dir[i][0] * 250.0f), y - (int32_t)(g_car_dir[i][1] * 250.0f), z, &fx, &fy);
         add_light(fx + (float)render_obj_dx, fy + (float)render_obj_dy, braking ? 34.0f : 22.0f, braking ? 26.0f : 17.0f,
