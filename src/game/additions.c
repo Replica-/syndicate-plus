@@ -2654,8 +2654,8 @@ static void funds_text(char *s, size_t n, int32_t funds)
 /* the main menu: the player's company under its items */
 #define INFO_X0 58
 #define INFO_X1 262
-#define INFO_Y0(ar) ((ar) ? 163 : 148) /* under the items (American Revolt has 6) */
-#define INFO_Y1(ar) ((ar) ? 196 : 192)
+#define INFO_Y0(ar) ((ar) ? 166 : 156) /* under the items (American Revolt has 6), a gap above */
+#define INFO_Y1(ar) ((ar) ? 196 : 190)
 #define INFO_LINE 8
 static void main_menu_company(uint32_t *pic)
 {
@@ -2668,13 +2668,7 @@ static void main_menu_company(uint32_t *pic)
     fill_box(pic, 320, INFO_X0, y0, INFO_X1, y1, MENU_BG, 200);
     frame_box(pic, 320, 200, INFO_X0, y0, INFO_X1, y1, MENU_INFO_DIM);
     draw_company_logo(pic, 320, INFO_X0 + 5, y0 + 4, logo, ci.logo, info_rgb(ci.colour, g_player_pick));
-    menu_text_fit(pic, 320, x, y, ci.company[0] ? ci.company : "UNNAMED COMPANY", MENU_INFO, width);
-    y += INFO_LINE;
-    if (!ar) {
-        /* (no room for the player's name under American Revolt's 6 items) */
-        if (ci.player[0]) menu_text_fit(pic, 320, x, y, ci.player, MENU_INFO_DIM, width);
-        y += INFO_LINE;
-    }
+    (void)ar; /* (the company's and the player's names: not here, the summary short) */
     funds_text(f, sizeof f, ci.funds);
     snprintf(s, sizeof s, "%s   %d/%d COUNTRIES", f, ci.held, NB_COUNTRIES);
     menu_text_fit(pic, 320, x, y, s, MENU_INFO, width);
