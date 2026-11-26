@@ -43,8 +43,6 @@ Python, "DeepBump" with DeepBump's, the others with any Python 3 with Pillow and
    lays the pavement material on their paving's colours (PAVE_ONLY), `grass.py` does their grass blocks (their own
    sides kept).
 7e2. `fire.py HD SPRITES` - the burning object's frames (blazes 1756-1759, tongues and smoke 992-1002) drawn in their own outlines.
-7e3. `explode.py HD SPRITES` (after `upscale_sprites.py`) - fireballs (1552, 1562-1565) as billowing fire and smoke;
-   burnt stumps and wrecks (1575-1578, 1592-1599, 1743-1744) with glowing embers.
 7e. `effects.py HD SPRITES` - the bullet impacts (sprites 729-733) drawn in HD: a white-hot core, sparks, embers.
 7f. `upscale_sprites.py HD SPRITES id...` (Fooocus's ESRGAN) - sprites 4x as the game draws them: the doors and
    their opening frames (1522-1547), and every other sprite from 450 up (the people, 1-449, keep the game's: their
