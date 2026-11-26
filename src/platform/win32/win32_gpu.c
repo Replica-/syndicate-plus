@@ -185,10 +185,20 @@ static const char k_city_shader[] =
     "    b = t.SampleLevel(wrap, float3(w * 0.71 + float2(0.37, 0.61), DIRT), matlod());\n"
     "    mix = smoothstep(0.3, 0.7, fbm(w * 1.7 + 11.0));\n"
     "    a = lerp(a, b, mix);\n"
-    "    patch = smoothstep(0.58, 0.72, fbm(w * 2.3 + 3.0));\n"
+    "    patch = smoothstep(0.52, 0.66, fbm(w * 2.3 + 3.0));\n"
     "    return lerp(a, t.SampleLevel(wrap, float3(w * 1.13, GRAVEL), matlod()), patch);\n"
     "}\n"
     "float damp(float2 w, int m) { return m == DIRT ? 0.82 + 0.3 * fbm(w * 1.1 + 21.0) : 1; }\n"
+    /* the dirt fields' variety: dark damp earth, pale dry dust, a warmer or cooler tint over large stretches */
+    "float3 dirt_variety(float2 w, float3 c) {\n"
+    "    float wet = smoothstep(0.55, 0.75, fbm(w * 1.4 + 91.0));\n"
+    "    float dry = smoothstep(0.6, 0.8, fbm(w * 1.1 + 57.0)) * (1 - wet);\n"
+    "    float tint = fbm(w * 0.6 + 13.0) - 0.5;\n"
+    "    c *= float3(1 + 0.18 * tint, 1 + 0.05 * tint, 1 - 0.15 * tint);\n" /* browner or more olive */
+    "    c = lerp(c, c * float3(0.55, 0.52, 0.5), wet * 0.85);\n" /* damp, dark */
+    "    c = lerp(c, c * 1.25 + float3(0.03, 0.025, 0.015), dry * 0.7);\n" /* dry, dusty */
+    "    return c;\n"
+    "}\n"
     /* the pavement's wear: large grimy and worn stretches, and stains (oil, water) a slab or two across */
     "float3 pave_wear(float2 w, float3 c) {\n"
     "    float g = fbm(w * 0.9 + 41.0), worn = fbm(w * 1.7 + 63.0);\n"
@@ -292,7 +302,7 @@ static const char k_city_shader[] =
     "    m = material(t.a, i);\n"
     "    if (m == WATER) return float4(water(p, i), 1);\n"
     "    if (m == PAVE) return float4(pave_wear(world(p, i), ground(world(p, i), m, mat).rgb), 1);\n"
-    "    if (m == DIRT) return float4(rubble(world(p, i), ground(world(p, i), m, mat).rgb * damp(world(p, i), m)), 1);\n"
+    "    if (m == DIRT) return float4(rubble(world(p, i), dirt_variety(world(p, i), ground(world(p, i), m, mat).rgb * damp(world(p, i), m))), 1);\n"
     "    if (m >= 0) return float4(ground(world(p, i), m, mat).rgb * damp(world(p, i), m), 1);\n"
     "    {\n" /* a pedestrian's part (alpha 160 + 16 x part + shade: 0 hair, 1 skin, 2 clothes, 3 trousers): its own colour at the pixel's shade (0.3 + 0.1 x shade of it), else the pixel as drawn */
     "        uint code = (uint)round(t.a * 255), part = (code - 160) / 16, c = part == 0 ? i.look.x : part == 1 ? i.look.y : i.look.z;\n"
