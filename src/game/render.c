@@ -769,6 +769,13 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
             g_put_head = is_head(id);
             g_put_sprite = id;
             g_quad_z = g_obj_z - 8.0f * (float)oy; /* its feet at the anchor, 8 world units a pixel up */
+            if (t->gpu && g_hd && fire_sprite(id)) { /* the GPU draws the fire (no sprite): over where it was */
+                float fw2 = (float)sw * (id >= 1756 ? 0.7f : 0.95f), fh2 = (float)sh * (id >= 1005 && id <= 1008 ? 0.75f : 1.3f);
+                float bx = fax + (float)ox + (float)sw / 2.0f, by = fay + (float)oy + (float)sh * (id >= 1005 && id <= 1008 ? 0.95f : 0.98f);
+                by += fh2 * 0.15f;  /* its base below the sprite's: it fades in there (no edge) */
+                fh2 *= 1.15f;
+                add_light(bx, by, fw2, fh2, HOST_LIGHT_FIRE | (uint32_t)((id * 37 + ox * 13 + oy * 7) & 255) << 16);
+            }
             int burning = fire_sprite(id);
             if (t->gpu && (id < 729 || id > 733) && (burning || flash_sprite(id, s, sw, sh))) {
                 /* it lights what is round it (by night most): two or three pools a little apart, changing each
@@ -790,10 +797,13 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
                               burning ? FIRE_LIGHT_COLOUR : FLASH_LIGHT_COLOUR);
                 }
             }
+            if ((id >= 729 && id <= 738) || flash_sprite(id, s, sw, sh)) g_obj_shade |= HOST_SHADE_LIGHT; /* no shadow */
+            if (!(t->gpu && g_hd && fire_sprite(id)))
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
                 rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
             g_put_head = 0;
             g_put_sprite = -1;
+            g_obj_shade &= ~HOST_SHADE_LIGHT;
         }
         e = rd16(ea + 8u);
         if (e == 0 || ++guard > 64) break;

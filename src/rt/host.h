@@ -72,8 +72,9 @@ typedef struct HostCityQuad {
  * the top left of the screen, 255: towards -y, the top right) */
 #define HOST_SHADE_SOLID 0x01u
 #define HOST_SHADE_SHADOW 0x02u
-#define HOST_SHADE_FLAT 0x02u
-#define HOST_SHADE_MESH 0x20000u /* a see-through mesh (a fence, a handrail): casts no shadow */ /* a tile whose top is a whole floor or roof (it takes the shadows) */
+#define HOST_SHADE_FLAT 0x02u /* a tile whose top is a whole floor or roof (it takes the shadows) */
+#define HOST_SHADE_MESH 0x20000u /* a see-through mesh (a fence, a handrail): casts no shadow */
+#define HOST_SHADE_LIGHT 0x40000u /* a spark, a flash: light, casts no shadow */
 #define HOST_SHADE_SLOPE 0x40u
 #define HOST_SHADE_TILE 0x80u
 #define HOST_SHADE_ON 0x10000u /* the sun's shadows on (per pixel, the GPU's) */
@@ -86,6 +87,8 @@ typedef struct HostCityLight {
     uint32_t colour;  /* 0x00RRGGBB; HOST_LIGHT_GLOW: a glow, added to the colours (a muzzle flash, seen by day too) */
 } HostCityLight;
 #define HOST_LIGHT_GLOW 0x01000000u
+/* a fire, drawn by the GPU (no sprite): x, y its base, rx its half width, ry its height; the colour's red a seed */
+#define HOST_LIGHT_FIRE 0x02000000u
 /* the widescreen menus' sides, drawn at the display's resolution (not the frame's) under the frame where it is
  * see-through: 4 images set once (left, right in colour; left, right in green: w x h 0x00RRGGBB), 0 when the
  * platform does not draw them; then before each frame each side's place in the frame's columns (x0 to x1, all its
