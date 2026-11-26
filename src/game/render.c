@@ -269,6 +269,16 @@ static uint32_t look_colour(uint32_t c, int shade)
 
 /* an image (palette indices, 255 transparent) to the GPU in true colour: the hat's colours marked (alpha 254 its
  * colour, 253 its shine) */
+static int g_hd = 1; /* the HD pack used (render_set_hd) */
+/* the people (sprites 1-449) in one palette in every mission (the city's first, HPAL01: the HD pack's look), not the
+ * mission's: their coats keep their colour from city to city */
+static const uint32_t k_people_pal[16] = {0x000000u, 0xAE5D3Cu, 0x3C4945u, 0xFFA661u, 0xBE9A9Au, 0x715504u, 0xAA2400u,
+    0x4D5979u, 0x343841u, 0xCB8651u, 0x656565u, 0xFFBE00u, 0xDFFFFFu, 0x967918u, 0xFF3C08u, 0x008EBAu};
+static uint32_t person_colour(int sprite, uint8_t c, const uint32_t *pal)
+{
+    return sprite >= 1 && sprite < 450 && c < 16 && g_hd ? k_people_pal[c] : pal[c];
+}
+
 static int hd_define(int image, const uint8_t *px);
 static int hd_sprite(int image, const uint8_t *px, int w, int h);
 
@@ -290,7 +300,7 @@ static void define_image(int image, const uint8_t *px, int w, int h)
                 continue;
             }
         }
-        rgb[i] = px[i] == 255 ? 0 : a | (g_image_pal[px[i]] & 0xFFFFFFu);
+        rgb[i] = px[i] == 255 ? 0 : a | (person_colour(image - IMAGE_SPRITES, px[i], g_image_pal) & 0xFFFFFFu);
     }
     host_city_image(image, w, h, 1, rgb);
 }
@@ -321,7 +331,7 @@ static uint32_t sprite_colour(const uint32_t *pal, uint8_t c, int row, uint32_t 
         if (code == 249) l = trousers(l);
         if (l != 0) return look_colour(l, s < 40 ? 40 : s > 176 ? 176 : s);
     }
-    return pal[c];
+    return person_colour(g_put_sprite, c, pal);
 }
 
 static int g_put_tx = -1, g_put_ty; /* the map place of the tile being put (-1: not a tile of the map) */
@@ -463,7 +473,6 @@ static void blit(const Target *t, const uint8_t *src, int sw, int sh, int dx, in
 #define HD_SCALE 4
 #define HD_W (TILE_W * HD_SCALE)
 #define HD_H (TILE_H * HD_SCALE)
-static int g_hd = 1;
 static volatile int g_hd_want = 1; /* render_set_hd (any thread); g_hd follows it at the next city drawn */
 typedef struct HdTile {
     int state;          /* 0 not looked for, 1 loaded, 2 none */
