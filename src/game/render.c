@@ -1357,6 +1357,24 @@ static uint32_t g_car_map;
 #define SHOT_LIGHT_RX 13.0f          /* an impact's sparks: a small, local light */
 #define SHOT_LIGHT_COLOUR 0xFFB860u  /* warm */
 
+#define POLICE_FIRST 1707 /* the police car's sprites */
+#define POLICE_LAST 1709
+#define POLICE_RED 0xFF2010u
+#define POLICE_BLUE 0x2040FFu
+
+/* a frame with one of sprites lo..hi */
+static int frame_has(int frame, int lo, int hi)
+{
+    uint32_t elements = rd32(P_ELEMENTS), e = rd16(rd32(P_FRAMES) + (uint32_t)frame * 8u);
+    int g = 0;
+    while (e != 0 && g++ < 64) {
+        int id = rd16(elements + e * 10u) / 6;
+        if (id >= lo && id <= hi) return 1;
+        e = rd16(elements + e * 10u + 8u);
+    }
+    return 0;
+}
+
 /* a frame showing a wreck, or a car on fire or blowing up (no lights then) */
 static int wreck_frame(int frame)
 {
@@ -1391,6 +1409,17 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
         if (g_car_dir[i][0] == 0 && g_car_dir[i][1] == 0) { /* never seen moving: the way it faces */
             g_car_dir[i][0] = sinf((float)heading * 6.2832f / 256.0f);
             g_car_dir[i][1] = cosf((float)heading * 6.2832f / 256.0f);
+        }
+        if (frame_has(frame, POLICE_FIRST, POLICE_LAST)) {
+            /* a police car: its roof's lights, red and blue in turn (each a light round the car and a glow on it) */
+            int blue = (int)(host_time_us() / 350000u) & 1, s;
+            project_f(x, y, z + 60, &fx, &fy);
+            for (s = -1; s <= 1; s += 2) {
+                int on = (s < 0) != blue;
+                float lx = fx + (float)render_obj_dx + (float)s * 5.0f, ly = fy + (float)render_obj_dy - 6.0f;
+                add_light(lx, ly + 10.0f, on ? 70.0f : 0.0f, on ? 45.0f : 0.0f, s < 0 ? POLICE_RED : POLICE_BLUE);
+                if (on) add_light(lx, ly, 5.0f, 4.0f, HOST_LIGHT_GLOW | (s < 0 ? POLICE_RED : POLICE_BLUE));
+            }
         }
         /* slowing down (its speed a tick under the speed it kept) or standing: braking */
         braking = d < 2.0f || d < g_car_speed[i] * 0.85f;
