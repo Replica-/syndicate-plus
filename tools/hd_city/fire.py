@@ -39,8 +39,10 @@ for sid in IDS:
     W, H = w * S, h * S
     # the game's heat: its pixels' brightness, smoothed (hottest where it drew white and yellow)
     lum = a[..., :3].mean(-1) / 255 * (a[..., 3] > 0)
-    heat = np.asarray(Image.fromarray((lum * 255).astype(np.uint8)).resize((W, H), Image.BICUBIC)
-                      .filter(ImageFilter.GaussianBlur(S * 1.2))).astype(np.float32) / 255
+    # spread from the bright cores (a thin flame is mostly black outline: its core's heat for all of it)
+    core = Image.fromarray((lum * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(3))
+    heat = np.asarray(core.resize((W, H), Image.BICUBIC).filter(ImageFilter.GaussianBlur(S * 1.0))).astype(np.float32) / 255
+    heat = np.clip(heat / max(0.35, float(heat.max())) * 0.95, 0, 1)
     alpha = np.asarray(spr.split()[3].resize((W, H), Image.BILINEAR).filter(ImageFilter.GaussianBlur(S * 0.5))) / 255
     ys = np.linspace(0, 1, H)[:, None]
     licks = noise(H, W, 3 * S, sid) * 0.6 + noise(H, W, S, sid + 7) * 0.4
