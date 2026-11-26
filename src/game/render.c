@@ -621,6 +621,7 @@ static int hd_define(int image, const uint8_t *px)
 /* the HD sprites (hd/sprite_NNNN.png, HD_SCALE times the sprite's size, RGBA): drawn in its place, in its own colours
  * (the trees, ...); 0 if not in the pack.  SYND_DUMP_SPRITES=DIR writes each sprite the city draws to DIR/NNNN.png in
  * this palette's colours (to redraw them) */
+#define HD_FIRE 232
 static uint8_t g_hd_sprite_state[NB_SPRITES]; /* 0 not looked for, 1 loaded, 2 none */
 static uint8_t *g_hd_sprite[NB_SPRITES];
 
@@ -674,7 +675,8 @@ static int hd_sprite(int image, const uint8_t *px, int w, int h)
     if (g_hd_sprite_state[id] != 1) return 0;
     for (i = 0; i < w * h * HD_SCALE * HD_SCALE; i++) {
         const uint8_t *p = g_hd_sprite[id] + i * 4;
-        rgb[i] = p[3] < 128 ? 0 : 0xFF000000u | (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
+        rgb[i] = p[3] < 128 ? 0 : (p[3] == HD_FIRE ? (uint32_t)HD_FIRE << 24 : 0xFF000000u) | (uint32_t)p[0] << 16 |
+                                   (uint32_t)p[1] << 8 | p[2]; /* alpha HD_FIRE: fire, its heat in red (drawn moving) */
     }
     host_city_image(image, w * HD_SCALE, h * HD_SCALE, HD_SCALE, rgb);
     return 1;

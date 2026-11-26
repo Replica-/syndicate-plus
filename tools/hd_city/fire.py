@@ -1,4 +1,5 @@
-"""HD fire (the burning object's frames: blazes 1756-1759, flame tongues and smoke wisps 992-1002), drawn in the game's
+"""HD fire, dynamic (the flames drawn moving by the game's shader from each pixel's heat; the smoke drawn here)
+(the burning object's frames: blazes 1756-1759, flame tongues and smoke wisps 992-1002), drawn in the game's
 own silhouettes:   fire.py HDDIR SPRITEDIR -> HDDIR/sprites/NNNN.png
 Each sprite 4x, its outline the game's (smoothed); inside it turbulent fire: white-yellow where the game's pixels are
 hottest, orange, red to the edges and the tips, licks of noise rising; the grey wisps dark, rough smoke."""
@@ -53,6 +54,11 @@ for sid in IDS:
         t = heat * 1.15 + (licks - 0.5) * 0.45 - 0.25 * (1 - ys)   # cooler towards the tips
         col = ramp(FIRE, t)
     shape = (alpha > 0.45) & ((licks > 0.18 + 0.35 * (1 - ys)) | (alpha > 0.85))   # ragged edges, licks at the top
-    out = np.dstack([col, np.where(shape, 255, 0)]).astype(np.uint8)
+    if grey:
+        out = np.dstack([col, np.where(shape, 255, 0)]).astype(np.uint8)
+    else:                                              # dynamic: the game's shader draws the flames (alpha 232: fire,
+        heat8 = (np.clip(heat * 1.15, 0, 1) * 255)     # red its heat), moving; the outline a little generous
+        body = alpha > 0.3
+        out = np.dstack([heat8, heat8 * 0, heat8 * 0, np.where(body, 232, 0)]).astype(np.uint8)
     Image.fromarray(out, 'RGBA').save(os.path.join(HD, 'sprites', '%04d.png' % sid))
     print('fire', sid, 'smoke' if grey else '')

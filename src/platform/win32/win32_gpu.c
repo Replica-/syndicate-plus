@@ -231,12 +231,28 @@ static const char k_city_shader[] =
     "    float spec = pow(saturate(dot(r, l)), 200) * 12 * bump;\n"
     "    return saturate(float3(0.003, 0.004, 0.005) + fr * sky + fr * spec * float3(1, 0.95, 0.85));\n"
     "}\n"
+    /* fire (alpha 232, its heat in red): flames rising and flickering (`sun.w` the time), drawn in the sprite's
+     * outline, white-yellow where hottest, orange, red at the edges and the tips */
+    "float4 fire(int2 p, float heat, V i) {\n"
+    "    float2 r = ((float2)(p - (int2)i.rect.xy) + 0.5) / max(i.rect.zw - i.rect.xy, 1);\n"
+    "    float t = sun.w;\n"
+    "    float2 q = float2(r.x * 9 + sin(t * 1.7 + r.y * 5) * 0.5, r.y * 2.6 + t * 3.2);\n"
+    "    float n = vnoise(q) * 0.55 + vnoise(q * 2.2 + 13.1 + float2(0, t * 1.7)) * 0.3 + vnoise(q * 4.7 + 5.3) * 0.15;\n"
+    "    float h = heat * 0.95 + (n - 0.5) * 1.15 - (1 - r.y) * 0.5;\n"
+    "    if (h < 0.16) return 0;\n"
+    "    float3 c = h < 0.35 ? lerp(float3(0.45, 0.06, 0.02), float3(0.9, 0.3, 0.05), (h - 0.12) / 0.23)\n"
+    "             : h < 0.65 ? lerp(float3(0.9, 0.3, 0.05), float3(1.0, 0.68, 0.18), (h - 0.35) / 0.3)\n"
+    "             : lerp(float3(1.0, 0.68, 0.18), float3(1.0, 0.97, 0.85), saturate((h - 0.65) / 0.35));\n"
+    "    return float4(c, 1);\n"
+    "}\n"
+    "bool on_fire(V i) { return abs(atlas.Load(int3((int2)floor(i.tex), 0)).a * 255 - 232) < 0.5; }\n"
     "float4 texel(int2 p, V i) {\n"
     "    float4 t;\n"
     "    int m;\n"
     "    if (p.x < (int)i.rect.x || p.y < (int)i.rect.y || p.x >= (int)i.rect.z || p.y >= (int)i.rect.w) return 0;\n"
     "    t = atlas.Load(int3(p, 0));\n"
     "    if (t.a < 0.5) return 0;\n"
+    "    if (abs(t.a * 255 - 232) < 0.5) return fire(p, t.r, i);\n"
     "    m = material(t.a, i);\n"
     "    if (m == WATER) return float4(water(p, i), 1);\n"
     "    if (m == DIRT) return float4(rubble(world(p, i), ground(world(p, i), m, mat).rgb * damp(world(p, i), m)), 1);\n"
@@ -334,7 +350,7 @@ static const char k_city_shader[] =
     "    float2 f = saturate((p - b - 0.5) * scale / texels(i) + 0.5);\n"
     "    int2 q = (int2)b;\n"
     "    float4 c = filtered(texel(q, i), texel(q + int2(1, 0), i), texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f, p - b);\n"
-    "    c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(c, i.glow).r / max(c.a, 1e-4));\n" /* light is not shaded */
+    "    if (!on_fire(i)) c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(c, i.glow).r / max(c.a, 1e-4));\n" /* light is not shaded */
     "    if (i.glow & 128) c *= 60.0 / 255.0;\n" /* drawn see-through (B held) */
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
     "}\n"
@@ -356,8 +372,9 @@ static const char k_city_shader[] =
     "    float4 c00 = texel(q, i), c10 = texel(q + int2(1, 0), i), c01 = texel(q + int2(0, 1), i);\n"
     "    float4 c11 = texel(q + int2(1, 1), i);\n"
     "    o.c = filtered(c00, c10, c01, c11, f, p - b);\n"
-    "    o.c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
+    "    if (!on_fire(i)) o.c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
+    "    if (on_fire(i)) o.e = float4(1, 1, 1, 1) * o.c.a;\n"
     "    o.h = float4(height(i), (i.shade & 128) && (i.shade & 2) && at(i).y <= 32 - abs(at(i).x - 32) / 2 + 2.5 ? 1 : (i.shade & 128) ? 0 : 0.5, (i.shade & 128) && (i.shade & 2) ? 300 : -14, (i.glow & 128) || (i.shade & 0x20000) ? 0 : o.c.a);\n"
     "    if (i.glow & 128) { o.c *= 60.0 / 255.0; o.e *= 60.0 / 255.0; }\n"
     "    return o;\n"
