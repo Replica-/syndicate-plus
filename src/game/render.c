@@ -197,12 +197,16 @@ static uint32_t g_image_pal[256]; /* the palette the GPU's images were made with
 static int is_head(int id);
 
 /* a hat's colour where the light catches it */
-/* the agents' heads seen from the side (41, 42 and the same of their other sets): the pale pixel at the hat's edge is
- * its brim catching the light (the hat's colour, lighter), not the red hat's pink */
-#define HAT_BRIM 4
-static int hat_brim(int id, uint8_t c)
+/* the agents' heads (41 on): the hat's brim is drawn in other colours than the hat's own (lost in the red hat: left
+ * as they are they show beside a hat of another colour): in the top two rows the browns (1: the hat's colour, 9: its
+ * lighter one), and down to the third row the pale pixel at its edge (4: lighter).  0 not the hat's, 1 its colour,
+ * 2 its lighter one */
+static int hat_part(int id, int row, uint8_t c)
 {
-    return c == HAT_BRIM && id >= 41 && is_head(id);
+    if (id < 41 || !is_head(id)) return 0;
+    if (row <= 1 && c == 1) return 1;
+    if ((row <= 1 && c == 9) || (row <= 2 && c == 4)) return 2;
+    return 0;
 }
 
 /* the agents' heads (41 on): their rows from COLLAR_ROW down are the coat's collar and the shoulders (black and dark
@@ -317,8 +321,8 @@ static void define_image(int image, const uint8_t *px, int w, int h)
     if (image < IMAGE_SPRITES && hd_define(image, px)) return;
     if (image >= IMAGE_SPRITES && !head && hd_sprite(image, px, w, h)) return;
     for (i = 0; i < w * h; i++) {
-        uint32_t a = px[i] == HAT_INDEX ? 0xFE000000u
-                     : head && (px[i] == HAT_SHINE || hat_brim(image - IMAGE_SPRITES, px[i])) ? 0xFD000000u : 0xFF000000u;
+        int part = image >= IMAGE_SPRITES ? hat_part(image - IMAGE_SPRITES, i / w, px[i]) : 0;
+        uint32_t a = px[i] == HAT_INDEX || part == 1 ? 0xFE000000u : (head && px[i] == HAT_SHINE) || part == 2 ? 0xFD000000u : 0xFF000000u;
         if (image >= IMAGE_SPRITES && a == 0xFF000000u && px[i] != 255) {
             int code = collar(image - IMAGE_SPRITES, i / w, px[i]) ? 250 : look_code(image - IMAGE_SPRITES, px[i]);
             if (code != 255) { /* alpha 160 + 16 x part (hair, skin, clothes, trousers) + shade (0.3 + 0.1 x it) */
@@ -411,8 +415,8 @@ int render_preview(uint32_t *rgb, int w, int h, int bx, int by, int scale, int f
                     int code, a, b, X, Y;
                     if (c == 255 || c >= 16) continue;
                     code = collar(id, y, c) ? 250 : look_code(id, c);
-                    if (is_head(id) && c == HAT_INDEX) col = hat;
-                    else if (is_head(id) && (c == HAT_SHINE || hat_brim(id, c))) col = shine(hat);
+                    if (is_head(id) && (c == HAT_INDEX || hat_part(id, y, c) == 1)) col = hat;
+                    else if (is_head(id) && (c == HAT_SHINE || hat_part(id, y, c) == 2)) col = shine(hat);
                     else if (coat != 0 && (code == 250 || code == 249)) {
                         int s = lum8(k_people_pal[c]) * 128 / LOOK_REF;
                         col = look_colour(code == 249 ? trousers(coat) | (coat & 0x1000000u) : coat, s < 40 ? 40 : s > 230 ? 230 : s);
@@ -436,7 +440,8 @@ static uint32_t sprite_colour(const uint32_t *pal, uint8_t c, int row, uint32_t 
 {
     int code;
     if (row < (int)(hat >> 24) && c == HAT_INDEX) return hat & 0xFFFFFFu;
-    if (row < (int)(hat >> 24) && head && (c == HAT_SHINE || hat_brim(g_put_sprite, c))) return shine(hat & 0xFFFFFFu);
+    if (row < (int)(hat >> 24) && hat_part(g_put_sprite, row, c) == 1) return hat & 0xFFFFFFu;
+    if (row < (int)(hat >> 24) && head && (c == HAT_SHINE || hat_part(g_put_sprite, row, c) == 2)) return shine(hat & 0xFFFFFFu);
     if (g_put_sprite >= 0 && g_look_main[g_put_sprite] != 0 &&
         (code = collar(g_put_sprite, row, c) ? 250 : look_code(g_put_sprite, c)) != 255) {
         uint32_t l = g_obj_look[code == 252 ? 0 : code == 251 ? 1 : 2];
