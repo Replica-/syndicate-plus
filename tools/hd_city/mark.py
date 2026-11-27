@@ -11,6 +11,9 @@ W, H, S = 64, 48, 4
 MATERIAL = {13: 0, 14: 0, 76: 3, 79: 3, 168: 3, 169: 3, 170: 3, 159: 5}
 MATERIAL.update({t: 7 for t in (35, 36, 41, 207, 42, 43, 251, 252, 203, 45)})   # 45: with floor lights (kept)   # the pavements: pavemat.py's slabs
 SAME = {207: 36, 42: 36, 43: 36, 251: 36, 252: 36, 203: 36}
+# 12: the dirt (14) with a little grass: tile 14 with its dirt marked DIRT_GRASS (the game draws grass patches and
+# tufts in it, in world space)
+DIRT_GRASS, DIRT_GRASS_TILES = 9, {12: 14}
 WATER, WATER_TILES = 11, [156, 158, 165, 166, 167, 196]   # 196: where the pipes pour in
 KEEP = [(255, 190, 0), (223, 255, 255)]          # markings kept on the other ground: yellow, white
 ys, xs = np.mgrid[0:H * S, 0:W * S]
@@ -44,6 +47,12 @@ for t, m in MATERIAL.items():
     mk = TOP & big(sel) & (out[..., 3] > 0)
     out[..., 3][mk] = 240 + m
     Image.fromarray(out, 'RGBA').save(f'{HD}/out/{t:03d}.png')
+for t, s in DIRT_GRASS_TILES.items():
+    out = load(s)
+    mk = TOP & (np.asarray(Image.open(f'{HD}/out/{s:03d}.png'))[..., 3] == 240)
+    out[..., 3][mk] = 240 + DIRT_GRASS
+    Image.fromarray(out, 'RGBA').save(f'{HD}/out/{t:03d}.png')
+    shutil.copy(f'{HD}/out/{s:03d}_n.png', f'{HD}/out/{t:03d}_n.png')
 for t in WATER_TILES:
     out = load(t)
     mk = WTOP & (out[..., 3] > 0)                    # all of its top, to its edges: no seam between them

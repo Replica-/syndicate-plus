@@ -7,8 +7,8 @@ import sys, numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 HD = sys.argv[1]
 W, H, S = 64, 48, 4
-GRASS, TILES = 6, [210, 12, 18, 19, 20, 21, 22, 23, 27, 211, 212, 213, 214, 215]
-OWN_SIDES = [12, 18, 19, 20, 21, 22, 23, 27, 211, 212, 213, 214, 215]   # their sides upscale.py's (layered blocks)
+GRASS, TILES = 6, [210, 18, 19, 20, 21, 22, 23, 27, 211, 212, 213, 214, 215]
+OWN_SIDES = [18, 19, 20, 21, 22, 23, 27, 211, 212, 213, 214, 215]   # their sides upscale.py's (layered blocks)
 TUFTS, BLADES = 0, (14, 26)              # no tufts baked in: the shader draws them on the ground in world space (no pattern)
 SOIL = np.array([38, 31, 22], np.float32)
 ys, xs = np.mgrid[0:H * S, 0:W * S]

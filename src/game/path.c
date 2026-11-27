@@ -186,6 +186,7 @@ static void relax(int32_t from, int x, int y, int z, int cost, int gx, int gy, i
 }
 
 /* the tiles one can step to from x, y, z */
+#define STEP_TILE 128 /* a station platform's edge, by the track (its steps drawn on it) */
 static void neighbours(int32_t id, int x, int y, int z, int gx, int gy, int gz)
 {
     int dx, dy, ux = 0, uy = 0, here = type_at(x, y, z);
@@ -198,6 +199,21 @@ static void neighbours(int32_t id, int x, int y, int z, int gx, int gy, int gz)
         if (is_slope(type_at(x - ux, y - uy, z - 1)) && standable(x - ux, y - uy, z - 1))
             relax(id, x - ux, y - uy, z - 1, 14, gx, gy, gz);
         return;
+    }
+    /* a station platform's edge (STEP_TILE, roof to the tiles' types): a step down onto the track beside it (a level
+     * lower), and back up onto it, as the game lets people do */
+    {
+        static const int d4[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        int k;
+        for (k = 0; k < 4; k++) {
+            int nx = x + d4[k][0], ny = y + d4[k][1];
+            if (nx < 0 || ny < 0 || nx >= g_mx || ny >= g_my) continue;
+            if (z >= 1 && render_map_tile(x, y, z) == STEP_TILE && standable(nx, ny, z - 1) &&
+                !is_slope(type_at(nx, ny, z - 1)))
+                relax(id, nx, ny, z - 1, 14, gx, gy, gz);
+            if (z + 1 < g_mz && render_map_tile(nx, ny, z + 1) == STEP_TILE && standable(nx, ny, z + 1))
+                relax(id, nx, ny, z + 1, 14, gx, gy, gz);
+        }
     }
     for (dy = -1; dy <= 1; dy++)
         for (dx = -1; dx <= 1; dx++) {

@@ -8,7 +8,7 @@ from PIL import Image, ImageFilter
 src, dst = sys.argv[1], sys.argv[2]
 ORANGE_SAT, ORANGE_VALUE = 0.5, 0.9
 PAVED = [35, 36, 41, 207, 42, 43, 251, 252, 203]   # (material pixels are never muted)
-KEEP = [210, 12, 18, 19, 20, 21, 22, 23, 27, 211, 212, 213, 214, 215]   # grass.py's tiles: as they are
+KEEP = [210, 18, 19, 20, 21, 22, 23, 27, 211, 212, 213, 214, 215]   # grass.py's tiles: as they are
 W, H, S = 64, 48, 4
 ys, xs = np.mgrid[0:H * S, 0:W * S]
 fx, fy = (xs + 0.5) / S, (ys + 0.5) / S

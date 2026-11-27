@@ -513,8 +513,8 @@ def company_picker(ctx):
     def at(x, y):   # a point of the 320 x 200 screen
         return '%d;%d' % (x * 65536 // 320, y * 65536 // 200)
     ctx.run('pick', 17, start=SYN, extra=['--mem-dump', '16800:' + dump], inputs=SKIP_INTRO + [
-        '10000:f1', '12000:move@' + at(267, 85), '12500:click@' + at(267, 85), '13500:move@' + at(231, 112),
-        '14000:click@' + at(231, 112), '15000:move@' + at(40, 179), '15500:click@' + at(40, 179)])
+        '10000:f1', '12000:move@' + at(261, 30), '12500:click@' + at(261, 30), '13500:move@' + at(234, 69),
+        '14000:click@' + at(234, 69), '15000:move@' + at(40, 179), '15500:click@' + at(40, 179)])
     mem = open(dump, 'rb').read()
     company = 0x44e49c - 0x400000   # the player's (the first)
     check((mem[company + 0xf], mem[company + 0x10]) == (4, 5),
@@ -572,7 +572,7 @@ def menu_company(ctx):
     r = ctx.run('menu', 12, start=SYN, inputs=SKIP_INTRO)
     check('auto save loaded: AUTO 01/01 00:00' in r.log, 'the auto save was not loaded (see menu.log)')
     f = r.last()
-    logo = sum(1 for y in range(int(0.74 * f.h), int(0.95 * f.h)) for x in range(int(0.18 * f.w), int(0.32 * f.w))
+    logo = sum(1 for y in range(int(0.17 * f.h), int(0.28 * f.h)) for x in range(int(0.17 * f.w), int(0.26 * f.w))
                if f.pix[y * f.w + x] & 0xFFFFFF == 0xFFA65D)
     check(logo > 40, 'no logo in the company\'s colour on the main menu: ' + name(f))
 

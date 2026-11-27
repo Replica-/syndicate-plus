@@ -64,6 +64,7 @@ void host_unlock(void)
 
 void host_log(const char *line)
 {
+    rt_log_ring(line);
     if (g_logfile != NULL) {
         fprintf(g_logfile, "%s\n", line);
         fflush(g_logfile);

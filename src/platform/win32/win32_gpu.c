@@ -20,6 +20,8 @@
 #include <d3dcompiler.h>
 #include <dxgi1_2.h>
 
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,15 +32,15 @@ static ID3D11DeviceContext *g_ctx;
 static IDXGISwapChain1 *g_swap;
 static ID3D11RenderTargetView *g_rtv;
 static ID3D11VertexShader *g_vs, *g_city_vs, *g_light_vs;
-static ID3D11PixelShader *g_ps, *g_city_ps, *g_city_lit_ps, *g_light_ps, *g_comp_ps, *g_fire_ps, *g_smoke_ps;
+static ID3D11PixelShader *g_ps, *g_city_ps, *g_city_lit_ps, *g_light_ps, *g_comp_ps, *g_fire_ps, *g_smoke_ps, *g_explode_ps, *g_flash_ps, *g_hmax1_ps, *g_hmax2_ps;
 static ID3D11InputLayout *g_city_layout, *g_light_layout;
 static ID3D11BlendState *g_add;
 static ID3D11Buffer *g_light_vb, *g_comp_cb;
 static int g_light_vb_cap;
 /* the lit city: its picture, what glows in it, the light map (as big as the picture's rectangle) */
-static ID3D11Texture2D *g_lit_tex[4];
-static ID3D11RenderTargetView *g_lit_rtv[4]; /* the scene, its glows, the light map, its heights */
-static ID3D11ShaderResourceView *g_lit_srv[4];
+static ID3D11Texture2D *g_lit_tex[6];
+static ID3D11RenderTargetView *g_lit_rtv[6]; /* the scene, its glows, the light map, its heights, the heights' block maps (2) */
+static ID3D11ShaderResourceView *g_lit_srv[6];
 static int g_lit_w, g_lit_h;
 static volatile LONG g_time; /* 0 the mission's own look, 1 day, 2 dusk, 3 night, 4 dawn (as FreeSynd's) */
 static ID3D11SamplerState *g_linear;
@@ -149,11 +151,12 @@ static const char k_city_shader[] =
     "float texels(V i) { return (float)(1u << ((i.glow >> 4) & 3)); }\n" /* the image's texels a frame pixel */
     /* a tile's texel p on the ground (the tile's top a 32 x 32 square of the map, its place in the quad's hat), in
      * materials' squares (8 x 8 tiles); the material of a texel (alpha 240 + its number), -1 none */
-    "float2 world(int2 p, V i) {\n"
-    "    float2 l = ((float2)(p - (int2)i.rect.xy) + 0.5) / texels(i);\n"
+    "float2 worldf(float2 t, V i) {\n" /* at a point of the image (texels; texel p's centre p + 0.5) */
+    "    float2 l = (t - i.rect.xy) / texels(i);\n"
     "    float u = l.y + (l.x - 32) * 0.5, v = l.y - (l.x - 32) * 0.5;\n"
     "    return float2(u + 32.0 * (i.hat & 1023u), v + 32.0 * ((i.hat >> 10) & 1023u)) / 256.0;\n"
     "}\n"
+    "float2 world(int2 p, V i) { return worldf((float2)p + 0.5, i); }\n"
     "int material(float a, V i) {\n"
     "    int k = (int)round(a * 255) - 240;\n"
     "    return (i.hat & 0x100000u) && k >= 0 && k < 12 ? k : -1;\n"
@@ -166,6 +169,7 @@ static const char k_city_shader[] =
     "#define GRAVEL 8\n"
     "#define PAVE 7\n"
     "#define GRASS 6\n"
+    "#define DIRT_GRASS 9\n"
     "float hash2(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }\n"
     "float vnoise(float2 p) {\n"
     "    float2 i = floor(p), f = frac(p);\n"
@@ -199,7 +203,14 @@ static const char k_city_shader[] =
     /* grass tufts, scattered on the ground in world space (no pattern): roots in a grid of jittered cells (game
      * pixels), each tuft a few blades rising up the picture from its root, leaning, dark at the root, straw at the
      * tip; the root lowest on the picture (nearest) in front */
-    "float3 tufts(float2 w, float3 c) {\n"
+    /* the dirt's grass patches (DIRT_GRASS), 0..1: the noise turned and warped (its lattice does not show), a few */
+    "float patch(float2 w) {\n"
+    "    float2 r = float2(w.x * 0.866 - w.y * 0.5, w.x * 0.5 + w.y * 0.866) * 8.0;\n"
+    "    r += float2(fbm(w * 3.1 + 1.7), fbm(w * 3.1 + 8.3)) * 1.6;\n"
+    "    return smoothstep(0.56, 0.68, fbm(r + 5.0));\n"
+    "}\n"
+    /* dens: the share of cells with a tuft (0.8 on grass; in the dirt's patches less, none outside them) */
+    "float3 tufts(float2 w, float3 c, float dens) {\n"
     "    float2 g = w * 256, cell = floor(g / 2.6);\n"
     "    float best = -1e9;\n"
     "    float3 col = c;\n"
@@ -207,8 +218,8 @@ static const char k_city_shader[] =
     "    [loop] for (int dv = -1; dv <= 4; dv++) {\n"
     "        float2 id = cell + float2(du, dv);\n"
     "        float h = hash2(id + 3.7);\n"
-    "        if (h > 0.8) continue;\n"
     "        float2 root = (id + 0.15 + 0.7 * float2(hash2(id + 1.3), hash2(id + 7.9))) * 2.6;\n"
+    "        if (h > dens) continue;\n"
     "        float2 d = root - g;\n"
     "        float up = (d.x + d.y) * 0.5;\n" /* how far the root is below this pixel on the picture */
     "        float dx = (g.x - g.y) - (root.x - root.y);\n" /* across the picture */
@@ -216,11 +227,11 @@ static const char k_city_shader[] =
     "        if (up <= 0 || depth < best) continue;\n"
     "        [unroll] for (int k = 0; k < 4; k++) {\n"
     "            float r1 = hash2(id + k * 11.1), r2 = hash2(id + k * 5.3 + 2.1);\n"
-    "            float len = 2.2 + 3.6 * r1, lean = (r2 - 0.5) * 1.6, off = (r1 - 0.5) * 1.4;\n"
-    "            float wid = 0.5 * (1 - up / len);\n"
+    "            float len = 3.2 + 4.4 * r1, lean = (r2 - 0.5) * 1.6, off = (r1 - 0.5) * 1.6;\n"
+    "            float wid = 0.65 * (1 - up / len) + 0.08;\n"
     "            if (up < len && abs(dx - off - lean * up) < wid) {\n"
-    "                float t = up / len;\n"
-    "                col = lerp(float3(0.12, 0.13, 0.05), lerp(float3(0.42, 0.42, 0.16), float3(0.62, 0.55, 0.28), r2), t)\n"
+    "                float t = up / len;\n" /* dark at the root, bright straw or green at the tip: they stand out of the grass */
+    "                col = lerp(float3(0.05, 0.06, 0.02), lerp(float3(0.52, 0.55, 0.2), float3(0.78, 0.7, 0.38), r2), pow(t, 0.8))\n"
     "                      * (0.8 + 0.4 * r1);\n"
     "                best = depth;\n"
     "                break;\n"
@@ -272,8 +283,7 @@ static const char k_city_shader[] =
      * the time in seconds) reflecting the sky (Fresnel: more at a grazing angle) and the sun's glints.  In world
      * space: u, v along the ground, up; the eye is down the picture and 30 degrees up */
     "#define WATER 11\n"
-    "float3 water(int2 p, V i) {\n"
-    "    float2 w = world(p, i);\n"
+    "float3 water(float2 w) {\n"
     "    float t = sun.w;\n"
     "    float3 a = matn.SampleLevel(wrap, float3(w + float2(0.006, 0.0035) * t, WATER), matlod()).rgb * 2 - 1;\n"
     "    float3 b = matn.SampleLevel(wrap, float3(w * 1.37 + float2(-0.0045, 0.006) * t, WATER), matlod()).rgb * 2 - 1;\n"
@@ -320,7 +330,23 @@ static const char k_city_shader[] =
     "    return float4(lerp(float3(0.07, 0.065, 0.06), float3(0.26, 0.25, 0.24), n), a);\n"
     "}\n"
     "bool on_fire(V i) { return abs(atlas.Load(int3((int2)floor(i.tex), 0)).a * 255 - 232) < 0.5; }\n"
-    "float4 texel(int2 p, V i) {\n"
+    /* a material's colour at `w` (world(): its place in materials' squares) */
+    "float3 material_colour(int m, float2 w) {\n"
+    "    if (m == WATER) return water(w);\n"
+    "    if (m == GRASS) return tufts(w, ground(w, m, mat).rgb, 0.8);\n"
+    "    if (m == DIRT_GRASS) {\n" /* the dirt (as DIRT), patches of grass and tufts in it */
+    "        float g = patch(w);\n"
+    "        float3 d = rubble(w, dirt_variety(w, ground(w, DIRT, mat).rgb * damp(w, DIRT)));\n"
+    "        if (g > 0) d = lerp(d, ground(w, GRASS, mat).rgb * 0.9, g * 0.85);\n"
+    "        return g > 0.05 ? tufts(w, d, 0.8 * g) : d;\n"
+    "    }\n"
+    "    if (m == PAVE) return pave_wear(w, ground(w, m, mat).rgb);\n"
+    "    if (m == DIRT) return rubble(w, dirt_variety(w, ground(w, m, mat).rgb * damp(w, m)));\n"
+    "    return ground(w, m, mat).rgb * damp(w, m);\n"
+    "}\n"
+    /* a texel's colour; a material's texel: alpha 2, its material in `mm` (the pixel's colour of it is worked out
+     * once, at the pixel's own place: texels4()) */
+    "float4 texel(int2 p, V i, inout int mm) {\n"
     "    float4 t;\n"
     "    int m;\n"
     "    if (p.x < (int)i.rect.x || p.y < (int)i.rect.y || p.x >= (int)i.rect.z || p.y >= (int)i.rect.w) return 0;\n"
@@ -329,18 +355,19 @@ static const char k_city_shader[] =
     "    if (abs(t.a * 255 - 232) < 0.5) return fire(p, t.r, i);\n"
     "    if (abs(t.a * 255 - 233) < 0.5) return smoke(p, t.r, i);\n"
     "    m = material(t.a, i);\n"
-    "    if (m == WATER) return float4(water(p, i), 1);\n"
-    "    if (m == GRASS) return float4(tufts(world(p, i), ground(world(p, i), m, mat).rgb), 1);\n"
-    "    if (m == PAVE) return float4(pave_wear(world(p, i), ground(world(p, i), m, mat).rgb), 1);\n"
-    "    if (m == DIRT) return float4(rubble(world(p, i), dirt_variety(world(p, i), ground(world(p, i), m, mat).rgb * damp(world(p, i), m))), 1);\n"
-    "    if (m >= 0) return float4(ground(world(p, i), m, mat).rgb * damp(world(p, i), m), 1);\n"
+    "    if (m >= 0) { mm = m; return float4(0, 0, 0, 2); }\n"
     "    {\n" /* a pedestrian's part (alpha 160 + 16 x part + shade: 0 hair, 1 skin, 2 clothes, 3 trousers): its own colour at the pixel's shade (0.3 + 0.1 x shade of it), else the pixel as drawn */
     "        uint code = (uint)round(t.a * 255), part = (code - 160) / 16, c = part == 0 ? i.look.x : part == 1 ? i.look.y : i.look.z;\n"
     "        if (code >= 160 && code < 224) {\n"
     "            float3 col = float3((c >> 16) & 255, (c >> 8) & 255, c & 255) / 255.0;\n"
     "            if (c == 0) return float4(t.rgb, 1);\n"
     "            if (part == 3) col = (col * 2 + dot(col, float3(0.299, 0.587, 0.114)) * 3) / 5 * 0.6;\n" /* trousers */
-    "            return float4(saturate(col * (0.3 + 0.1 * (code & 15))), 1);\n"
+    /* (the pixels lighter than the part's main colour add light too: a black coat keeps its highlights) */
+    "            float k = 0.3 + 0.1 * (code & 15);\n"
+    "            if (c & 0x1000000u) k = k > 0.8 ? 0.8 + (k - 0.8) * 0.35 : k;\n" /* (bit 24: its highlights subtle) */
+    /* (that light in the colour's own hue mostly: a dark red's highlights are red, not pink) */
+    "            float3 tint = 0.3 + 0.7 * col / max(max(col.r, col.g), max(col.b, 0.02));\n"
+    "            return float4(saturate(col * k + max(0, k - 0.8) * 0.45 * tint), 1);\n"
     "        }\n"
     "    }\n"
     "    if (t.a < 0.998 && t.a > 252.5 / 255 && p.y - (int)i.rect.y < (int)(i.hat >> 24)) {\n" /* alpha 254: the hat's colour, 253 its shine */
@@ -348,6 +375,19 @@ static const char k_city_shader[] =
     "        return float4(t.a > 0.994 ? h : saturate(h * 1.5 + 20.0 / 255), 1);\n"
     "    }\n"
     "    return float4(t.rgb, 1);\n"
+    "}\n"
+    /* the four texels round the pixel (q its top left one): a material's colour once, at the pixel's place */
+    "void texels4(int2 q, V i, out float4 c00, out float4 c10, out float4 c01, out float4 c11) {\n"
+    "    int mm = -1;\n"
+    "    c00 = texel(q, i, mm); c10 = texel(q + int2(1, 0), i, mm);\n"
+    "    c01 = texel(q + int2(0, 1), i, mm); c11 = texel(q + int2(1, 1), i, mm);\n"
+    "    if (mm >= 0) {\n"
+    "        float4 mc = float4(material_colour(mm, worldf(i.tex, i)), 1);\n"
+    "        if (c00.a > 1.5) c00 = mc;\n"
+    "        if (c10.a > 1.5) c10 = mc;\n"
+    "        if (c01.a > 1.5) c01 = mc;\n"
+    "        if (c11.a > 1.5) c11 = mc;\n"
+    "    }\n"
     "}\n"
     /* how much of a texel keeps its brightness in the dark (FreeSynd's): all of it (glow 2), its bright pixels
      * by their brightness (1), a road's white lights (3), nothing (0); with 64 its lamps too (bright, strongly
@@ -372,7 +412,7 @@ static const char k_city_shader[] =
     "    int m = material(atlas.Load(int3(q, 0)).a, i);\n"
     "    if (m == WATER) return 1;\n" /* lit by its own reflections */
     "    if (m >= 0) {\n" /* the ground's u goes right and down the picture, its v left and down, its up out of it */
-    "        float3 g = ground(world(q, i), m, matn).rgb * 2 - 1;\n"
+    "        float3 g = ground(world(q, i), m == DIRT_GRASS ? DIRT : m, matn).rgb * 2 - 1;\n"
     "        n = float3((g.x - g.y) * 0.7071, (g.x + g.y) * 0.3536, g.z);\n"
     "    }\n"
     "    float3 l = normalize(sun.xyz);\n"
@@ -426,7 +466,9 @@ static const char k_city_shader[] =
     "    float2 b = floor(p);\n"
     "    float2 f = saturate((p - b - 0.5) * scale / texels(i) + 0.5);\n"
     "    int2 q = (int2)b;\n"
-    "    float4 c = filtered(texel(q, i), texel(q + int2(1, 0), i), texel(q + int2(0, 1), i), texel(q + int2(1, 1), i), f, p - b);\n"
+    "    float4 c00, c10, c01, c11;\n"
+    "    texels4(q, i, c00, c10, c01, c11);\n"
+    "    float4 c = filtered(c00, c10, c01, c11, f, p - b);\n"
     "    if (!on_fire(i)) c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(c, i.glow).r / max(c.a, 1e-4));\n" /* light is not shaded */
     "    if (i.glow & 128) c *= 0.24 * pow(0.4, (float)((i.shade >> 20) & 15));\n" /* drawn see-through (B held) */
     "    return c;\n" /* premultiplied: the transparent texels are 0 */
@@ -446,19 +488,20 @@ static const char k_city_shader[] =
     "    float2 b = floor(p);\n"
     "    float2 f = saturate((p - b - 0.5) * scale / texels(i) + 0.5);\n"
     "    int2 q = (int2)b;\n"
-    "    float4 c00 = texel(q, i), c10 = texel(q + int2(1, 0), i), c01 = texel(q + int2(0, 1), i);\n"
-    "    float4 c11 = texel(q + int2(1, 1), i);\n"
+    "    float4 c00, c10, c01, c11;\n"
+    "    texels4(q, i, c00, c10, c01, c11);\n"
     "    o.c = filtered(c00, c10, c01, c11, f, p - b);\n"
     "    if (!on_fire(i)) o.c.rgb *= lerp(relief(i) * face(i) * sunlit(i), 1, glowing(o.c, i.glow).r / max(o.c.a, 1e-4));\n" /* light is not shaded */
     "    o.e = lerp(lerp(glowing(c00, i.glow), glowing(c10, i.glow), f.x), lerp(glowing(c01, i.glow), glowing(c11, i.glow), f.x), f.y);\n"
     "    if (on_fire(i)) o.e = float4(1, 1, 1, 1) * o.c.a;\n"
     "    o.h = float4(height(i), (i.shade & 128) && (i.shade & 2) && at(i).y <= 32 - abs(at(i).x - 32) / 2 + 2.5 ? 1 : (i.shade & 128) ? 0 : 0.5, (i.shade & 128) && (i.shade & 2) ? 300 : -14, (i.glow & 128) || (i.shade & 0x60000) || on_fire(i) ? 0 : o.c.a);\n"
     "    if (i.glow & 128) { float k = 0.24 * pow(0.4, (float)((i.shade >> 20) & 15)); o.c *= k; o.e *= k; }\n"
+    "    if (o.c.a <= 0 && !any(o.e)) discard;\n" /* nothing drawn (the blending would keep all three as they are) */
     "    return o;\n"
     "}\n";
 
 static const char k_light_shader[] =
-    "cbuffer C : register(b0) { float2 frame_size; float strength; float add; float2 origin; float2 margin; float4 sun; float4 ambient; float4 view; float4 target; };\n"
+    "cbuffer C : register(b0) { float2 frame_size; float strength; float add; float2 origin; float2 margin; float4 sun; float4 ambient; float4 view; float4 target; float4 hmax; };\n"
     "struct LI { float2 pos : POSITION; float2 uv : TEXCOORD0; float3 col : COLOR0; };\n"
     "struct LV { float4 pos : SV_Position; float2 uv : TEXCOORD0; float3 col : COLOR0; };\n"
     "LV vs_light(LI i) {\n"
@@ -478,83 +521,239 @@ static const char k_light_shader[] =
     "    f = f * f * (3 - 2 * f);\n"
     "    return lerp(lerp(fh(i), fh(i + float2(1, 0)), f.x), lerp(fh(i + float2(0, 1)), fh(i + 1), f.x), f.y);\n"
     "}\n"
-    "float tongue(float u, float h, float t, float seed, float off, float wid0) {\n"
-    "    float2 q = float2(u * 2.6 + seed * 1.7 + off * 3.1, h * 3.2 - fmod(t * 3.1 + off * 7, 256));\n"
-    "    float n = fn(q) * 0.5 + fn(q * 2.3 + 7.1) * 0.3 + fn(q * 5.3 + 3.3) * 0.2;\n"
-    "    float sway = (fn(float2(h * 1.4 - fmod(t * 1.5 + off * 3, 256), seed + off * 9)) - 0.5) * 0.7 * h;\n"
-    "    float wid = lerp(wid0, 0.06, pow(saturate(h), 0.75));\n"
-    "    float d = abs(u - off - sway) / wid;\n"
-    "    float body = saturate((1 - d) * 1.5 + (n - 0.5) * 1.4);\n"
-    "    float tall = 0.75 + 0.25 * fn(float2(seed + off * 5, fmod(t * 0.9, 256)));\n"
-    "    float top = saturate((tall - h) * 1.6 + (n - 0.55) * 1.3);\n"
-    "    return body * top;\n"
+    /* GPU effects: no sprites. A quad from x - rx to x + rx, its bottom at the base, ry tall; uv.x -1..1 across, uv.y -1 */
+    /* at its top, 1 at its bottom; col.r its seed, col.g how strong (0..1: fading in or out), col.b an explosion's progress */
+    /* (0..1). sun.x the time (seconds). */
+    "float fbm(float2 p) {\n"
+    "    float s = 0, a = 0.5;\n"
+    "    [unroll] for (int k = 0; k < 5; k++) { s += a * fn(p); p = p * 2.03 + float2(17.3, 9.1); a *= 0.5; }\n"
+    "    return s;\n"
     "}\n"
+    "float fbm3(float2 p) {\n"
+    "    float s = 0, a = 0.5;\n"
+    "    [unroll] for (int k = 0; k < 3; k++) { s += a * fn(p); p = p * 2.07 + float2(5.9, 13.7); a *= 0.5; }\n"
+    "    return s / 0.875;\n"
+    "}\n"
+    /* the flames' colour from their heat (0..1): deep red, orange, yellow, white at the hottest */
+    "float3 flame(float heat) {\n"
+    "    return heat < 0.35 ? lerp(float3(0.35, 0.03, 0.01), float3(0.95, 0.25, 0.03), heat / 0.35)\n"
+    "         : heat < 0.7 ? lerp(float3(0.95, 0.25, 0.03), float3(1.0, 0.66, 0.16), (heat - 0.35) / 0.35)\n"
+    "         : lerp(float3(1.0, 0.66, 0.16), float3(1.0, 0.97, 0.86), saturate((heat - 0.7) / 0.3));\n"
+    "}\n"
+    /* embers rising from a fire or flung from an explosion: small bright points, `n` of them */
+    "float embers(float2 p, float t, float seed, float rate, float spread) {\n"
+    "    float e = 0;\n"
+    "    [unroll] for (int k = 0; k < 7; k++) {\n"
+    "        float a = fh(float2(seed, k * 3.1)), b = fh(float2(k * 7.7, seed + 1.3)), c = fh(float2(seed + k, 9.9));\n"
+    "        float life = frac(t * rate * (0.6 + 0.8 * c) + a);\n"
+    "        float2 q = float2((a - 0.5) * spread + sin(t * 2.3 + k * 1.7) * 0.12 * life, life * 1.1);\n"
+    "        q.x += (b - 0.5) * 0.6 * life;\n"
+    "        float d = length((p - q) * float2(1, 0.7));\n"
+    "        e += smoothstep(0.035, 0.0, d) * (1 - life) * step(0.25, b);\n"
+    "    }\n"
+    "    return e;\n"
+    "}\n"
+    /* fire: tongues of flame licking up (noise warped by noise, rising), narrowing to their tips, flickering, more of */
+    /* them side by side the wider it is (col.b: its width over its height), each its own height; embers */
     "float4 ps_fire(LV i) : SV_Target {\n"
-    "    float t = fmod(sun.x, 400), seed = i.col.r * 255;\n"
+    "    float t = fmod(sun.x, 200), seed = i.col.r * 255, strong = i.col.g;\n"
     "    float u = i.uv.x, h = 1 - (i.uv.y + 1) * 0.5;\n"
-    "    float f = max(tongue(u, h, t, seed, 0.0, 0.75), max(tongue(u, h * 1.25, t, seed, -0.38, 0.45),\n"
-    "                                                         tongue(u, h * 1.15, t, seed, 0.36, 0.5)));\n"
-    "    f *= smoothstep(0.0, 0.3, h) * saturate(1.4 - abs(u) * 1.1) * (0.85 + 0.15 * fn(float2(u * 9, fmod(t * 6, 256))));\n"
-    "    if (f < 0.02) return 0;\n"
-    "    float heat = saturate(f * 1.3 - h * 0.45 + 0.05);\n"
-    "    float3 c = heat < 0.4 ? lerp(float3(0.55, 0.06, 0.02), float3(1.0, 0.33, 0.04), heat / 0.4)\n"
-    "             : heat < 0.75 ? lerp(float3(1.0, 0.33, 0.04), float3(1.0, 0.72, 0.18), (heat - 0.4) / 0.35)\n"
-    "             : lerp(float3(1.0, 0.72, 0.18), float3(1.0, 0.96, 0.82), (heat - 0.75) / 0.25);\n"
-    "    float a = saturate(f * 1.7);\n"
+    "    float2 p = float2(u * 1.3 + seed * 0.37, h * 1.5);\n"
+    "    float2 w = float2(fbm3(p * 1.7 + float2(seed, -t * 1.3)), fbm3(p * 1.7 + float2(seed + 4.7, -t * 1.6)));\n"
+    "    float n = fbm(p * 2.6 + (w - 0.5) * 1.8 + float2(0, -t * 2.4));\n"
+    "    float aspect = max(i.col.b * 4, 0.25), tongues = 1 + aspect * 2.2;\n"
+    "    float sway = (fn(float2(h * 1.3 - t * 0.9, seed)) - 0.5) * 0.45 * h / tongues;\n"
+    "    float wid = lerp(0.95, 0.3 + 0.12 * min(aspect, 3), pow(saturate(h), 0.8));\n"
+    "    float env = saturate(1 - abs(u - sway) / wid);\n"
+    "    float tall = 0.45 + 0.75 * fn(float2(u * tongues * 1.6 + seed, t * 0.8));\n"
+    "    float f = env * (n * 1.9 - h / tall * 1.25 + 0.15) * (0.75 + 0.25 * strong);\n"
+    "    f *= smoothstep(0.0, 0.12, h) * strong;\n"
+    "    float heat = saturate(f * 1.6 + (1 - h) * 0.2 - 0.1);\n"
+    "    float a = saturate(f * 2.2);\n"
+    "    float3 c = flame(heat) * a;\n"
+    "    float e = embers(float2(u, h), t, seed, 0.55, 1.2) * strong;\n"
+    "    c += float3(1.0, 0.55, 0.15) * e;\n"
+    "    a = saturate(a + e * 0.8);\n"
+    "    if (a < 0.01) return 0;\n"
+    "    return float4(c, a);\n"
+    "}\n"
+    /* smoke: a column billowing up, widening and thinning as it rises, leaning with the wind, curling (warped noise); */
+    /* lit a little from above, darkest where it is thick */
+    "float4 ps_smoke(LV i) : SV_Target {\n"
+    "    float t = fmod(sun.x, 200), seed = i.col.r * 255, strong = i.col.g;\n"
+    "    float u = i.uv.x, h = 1 - (i.uv.y + 1) * 0.5;\n"
+    "    float lean = h * h * 0.35 + (fn(float2(t * 0.15, seed)) - 0.5) * 0.25 * h;\n"
+    "    float wid = lerp(0.3, 1.0, sqrt(saturate(h)));\n"
+    "    float x = (u - lean) / wid;\n"
+    "    float2 p = float2(x * 1.2 + seed * 0.21, h * 1.9 - t * 0.32);\n"
+    "    float2 w = float2(fbm3(p * 1.3 + float2(seed, t * 0.11)), fbm3(p * 1.3 + float2(seed + 3.3, -t * 0.09)));\n"
+    "    float n = fbm(p * 2.1 + (w - 0.5) * 2.2);\n"
+    "    float env = saturate(1 - x * x);\n"
+    "    float dens = smoothstep(0.26, 0.62, n * (0.6 + 0.8 * env)) * env;\n"
+    "    dens *= smoothstep(0.0, 0.18, h) * pow(saturate(1 - h), 1.3) * strong;\n"
+    "    float a = dens * 0.92;\n"
+    "    if (a < 0.01) return 0;\n"
+    "    float lit = saturate(0.35 + (n - 0.5) * 1.2 + h * 0.25);\n"
+    "    float3 c = lerp(float3(0.05, 0.048, 0.045), float3(0.34, 0.33, 0.31), lit);\n"
     "    return float4(c * a, a);\n"
     "}\n"
-    "float4 ps_smoke(LV i) : SV_Target {\n"
-    "    float t = fmod(sun.x, 400), seed = i.col.r * 255;\n"
-    "    float u = i.uv.x, h = 1 - (i.uv.y + 1) * 0.5;\n"
-    "    float2 q = float2(u * 1.8 + seed * 1.3, h * 2.2 - fmod(t * 0.9, 256));\n"
-    "    float n = fn(q) * 0.55 + fn(q * 2.1 + 5.7) * 0.3 + fn(q * 4.3 + 1.9) * 0.15;\n"
-    "    float wid = lerp(0.45, 1.0, h);\n"
-    "    float drift = (fn(float2(h * 1.2 - fmod(t * 0.5, 256), seed)) - 0.5) * 0.5 * h;\n"
-    "    float d = length(float2((u - drift) / wid, 0));\n"
-    "    float dens = saturate((1 - d) * 1.3 + (n - 0.5) * 1.4) * saturate((1 - h) * 1.6) * smoothstep(0.0, 0.25, h);\n"
-    "    float a = dens * 0.75;\n"
-    "    if (a < 0.02) return 0;\n"
-    "    float3 c = lerp(float3(0.10, 0.09, 0.085), float3(0.32, 0.30, 0.29), n);\n"
-    "    return float4(c * a, a);\n"
+    /* an explosion (col.b its progress over its life): a white flash; a fireball of billowing puffs swelling, rising and */
+    /* boiling, cooling from white to orange and red, turning to black smoke from its edges in; the smoke rising on as a */
+    /* column with a spreading head; a ring of dust and heat along the ground; embers flung out.  The quad 2 wide and 2 tall */
+    /* (in its radius' units), its bottom on the ground */
+    "float4 ps_explode(LV i) : SV_Target {\n"
+    "    float t = fmod(sun.x, 200), seed = i.col.r * 255, pr = i.col.b;\n"
+    "    float2 v = float2(i.uv.x, 1 - i.uv.y);\n"
+    "    float grow = sqrt(saturate(pr / 0.25));\n"
+    "    float rise = pr * pr * 0.9 + pr * 0.35;\n"
+    /* the puffs: one in the middle, five round it, each its own size, rising and spreading as it grows */
+    "    float dist = 9.0;\n"
+    "    [unroll] for (int k = 0; k < 6; k++) {\n"
+    "        float a = k == 0 ? 0 : (k - 1) * 1.2566 + fh(float2(seed, k)) * 0.8;\n"
+    "        float off = k == 0 ? 0 : (0.22 + 0.2 * fh(float2(k, seed))) * grow;\n"
+    "        float2 c = float2(cos(a) * off * 1.3, 0.32 + 0.45 * grow + sin(a) * off * 0.8 + rise * (0.8 + 0.5 * fh(float2(k * 3, seed))));\n"
+    "        float r = (k == 0 ? 0.42 : 0.3 + 0.12 * fh(float2(seed + k, 2))) * (0.25 + 0.75 * grow) * (1 + 0.35 * pr);\n"
+    "        dist = min(dist, length((v - c) * float2(1, 1.05)) / r);\n"
+    "    }\n"
+    /* the column under the head, once it is smoke */
+    "    float col_w = 0.07 + 0.08 * pr;\n"
+    "    float colum = abs(v.x + (fn(float2(v.y * 2, seed)) - 0.5) * 0.1) / col_w + saturate(0.25 - v.y) * 4;\n"
+    "    dist = min(dist, lerp(9, colum + saturate(0.5 - v.y) * 1.5, saturate((pr - 0.35) / 0.3)) * (v.y < 0.4 + rise ? 1 : 9));\n"
+    "    float2 w = float2(fbm3(v * 2.4 + float2(seed, t * 0.5 - pr * 2)), fbm3(v * 2.4 + float2(seed + 6.1, -t * 0.4)));\n"
+    "    float n = fbm(v * 3.4 + (w - 0.5) * 2.4 + float2(0, -pr * 2.5 - t * 0.3));\n"
+    "    float n2 = fbm3(v * 9.0 + (w - 0.5) * 3.0 + float2(seed, -t * 1.5));\n"
+    "    dist += (n - 0.5) * 1.6 + (n2 - 0.5) * 0.5;\n"
+    "    float body = saturate((1 - dist) * 2.5);\n"
+    /* the fire in it: white hot at first and in its core, cooling to orange and red */
+    "    float cool = saturate((pr - 0.08) / 0.45);\n"
+    "    float core = saturate((1 - dist) * 1.7 + (n - 0.5) * 1.3 + (n2 - 0.5) * 0.6);\n"
+    "    float heat = core * (1 - cool * 0.95);\n"
+    "    float smoke = saturate((pr - 0.16) / 0.4) * body;\n"
+    "    float fire = body * saturate(heat * 1.5) * (1 - smoke * 0.9);\n"
+    "    float3 col = flame(saturate(heat * 1.15)) * fire * (0.6 + 0.55 * n2);\n"
+    "    float a = fire;\n"
+    /* the smoke: black where thick, lit brown-grey at its top, the fire's glow under it at first, thinning at the end */
+    "    float sd = smoke * saturate(1.25 - pr) * (0.7 + 0.5 * n);\n"
+    "    float lit = saturate(0.25 + (n - 0.5) * 1.4 + (v.y - rise) * 0.3);\n"
+    "    float3 sc = lerp(float3(0.025, 0.022, 0.02), float3(0.3, 0.27, 0.24), lit);\n"
+    "    sc += float3(0.5, 0.18, 0.04) * saturate(1 - pr * 2.2) * saturate(1 - lit * 1.5);\n"
+    "    col = col + sc * sd * (1 - a);\n"
+    "    a = a + sd * (1 - a);\n"
+    /* the first flash */
+    "    float fl = saturate(1 - pr / 0.07) * smoothstep(0.5, 0.05, length(v - float2(0, 0.55)));\n"
+    "    col += float3(1.0, 0.96, 0.88) * fl;\n"
+    "    a = saturate(a + fl);\n"
+    /* the ring along the ground */
+    "    float rr = 0.2 + 0.72 * sqrt(saturate(pr / 0.3));\n"
+    "    float g = length(float2(v.x, (v.y - 0.1) * 3.2));\n"
+    "    float ring = exp(-pow((g - rr) / (0.04 + 0.08 * pr), 2)) * saturate(1 - pr / 0.3) * smoothstep(1.0, 0.85, abs(v.x)) * (0.4 + 0.6 * fn(float2(atan2(v.y - 0.1, v.x) * 5, seed)));\n"
+    "    col += float3(0.95, 0.62, 0.3) * ring * 0.8 * (1 - a);\n"
+    "    a = saturate(a + ring * 0.5);\n"
+    /* embers flung out and falling */
+    "    float e = 0;\n"
+    "    [unroll] for (int m = 0; m < 10; m++) {\n"
+    "        float ang = 0.15 + fh(float2(seed, m * 1.9)) * 2.84, sp = 1.0 + 1.9 * fh(float2(m * 4.3, seed));\n"
+    "        float tt = pr * 1.2;\n"
+    "        float2 q = float2(cos(ang) * sp * tt, 0.35 + sin(ang) * sp * tt - 2.4 * tt * tt);\n"
+    "        e += smoothstep(0.04, 0.0, length(v - q)) * saturate(1 - pr / 0.65) * step(0.03, q.y);\n"
+    "    }\n"
+    "    col += float3(1.0, 0.62, 0.22) * e * (1 - a * 0.5);\n"
+    "    a = saturate(a + e * 0.8);\n"
+    "    if (a < 0.01) return 0;\n"
+    "    return float4(col, a);\n"
+    "}\n"
+    /* a muzzle flash (col.r the way it points, a turn; col.g a seed): wide where it leaves the gun, narrowing to a point */
+    /* away from it, flickering in length and width; shades of bright yellow, palest inside.  Added to the picture */
+    "float4 ps_flash(LV i) : SV_Target {\n"
+    "    float a = i.col.r * 6.2831853, seed = i.col.g * 255;\n"
+    "    float2 dir = float2(cos(a), sin(a));\n"
+    "    float2 q = float2(dot(i.uv, dir), dot(i.uv, float2(-dir.y, dir.x)));\n"
+    "    float tick = floor(sun.x * 30);\n"
+    "    float len = 0.7 + 0.3 * fh(float2(tick, seed));\n"
+    "    float t = (q.x + 0.9) / (1.8 * len);\n"
+    "    if (t <= 0 || t >= 1) return 0;\n"
+    "    float wid = (0.34 + 0.1 * fh(float2(seed, tick))) * saturate(t / 0.08) * pow(abs(1 - t), 1.3);\n"
+    "    float core = saturate(1 - abs(q.y) / max(wid, 0.001));\n"
+    "    if (core <= 0) return 0;\n"
+    "    float3 c = lerp(float3(1.0, 0.8, 0.12), float3(1.0, 0.98, 0.7), saturate(core * 1.5 - 0.25));\n"
+    "    return float4(c * pow(core, 0.6) * 1.5, 0);\n"
     "}\n"
     "Texture2D scene : register(t0);\n"
     "Texture2D emis : register(t1);\n"
     "Texture2D light : register(t2);\n"
     "Texture2D heights : register(t3);\n"
+    /* the highest a ray can be and still be shaded by something, in each 16 x 16 block of the heights (hmax_1), then
+     * over the blocks round it (hmax_2, hmax.x blocks each way: a stretch of the ray and the rays' spread): where a
+     * ray is above it, nothing there shades it (shade() skips that stretch) */
+    "Texture2D tops : register(t4);\n"
+    "float4 ps_hmax1(float4 pos : SV_Position) : SV_Target {\n"
+    "    int2 b = (int2)pos.xy * 16;\n"
+    "    float m = -30000;\n"
+    "    [loop] for (int y = 0; y < 16; y++)\n"
+    "        [loop] for (int x = 0; x < 16; x++) {\n"
+    "            float4 h = heights.Load(int3(b + int2(x, y), 0));\n" /* outside: 0, not shading */
+    "            if (h.a > 0.5) m = max(m, h.r + max(0, -h.b));\n"
+    "        }\n"
+    "    return m;\n"
+    "}\n"
+    "float4 ps_hmax2(float4 pos : SV_Position) : SV_Target {\n"
+    "    int2 c = (int2)pos.xy, r = (int)hmax.x, n;\n"
+    "    float m = -30000;\n"
+    "    tops.GetDimensions(n.x, n.y);\n"
+    "    [loop] for (int y = -r.y; y <= r.y; y++)\n"
+    "        [loop] for (int x = -r.x; x <= r.x; x++) {\n"
+    "            int2 q = c + int2(x, y);\n"
+    "            if (all(q >= 0) && all(q < n)) m = max(m, tops.Load(int3(q, 0)).r);\n"
+    "        }\n"
+    "    return m;\n"
+    "}\n"
     "#define STEPS 110\n"
-    "float ray(int2 p, float2 size, float4 h0, float2 dir) {\n"
-    "    bool blocks = h0.g < 0.75;\n"
-    "    float occ = 0;\n"
-    "    [loop] for (int k = 1; k <= STEPS; k++) {\n"
-    "        int2 q = (int2)floor(p + dir * k + 0.5);\n"
-    "        if (q.x < 0 || q.y < 0 || q.x >= size.x || q.y >= size.y) break;\n"
-    "        float4 hq = heights.Load(int3(q, 0));\n"
-    "        if (hq.a > 0.5) {\n"
-    "            float over = hq.r - (h0.r + sun.z * k);\n"
+    "float hit_at(int2 p, float2 size, float4 h0, bool blocks, float2 dir, int k) {\n"
+    "    int2 q = (int2)floor(p + dir * k + 0.5);\n"
+    "    if (q.x < 0 || q.y < 0 || q.x >= size.x || q.y >= size.y) return 0;\n" /* past the edge: (straight) it stays out */
+    "    float4 hq = heights.Load(int3(q, 0));\n"
+    "    if (hq.a <= 0.5) return 0;\n"
+    "    float over = hq.r - (h0.r + sun.z * k);\n"
     /* a floor or block: what stands in front of the ray and above it, up to its depth; an upright thing (a card
      * through its middle: b < 0, its half thickness): the ray passing within it, either side */
-    "            if (blocks && hq.b <= 0) continue;\n"
-    "            float hit = hq.b > 0 ? (over > 3 && over < hq.b ? saturate((over - 3) / (5 + 0.12 * k)) : 0)\n"
-    "                                 : saturate((-hq.b - abs(over)) / (4 + 0.1 * k));\n"
-    "            occ = max(occ, hit * (1 - 0.55 * k / STEPS));\n"
-    "        }\n"
-    "    }\n"
-    "    return occ;\n"
+    "    if (blocks && hq.b <= 0) return 0;\n"
+    "    float hit = hq.b > 0 ? (over > 3 && over < hq.b ? saturate((over - 3) / (5 + 0.12 * k)) : 0)\n"
+    "                         : saturate((-hq.b - abs(over)) / (4 + 0.1 * k));\n"
+    "    return hit * (1 - 0.55 * k / STEPS);\n"
     "}\n"
+    /* four rays side by side, a stretch (hmax.y steps) at a time: a stretch where the ray is above all that is near
+     * it (tops) skipped; done when all four are as shaded as anything further can make them (hits further weigh less) */
     "float shade(int2 p, float2 size) {\n"
     "    float4 h0 = heights.Load(int3(p, 0));\n"
     "    if (sun.w <= 0 || h0.a < 0.5 || h0.g < 0.25) return 0;\n"
     "    float2 side = float2(-sun.y, sun.x) * 0.022;\n"
-    "    float occ = ray(p, size, h0, sun.xy - side * 1.5) + ray(p, size, h0, sun.xy - side * 0.5)\n"
-    "              + ray(p, size, h0, sun.xy + side * 0.5) + ray(p, size, h0, sun.xy + side * 1.5);\n"
-    "    return occ / 4 * sun.w;\n"
+    "    float2 d0 = sun.xy - side * 1.5, d1 = sun.xy - side * 0.5, d2 = sun.xy + side * 0.5, d3 = sun.xy + side * 1.5;\n"
+    "    bool blocks = h0.g < 0.75;\n"
+    "    int seg = (int)hmax.y;\n"
+    "    int2 n;\n"
+    "    tops.GetDimensions(n.x, n.y);\n"
+    "    float4 occ = 0;\n"
+    "    [loop] for (int k0 = 1; k0 <= STEPS; k0 += seg) {\n"
+    "        float2 a = p + sun.xy * k0;\n"
+    "        float spread = length(side) * 1.5 * k0 + 2;\n"
+    "        if (a.x < -spread || a.y < -spread || a.x >= size.x + spread || a.y >= size.y + spread) break;\n"
+    "        if (all(occ >= 1 - 0.55 * k0 / STEPS)) break;\n"
+    "        if (h0.r + sun.z * k0 >= tops.Load(int3(clamp((int2)floor(a / 16), 0, n - 1), 0)).r) continue;\n"
+    "        int k1 = min(k0 + seg, STEPS + 1);\n"
+    "        [loop] for (int k = k0; k < k1; k++) {\n"
+    "            occ = max(occ, float4(hit_at(p, size, h0, blocks, d0, k), hit_at(p, size, h0, blocks, d1, k),\n"
+    "                                  hit_at(p, size, h0, blocks, d2, k), hit_at(p, size, h0, blocks, d3, k)));\n"
+    "        }\n"
+    "    }\n"
+    "    return dot(occ, 0.25) * sun.w;\n"
     "}\n"
     "float4 ps_comp(float4 pos : SV_Position) : SV_Target {\n"
     "    int3 p = int3(pos.xy - origin + margin, 0);\n"
     "    float2 size;\n"
     "    float4 c = scene.Load(p);\n"
     "    heights.GetDimensions(size.x, size.y);\n"
-    "    float3 l = saturate(light.Load(p).rgb) - ambient.rgb * min(shade(p.xy, size), 0.5);\n"
+    /* the shadow takes the sun's part (the ambient) only: a light (a muzzle flash, a lamp) lights a shadow too */
+    "    float3 l = saturate(light.Load(p).rgb - ambient.rgb * min(shade(p.xy, size), 0.5));\n"
     "    return float4(saturate(c.rgb * clamp(l + emis.Load(p).r, 0, 1.5) + c.rgb * add), c.a);\n" /* strong lights: hotspots */
     "}\n";
 
@@ -603,6 +802,7 @@ typedef struct LightConsts {
     float sun[4];     /* the sun's shadows: a step towards the sun (window pixels), the ray's rise a step, how dark */
     float ambient[4]; /* the ambient light (the sun's part, which a shadow takes) */
     float view[4], target[4]; /* as CityConsts' */
+    float hmax[4];    /* the shadows' block maps: blocks each way they cover, a ray's stretch (steps) */
 } LightConsts;
 
 /* the times of day (FreeSynd's grades): the ambient light the light map starts with, a part of the city added
@@ -619,7 +819,7 @@ static const struct {
 };
 
 /* ---- the city's images and list, set on the game thread, drawn on the UI thread ---- */
-#define ATLAS 4096
+#define ATLAS 8192 /* the city's images (HD tiles, 4x sprites: a big city's need more than 4096 x 4096) */
 #define NB_IMAGES (256 + 4096 + 64) /* the tiles, the sprites, the dirt ground's tiles (render.c) */
 
 typedef struct Image {
@@ -632,6 +832,8 @@ typedef struct Image {
 static SRWLOCK g_city_lock = SRWLOCK_INIT;
 static Image g_images[NB_IMAGES];
 static int g_shelf_x, g_shelf_y, g_shelf_h; /* the atlas packer */
+static int g_atlas_used; /* its rows used before a reset (cleared then) */
+static int g_atlas_ready; /* its rows made ready (transparent, flat normals): the textures' first rows */
 static int g_atlas_reset;                    /* the atlas must be cleared */
 static HostCityQuad *g_city_quads;
 static int g_city_n, g_city_cap, g_city_on;
@@ -658,6 +860,7 @@ void gpu_city_reset(void)
         free(g_images[i].normals);
         memset(&g_images[i], 0, sizeof g_images[i]);
     }
+    if (g_shelf_y + g_shelf_h > g_atlas_used) g_atlas_used = g_shelf_y + g_shelf_h;
     g_shelf_x = g_shelf_y = g_shelf_h = 0;
     g_atlas_reset = 1;
     ReleaseSRWLockExclusive(&g_city_lock);
@@ -666,7 +869,7 @@ void gpu_city_reset(void)
 void gpu_city_image(int id, int w, int h, int scale, const uint32_t *pixels)
 {
     Image *im;
-    if (id < 0 || id >= NB_IMAGES || w <= 0 || h <= 0 || w > 256 || h > 256) return;
+    if (id < 0 || id >= NB_IMAGES || w <= 0 || h <= 0 || w > 1024 || h > 1024) return; /* (a train's carriage in HD: 256 x 332) */
     AcquireSRWLockExclusive(&g_city_lock);
     im = &g_images[id];
     if (im->w == 0) {
@@ -677,7 +880,13 @@ void gpu_city_image(int id, int w, int h, int scale, const uint32_t *pixels)
             g_shelf_h = 0;
         }
         if (g_shelf_y + h + 1 > ATLAS) {
+            static int full;
             ReleaseSRWLockExclusive(&g_city_lock);
+            if (++full <= 5 || full % 500 == 0) {
+                char line[96];
+                snprintf(line, sizeof line, "city atlas full: image %d (%d x %d) not drawn (%d)", id, w, h, full);
+                host_log(line);
+            }
             return; /* full: not drawn */
         }
         im->ax = g_shelf_x;
@@ -865,16 +1074,114 @@ static int make_target(void)
     return 1;
 }
 
-static ID3DBlob *compile(const char *src, size_t n, const char *entry, const char *target)
+/* the compiled shaders kept in shaders\ beside the program, by a hash of their source, entry, target and how they
+ * were compiled: a start loads them instead of compiling */
+static void cache_path(wchar_t *path, size_t n, const char *src, size_t len, const char *entry, const char *target,
+                       UINT flags)
+{
+    uint64_t h = 1469598103934665603ull;
+    size_t k;
+    wchar_t *s;
+    for (k = 0; k < len; k++) h = (h ^ (uint8_t)src[k]) * 1099511628211ull;
+    for (k = 0; entry[k]; k++) h = (h ^ (uint8_t)entry[k]) * 1099511628211ull;
+    for (k = 0; target[k]; k++) h = (h ^ (uint8_t)target[k]) * 1099511628211ull;
+    h = (h ^ flags) * 1099511628211ull;
+    GetModuleFileNameW(NULL, path, (DWORD)n);
+    s = wcsrchr(path, L'\\');
+    if (s == NULL) {
+        path[0] = 0;
+        return;
+    }
+    _snwprintf(s + 1, n - (size_t)(s + 1 - path), L"shaders");
+    CreateDirectoryW(path, NULL);
+    _snwprintf(s + 1, n - (size_t)(s + 1 - path), L"shaders\\%016llx.cso", (unsigned long long)h);
+}
+
+static ID3DBlob *cache_load(const wchar_t *path)
+{
+    ID3DBlob *code = NULL;
+    FILE *f;
+    long size;
+    if (path[0] == 0 || (f = _wfopen(path, L"rb")) == NULL) return NULL;
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size <= 0 || FAILED(D3DCreateBlob((SIZE_T)size, &code)) ||
+        fread(ID3D10Blob_GetBufferPointer(code), 1, (size_t)size, f) != (size_t)size)
+        RELEASE(code);
+    fclose(f);
+    return code;
+}
+
+static ID3DBlob *compile_now(const char *src, size_t n, const char *entry, const char *target, UINT flags)
 {
     ID3DBlob *code = NULL, *err = NULL;
-    if (FAILED(D3DCompile(src, n, "synd", NULL, NULL, entry, target, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &err))) {
+    wchar_t path[MAX_PATH * 2], part[MAX_PATH * 2 + 8];
+    FILE *f;
+    if (FAILED(D3DCompile(src, n, "synd", NULL, NULL, entry, target, flags, 0, &code, &err))) {
         if (err != NULL) host_log((const char *)ID3D10Blob_GetBufferPointer(err));
         RELEASE(err);
         return NULL;
     }
     RELEASE(err);
+    /* written to a .part file first, then renamed: a start never loads a half written one */
+    cache_path(path, sizeof path / sizeof path[0], src, n, entry, target, flags);
+    _snwprintf(part, sizeof part / sizeof part[0], L"%s.part", path);
+    if (path[0] != 0 && (f = _wfopen(part, L"wb")) != NULL) {
+        size_t size = ID3D10Blob_GetBufferSize(code);
+        int ok = fwrite(ID3D10Blob_GetBufferPointer(code), 1, size, f) == size;
+        fclose(f);
+        if (!ok || !MoveFileExW(part, path, MOVEFILE_REPLACE_EXISTING)) DeleteFileW(part);
+    }
     return code;
+}
+
+/* the city's big shaders, optimised (a minute's work), compiled while the game runs: into the cache, for the starts
+ * after this one */
+typedef struct LaterJob {
+    const char *src, *entry, *target;
+    size_t n;
+} LaterJob;
+
+static DWORD WINAPI compile_later(LPVOID p)
+{
+    LaterJob *job = (LaterJob *)p;
+    ID3DBlob *code;
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+    code = compile_now(job->src, job->n, job->entry, job->target, D3DCOMPILE_OPTIMIZATION_LEVEL3);
+    RELEASE(code);
+    free(job);
+    return 0;
+}
+
+/* a shader, optimised (level 3); a big one (`slow`) not yet in the cache: compiled without the optimisation now (in
+ * seconds; the driver optimises it again too), and optimised in the background for the next start */
+static ID3DBlob *compile_shader(const char *src, size_t n, const char *entry, const char *target, int slow)
+{
+    wchar_t path[MAX_PATH * 2];
+    ID3DBlob *code;
+    LaterJob *job;
+    HANDLE t;
+    cache_path(path, sizeof path / sizeof path[0], src, n, entry, target, D3DCOMPILE_OPTIMIZATION_LEVEL3);
+    if ((code = cache_load(path)) != NULL) return code;
+    if (!slow) return compile_now(src, n, entry, target, D3DCOMPILE_OPTIMIZATION_LEVEL3);
+    cache_path(path, sizeof path / sizeof path[0], src, n, entry, target, D3DCOMPILE_SKIP_OPTIMIZATION);
+    if ((code = cache_load(path)) == NULL) code = compile_now(src, n, entry, target, D3DCOMPILE_SKIP_OPTIMIZATION);
+    if (code != NULL && (job = (LaterJob *)malloc(sizeof *job)) != NULL) {
+        job->src = src;
+        job->n = n;
+        job->entry = entry;
+        job->target = target;
+        t = CreateThread(NULL, 0, compile_later, job, 0, NULL);
+        if (t != NULL) CloseHandle(t);
+        else free(job);
+    }
+    return code;
+}
+
+static ID3DBlob *compile(const char *src, size_t n, const char *entry, const char *target)
+{
+    return compile_shader(src, n, entry, target, src == k_city_shader);
 }
 
 static int make_city(void)
@@ -900,6 +1207,10 @@ static int make_city(void)
     ID3DBlob *cpb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_comp", "ps_4_0");
     ID3DBlob *fpb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_fire", "ps_4_0");
     ID3DBlob *spb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_smoke", "ps_4_0");
+    ID3DBlob *epb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_explode", "ps_4_0");
+    ID3DBlob *mpb = compile(k_light_shader, sizeof k_light_shader - 1, "ps_flash", "ps_4_0");
+    ID3DBlob *h1b = compile(k_light_shader, sizeof k_light_shader - 1, "ps_hmax1", "ps_4_0");
+    ID3DBlob *h2b = compile(k_light_shader, sizeof k_light_shader - 1, "ps_hmax2", "ps_4_0");
     ID3DBlob *vsb = compile(k_city_shader, sizeof k_city_shader - 1, "vs", "vs_4_0");
     ID3DBlob *psb = compile(k_city_shader, sizeof k_city_shader - 1, "ps", "ps_4_0");
     D3D11_TEXTURE2D_DESC td;
@@ -928,6 +1239,17 @@ static int make_city(void)
              spb != NULL &&
              SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(spb), ID3D10Blob_GetBufferSize(spb),
                                                       NULL, &g_smoke_ps)) &&
+             epb != NULL &&
+             SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(epb), ID3D10Blob_GetBufferSize(epb),
+                                                      NULL, &g_explode_ps)) &&
+             mpb != NULL &&
+             SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(mpb), ID3D10Blob_GetBufferSize(mpb),
+                                                      NULL, &g_flash_ps)) &&
+             h1b != NULL && h2b != NULL &&
+             SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(h1b), ID3D10Blob_GetBufferSize(h1b),
+                                                      NULL, &g_hmax1_ps)) &&
+             SUCCEEDED(ID3D11Device_CreatePixelShader(g_dev, ID3D10Blob_GetBufferPointer(h2b), ID3D10Blob_GetBufferSize(h2b),
+                                                      NULL, &g_hmax2_ps)) &&
              SUCCEEDED(ID3D11Device_CreateInputLayout(g_dev, light_layout, 3, ID3D10Blob_GetBufferPointer(lvb),
                                                       ID3D10Blob_GetBufferSize(lvb), &g_light_layout));
     RELEASE(vsb);
@@ -938,8 +1260,13 @@ static int make_city(void)
     RELEASE(cpb);
     RELEASE(fpb);
     RELEASE(spb);
+    RELEASE(epb);
+    RELEASE(mpb);
+    RELEASE(h1b);
+    RELEASE(h2b);
     if (!ok) return 0;
     memset(&td, 0, sizeof td);
+    g_atlas_ready = 0;
     td.Width = td.Height = ATLAS;
     td.MipLevels = td.ArraySize = 1;
     td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -1121,12 +1448,16 @@ void gpu_shutdown(void)
     RELEASE(g_light_ps);
     RELEASE(g_fire_ps);
     RELEASE(g_smoke_ps);
+    RELEASE(g_explode_ps);
+    RELEASE(g_flash_ps);
+    RELEASE(g_hmax1_ps);
+    RELEASE(g_hmax2_ps);
     RELEASE(g_comp_ps);
     RELEASE(g_light_layout);
     RELEASE(g_add);
     {
         int k;
-        for (k = 0; k < 4; k++) {
+        for (k = 0; k < 6; k++) {
             RELEASE(g_lit_srv[k]);
             RELEASE(g_lit_rtv[k]);
             RELEASE(g_lit_tex[k]);
@@ -1200,12 +1531,14 @@ static int texture(int w, int h)
 /* the textures of the lit city, w x h */
 static int lit_targets(int w, int h)
 {
-    static const DXGI_FORMAT formats[4] = {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
-                                           DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT};
+    /* the scene, its glows, the light map, its heights; the heights' 16 x 16 blocks' tops, those spread (shade()) */
+    static const DXGI_FORMAT formats[6] = {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                           DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32G32B32A32_FLOAT,
+                                           DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R32_FLOAT};
     D3D11_TEXTURE2D_DESC td;
     int k;
     if (g_lit_tex[0] != NULL && w == g_lit_w && h == g_lit_h) return 1;
-    for (k = 0; k < 4; k++) {
+    for (k = 0; k < 6; k++) {
         RELEASE(g_lit_srv[k]);
         RELEASE(g_lit_rtv[k]);
         RELEASE(g_lit_tex[k]);
@@ -1217,8 +1550,10 @@ static int lit_targets(int w, int h)
     td.SampleDesc.Count = 1;
     td.Usage = D3D11_USAGE_DEFAULT;
     td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-    for (k = 0; k < 4; k++) {
+    for (k = 0; k < 6; k++) {
         td.Format = formats[k];
+        td.Width = (UINT)(k < 4 ? w : (w + 15) / 16);
+        td.Height = (UINT)(k < 4 ? h : (h + 15) / 16);
         if (FAILED(ID3D11Device_CreateTexture2D(g_dev, &td, NULL, &g_lit_tex[k])) ||
             FAILED(ID3D11Device_CreateRenderTargetView(g_dev, (ID3D11Resource *)g_lit_tex[k], NULL, &g_lit_rtv[k])) ||
             FAILED(ID3D11Device_CreateShaderResourceView(g_dev, (ID3D11Resource *)g_lit_tex[k], NULL, &g_lit_srv[k])))
@@ -1276,7 +1611,7 @@ static void draw_glows(RECT dst, int fw, int fh, D3D11_RECT sc, const LightVerte
     ID3D11DeviceContext_VSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
     ID3D11DeviceContext_PSSetShader(g_ctx, ps, NULL, 0);
     ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
-    ID3D11DeviceContext_OMSetBlendState(g_ctx, ps == g_fire_ps || ps == g_smoke_ps ? g_blend : g_add, NULL, 0xFFFFFFFFu);
+    ID3D11DeviceContext_OMSetBlendState(g_ctx, ps == g_fire_ps || ps == g_smoke_ps || ps == g_explode_ps ? g_blend : g_add, NULL, 0xFFFFFFFFu);
     ID3D11DeviceContext_Draw(g_ctx, (UINT)n, 0);
 }
 
@@ -1291,10 +1626,10 @@ static void draw_city(RECT dst, int fw, int fh)
     static LightVertex *lverts;
     static int lverts_cap;
     UINT stride = sizeof(CityVertex), offset = 0;
-    static LightVertex *gverts, *fverts, *sverts;
+    static LightVertex *gverts, *fverts, *sverts, *everts, *mverts;
     static int gverts_cap;
     int mission_time = 0;
-    int i, n, nv = 0, nlv = 0, ngv = 0, nfv = 0, nsv = 0, time = (int)g_time, lit_time, sun_on = 0;
+    int i, n, nv = 0, nlv = 0, ngv = 0, nfv = 0, nsv = 0, nev = 0, nmv = 0, time = (int)g_time, lit_time, sun_on = 0;
     float sun_a = 0;
     float sx = (float)(dst.right - dst.left) / (float)fw, sy = (float)(dst.bottom - dst.top) / (float)fh, zoom;
     AcquireSRWLockExclusive(&g_city_lock);
@@ -1309,13 +1644,31 @@ static void draw_city(RECT dst, int fw, int fh)
         D3D11_BOX box = {0, 0, 0, ATLAS, 1, 1};
         if (flat[0] == 0)
             for (i = 0; i < ATLAS; i++) flat[i] = 0xFF8080FFu;
-        for (i = 0; i < ATLAS; i++) {
+        for (i = 0; i < g_atlas_used + 2 && i < g_atlas_ready; i++) { /* (the rows used: the rest was never drawn on) */
             box.top = (UINT)i;
             box.bottom = (UINT)i + 1;
             ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_atlas, 0, &box, clear, ATLAS * 4, 0);
             ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_natlas, 0, &box, flat, ATLAS * 4, 0);
         }
         g_atlas_reset = 0;
+        g_atlas_used = 0;
+    }
+    {
+        /* the rows the images now reach, made ready before they are used: transparent, their normals flat (an image
+         * without normals of its own, a sprite, is lit as a flat one: not dark) */
+        static uint32_t clear[ATLAS], flat[ATLAS];
+        D3D11_BOX box = {0, 0, 0, ATLAS, 1, 1};
+        int need = g_shelf_y + g_shelf_h + 2;
+        if (need > ATLAS) need = ATLAS;
+        if (flat[0] == 0)
+            for (i = 0; i < ATLAS; i++) flat[i] = 0xFF8080FFu;
+        for (i = g_atlas_ready; i < need; i++) {
+            box.top = (UINT)i;
+            box.bottom = (UINT)i + 1;
+            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_atlas, 0, &box, clear, ATLAS * 4, 0);
+            ID3D11DeviceContext_UpdateSubresource(g_ctx, (ID3D11Resource *)g_natlas, 0, &box, flat, ATLAS * 4, 0);
+        }
+        if (need > g_atlas_ready) g_atlas_ready = need;
     }
     for (i = 0; i < NB_IMAGES; i++) {
         Image *im = &g_images[i];
@@ -1336,14 +1689,15 @@ static void draw_city(RECT dst, int fw, int fh)
     }
     n = g_city_n;
     zoom = g_city_scale;
-    /* the sun's shadows: on, and where the sun is (each quad carries it: the first's) */
+    /* the sun's shadows: on, and where the sun is (each quad carries it: the first's); the mission's time of day
+     * (the first quad that has one) */
     for (i = 0; i < n; i++)
         if (g_city_quads[i].shade & HOST_SHADE_ON) {
             sun_on = 1;
             sun_a = (float)((g_city_quads[i].shade >> 8) & 255) / 255.0f;
-            mission_time = (int)((g_city_quads[i].shade >> 24) & 7);
             break;
         }
+    for (i = 0; i < n && mission_time == 0; i++) mission_time = (int)((g_city_quads[i].shade >> 24) & 7);
     if (n * 6 > verts_cap) {
         CityVertex *v = (CityVertex *)realloc(verts, sizeof *v * (size_t)n * 6);
         if (v == NULL) {
@@ -1403,18 +1757,23 @@ static void draw_city(RECT dst, int fw, int fh)
         if (g != NULL) gverts = g;
         LightVertex *f = (LightVertex *)realloc(fverts, sizeof *f * (size_t)g_city_nl * 6);
         LightVertex *sm = (LightVertex *)realloc(sverts, sizeof *sm * (size_t)g_city_nl * 6);
+        LightVertex *ex = (LightVertex *)realloc(everts, sizeof *ex * (size_t)g_city_nl * 6);
         if (f != NULL) fverts = f;
         if (sm != NULL) sverts = sm;
-        if (v != NULL && g != NULL && f != NULL && sm != NULL) lverts_cap = gverts_cap = g_city_nl * 6;
+        LightVertex *mz = (LightVertex *)realloc(mverts, sizeof *mz * (size_t)g_city_nl * 6);
+        if (ex != NULL) everts = ex;
+        if (mz != NULL) mverts = mz;
+        if (v != NULL && g != NULL && f != NULL && sm != NULL && ex != NULL && mz != NULL) lverts_cap = gverts_cap = g_city_nl * 6;
     }
     for (i = 0; i < g_city_nl && (i + 1) * 6 <= lverts_cap; i++) {
         const HostCityLight *l = &g_city_lights[i];
         LightVertex c[4], *out;
         int k, *count, glows = (l->colour & HOST_LIGHT_GLOW) != 0, fire = (l->colour & HOST_LIGHT_FIRE) != 0;
-        int smoke = (l->colour & HOST_LIGHT_SMOKE) != 0;
-        out = smoke ? sverts : fire ? fverts : glows ? gverts : lverts;
-        count = smoke ? &nsv : fire ? &nfv : glows ? &ngv : &nlv;
-        fire |= smoke;
+        int smoke = (l->colour & HOST_LIGHT_SMOKE) != 0, boom = (l->colour & HOST_LIGHT_EXPLODE) != 0;
+        int muzzle = (l->colour & HOST_LIGHT_FLASH) != 0;
+        out = muzzle ? mverts : boom ? everts : smoke ? sverts : fire ? fverts : glows ? gverts : lverts;
+        count = muzzle ? &nmv : boom ? &nev : smoke ? &nsv : fire ? &nfv : glows ? &ngv : &nlv;
+        fire |= smoke | boom;
         for (k = 0; k < 4; k++) {
             c[k].x = l->x + ((k & 1) ? l->rx : -l->rx);
             c[k].y = fire ? l->y - ((k & 2) ? 0 : l->ry) : l->y + ((k & 2) ? l->ry : -l->ry);
@@ -1473,6 +1832,7 @@ static void draw_city(RECT dst, int fw, int fh)
         ID3D11ShaderResourceView *srv[4] = {g_atlas_srv, g_natlas_srv, g_mat_srv[0], g_mat_srv[1]};
         int mx = sun_on ? (int)(SHADOW_MARGIN * sx * zoom) : 0, my = mx;
         int lit = (time >= 0 || sun_on) && lit_targets(dst.right - dst.left + 2 * mx, dst.bottom - dst.top + my);
+        rt_set_render_info(lit, time, sun_on, (g_shelf_y + g_shelf_h) * 100 / ATLAS); /* the debug readout */
         ID3D11DeviceContext_IASetInputLayout(g_ctx, g_city_layout);
         ID3D11DeviceContext_IASetVertexBuffers(g_ctx, 0, 1, &g_city_vb, &stride, &offset);
         ID3D11DeviceContext_IASetPrimitiveTopology(g_ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -1489,7 +1849,7 @@ static void draw_city(RECT dst, int fw, int fh)
             ID3D11DeviceContext_Draw(g_ctx, (UINT)nv, 0);
         } else {
             static const float clear[4] = {0, 0, 0, 0};
-            ID3D11ShaderResourceView *none[4] = {NULL, NULL, NULL, NULL};
+            ID3D11ShaderResourceView *none[5] = {NULL, NULL, NULL, NULL, NULL};
             static const float no_height[4] = {-30000, 0, 0, 0};
             D3D11_VIEWPORT vp = {0, 0, (float)(dst.right - dst.left + 2 * mx), (float)(dst.bottom - dst.top + my), 0, 1};
             D3D11_VIEWPORT back = {(float)dst.left, (float)dst.top, (float)(dst.right - dst.left), (float)(dst.bottom - dst.top), 0, 1};
@@ -1498,6 +1858,18 @@ static void draw_city(RECT dst, int fw, int fh)
             ID3D11RenderTargetView *scene_rtv[3] = {g_lit_rtv[0], g_lit_rtv[1], g_lit_rtv[3]};
             LightConsts lc;
             UINT lstride = sizeof(LightVertex);
+            if (sun_on) {
+                /* the margin drawn only where the shadows' rays go: towards the sun (always up the picture), as far
+                 * as they reach (shade(): 110 steps, a frame pixel each, and their spread) */
+                float c = cosf(sun_a * 1.5708f), s = sinf(sun_a * 1.5708f), dx = (s - c) / 8.0f;
+                float dy = (-(c + s) / 2.0f - SUN_TAN) / 8.0f, len = sqrtf(dx * dx + dy * dy), px = sx * zoom;
+                int nx = (int)ceilf((110.0f * fabsf(dx) / len + 8.0f) * px), ny = (int)ceilf((110.0f * fabsf(dy) / len + 8.0f) * px);
+                if (nx > mx) nx = mx;
+                if (ny > my) ny = my;
+                if (dx < 0) lsc.left += mx - nx, lsc.right -= mx;
+                else lsc.left += mx, lsc.right -= mx - nx;
+                lsc.top += my - ny;
+            }
             /* the city and what glows in it, in their textures (with the margin: the frame's 0,0 at mx, my) */
             cc.view[2] = (float)mx;
             cc.view[3] = (float)my;
@@ -1538,10 +1910,38 @@ static void draw_city(RECT dst, int fw, int fh)
                 lc.sun[2] = SUN_TAN / len;
                 lc.sun[3] = sun_on ? SHADOW_DARK * k_times[lit_time].strength : 0.0f; /* how dark (night: faint) */
                 memcpy(lc.ambient, ambient, sizeof lc.ambient);
+                /* shade()'s stretches: about 8 window pixels; the blocks round each that its stretch and the rays'
+                 * spread (0.022 x 1.5 of a step aside a step, STEPS steps) can reach */
+                {
+                    float step = px > 0.01f ? px : 0.01f;
+                    int seg = (int)(8.0f / step);
+                    if (seg < 1) seg = 1;
+                    lc.hmax[0] = ceilf(((float)(seg - 1) * step + 0.033f * 110.0f * step + 4.0f) / 16.0f);
+                    lc.hmax[1] = (float)seg;
+                }
             }
             if (SUCCEEDED(ID3D11DeviceContext_Map(g_ctx, (ID3D11Resource *)g_comp_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &map))) {
                 memcpy(map.pData, &lc, sizeof lc);
                 ID3D11DeviceContext_Unmap(g_ctx, (ID3D11Resource *)g_comp_cb, 0);
+            }
+            if (lc.sun[3] > 0) { /* the heights' block maps (shade()) */
+                ID3D11ShaderResourceView *srv1[4] = {NULL, NULL, NULL, g_lit_srv[3]}, *srv2 = g_lit_srv[4], *nosrv[5] = {NULL};
+                D3D11_VIEWPORT bv = {0, 0, (float)((g_lit_w + 15) / 16), (float)((g_lit_h + 15) / 16), 0, 1};
+                ID3D11DeviceContext_IASetInputLayout(g_ctx, NULL);
+                ID3D11DeviceContext_VSSetShader(g_ctx, g_vs, NULL, 0);
+                ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
+                ID3D11DeviceContext_OMSetBlendState(g_ctx, NULL, NULL, 0xFFFFFFFFu);
+                ID3D11DeviceContext_RSSetViewports(g_ctx, 1, &bv);
+                ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 1, &g_lit_rtv[4], NULL);
+                ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 4, srv1);
+                ID3D11DeviceContext_PSSetShader(g_ctx, g_hmax1_ps, NULL, 0);
+                ID3D11DeviceContext_Draw(g_ctx, 3, 0);
+                ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 1, &g_lit_rtv[5], NULL);
+                ID3D11DeviceContext_PSSetShaderResources(g_ctx, 4, 1, &srv2);
+                ID3D11DeviceContext_PSSetShader(g_ctx, g_hmax2_ps, NULL, 0);
+                ID3D11DeviceContext_Draw(g_ctx, 3, 0);
+                ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 5, nosrv);
+                ID3D11DeviceContext_RSSetViewports(g_ctx, 1, &vp);
             }
             ID3D11DeviceContext_OMSetRenderTargets(g_ctx, 1, &g_lit_rtv[2], NULL);
             ID3D11DeviceContext_ClearRenderTargetView(g_ctx, g_lit_rtv[2], ambient);
@@ -1577,13 +1977,18 @@ static void draw_city(RECT dst, int fw, int fh)
             ID3D11DeviceContext_VSSetShader(g_ctx, g_vs, NULL, 0);
             ID3D11DeviceContext_PSSetShader(g_ctx, g_comp_ps, NULL, 0);
             ID3D11DeviceContext_PSSetConstantBuffers(g_ctx, 0, 1, &g_comp_cb);
-            ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 4, g_lit_srv);
+            {
+                ID3D11ShaderResourceView *comp_srv[5] = {g_lit_srv[0], g_lit_srv[1], g_lit_srv[2], g_lit_srv[3], g_lit_srv[5]};
+                ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 5, comp_srv);
+            }
             ID3D11DeviceContext_OMSetBlendState(g_ctx, g_blend, NULL, 0xFFFFFFFFu);
             ID3D11DeviceContext_Draw(g_ctx, 3, 0);
-            ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 4, none);
+            ID3D11DeviceContext_PSSetShaderResources(g_ctx, 0, 5, none);
         }
         if (ngv > 0) draw_glows(dst, fw, fh, sc, gverts, ngv, g_light_ps);
         if (nsv > 0) draw_glows(dst, fw, fh, sc, sverts, nsv, g_smoke_ps); /* the smoke under the flames */
+        if (nev > 0) draw_glows(dst, fw, fh, sc, everts, nev, g_explode_ps);
+        if (nmv > 0) draw_glows(dst, fw, fh, sc, mverts, nmv, g_flash_ps); /* (added to the picture, as the glows) */
         if (nfv > 0) draw_glows(dst, fw, fh, sc, fverts, nfv, g_fire_ps);
         ID3D11DeviceContext_RSSetState(g_ctx, NULL);
         ID3D11DeviceContext_IASetInputLayout(g_ctx, NULL);
@@ -1742,6 +2147,47 @@ static void draw_menu_sides(RECT dst, int fw)
     }
 }
 
+/* the picture shown: held for as many of the display's refreshes as the game's frames take (60 a second at most:
+ * 2 at 120 Hz), so each frame is on screen as long as the one before however long the GPU took for it (a frame
+ * that just missed its refresh is not shown a refresh late, then the next one a refresh early); with --log, every
+ * 5 seconds how many refreshes apart the frames were shown (all k: even) */
+static void present_paced(void)
+{
+    static UINT last_refresh, last_count;
+    static int gaps[5], frames;
+    static uint64_t next_report;
+    uint64_t vblank, period;
+    UINT k = 1;
+    DXGI_FRAME_STATISTICS st;
+    if (host_display_timing(&vblank, &period) && period >= 2000u && period <= 100000u) {
+        k = (UINT)((16667u + period - 1000u) / period);
+        if (k < 1) k = 1;
+        if (k > 4) k = 4;
+    }
+    IDXGISwapChain1_Present(g_swap, k, 0);
+    if (SUCCEEDED(IDXGISwapChain1_GetFrameStatistics(g_swap, &st))) {
+        if (last_count != 0 && st.PresentCount == last_count + 1) {
+            UINT gap = st.PresentRefreshCount - last_refresh;
+            gaps[gap < 4 ? gap : 4]++;
+            frames++;
+        }
+        if (st.PresentCount != last_count) {
+            last_count = st.PresentCount;
+            last_refresh = st.PresentRefreshCount;
+        }
+    }
+    if (frames > 0 && host_time_us() >= next_report) {
+        char line[128];
+        snprintf(line, sizeof line, "pacing: %d frames, %u refreshes each; refreshes apart: 1: %d  2: %d  3: %d  4+: %d",
+                 frames, k, gaps[1], gaps[2], gaps[3], gaps[4]);
+        if (next_report != 0) host_log(line);
+        if (next_report != 0) rt_set_pacing(k < 5 ? gaps[k] : 0, frames - (k < 5 ? gaps[k] : 0));
+        memset(gaps, 0, sizeof gaps);
+        frames = 0;
+        next_report = host_time_us() + 5000000u;
+    }
+}
+
 void gpu_present(const uint32_t *pixels, int w, int h, RECT dst, int sharp)
 {
     static const float black[4] = {0, 0, 0, 1};
@@ -1796,7 +2242,7 @@ void gpu_present(const uint32_t *pixels, int w, int h, RECT dst, int sharp)
         capture(dst);
     }
     if (g_swap != NULL)
-        IDXGISwapChain1_Present(g_swap, 1, 0);
+        present_paced();
     else
         ID3D11DeviceContext_CopyResource(g_ctx, (ID3D11Resource *)g_off_read, (ID3D11Resource *)g_off);
 }

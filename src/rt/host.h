@@ -92,6 +92,12 @@ typedef struct HostCityLight {
 #define HOST_LIGHT_FIRE 0x02000000u
 /* smoke, drawn by the GPU (no sprite): as a fire's quad, soft grey puffs rising */
 #define HOST_LIGHT_SMOKE 0x04000000u
+/* an explosion, drawn by the GPU: x, y the ground under it, rx its radius, ry twice it; the colour's red a seed, green
+ * how strong, blue its progress (0..255 over its life) */
+#define HOST_LIGHT_EXPLODE 0x08000000u
+/* a muzzle flash, drawn by the GPU (no sprite): x, y its middle, rx, ry its radius; the colour's red the way it
+ * points (0..255: a turn), green a seed */
+#define HOST_LIGHT_FLASH 0x10000000u
 /* the widescreen menus' sides, drawn at the display's resolution (not the frame's) under the frame where it is
  * see-through: 4 images set once (left, right in colour; left, right in green: w x h 0x00RRGGBB), 0 when the
  * platform does not draw them; then before each frame each side's place in the frame's columns (x0 to x1, all its
@@ -192,6 +198,16 @@ void rt_set_cpu_speed(int instructions_per_ms);
 /* the number of different frames the game showed in the last second, at the top right of the picture (off at
  * first) */
 void rt_set_show_fps(int on);
+/* the debug readout: frames a second, slow frames in the last 5 s and the worst (ms), the window's frames shown
+ * evenly and late in the last 5 s (even -1: not known); the last lines logged (rt_log_ring, from host_log) */
+void rt_set_pacing(int even, int late);
+/* the city as the GPU drew it last: lit (the time of day's light, the shadows), the time (0..4, -1 none), the sun's
+ * shadows on, how full its images' atlas is (%) */
+void rt_set_render_info(int lit, int time, int sun, int atlas_pct);
+int rt_render_info(int *lit, int *time, int *sun, int *atlas_pct);
+void rt_log_ring(const char *line);
+int rt_debug_stats(int *fps, int *slow, int *worst_ms, int *even, int *late);
+int rt_log_lines(char (*out)[96], int max);
 /* how many frames a second the core makes (the display's refresh rate; 70 at first): in missions the city moves
  * between the game's updates, so each refresh of the display can show a new picture */
 void rt_set_frame_rate(int hz);

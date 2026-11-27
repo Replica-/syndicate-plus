@@ -344,8 +344,9 @@ static int on_save_game(uint32_t addr)
 }
 
 /* ==== cheats ================================================================================================ */
-#define COMPANY_NAME 0x11u     /* in a company: its name and the player's (C strings) */
-#define PLAYER_NAME 0x23u
+/* in a company: its name (what the game's CHANGE COMPANY NAME sets, and its cheats read) and the player's (C strings) */
+#define COMPANY_NAME 0x23u
+#define PLAYER_NAME 0x11u
 #define COMPANY_AGENTS 0x11du  /* the company's agents, AGENT_SIZE bytes each */
 #define NB_AGENTS 18
 #define AGENT_SIZE 40u
@@ -424,13 +425,13 @@ static void cheat_names(void)
     colon = strchr(c, ':');
     n = colon != NULL ? (size_t)(colon - c) : strlen(c);
     if (n > 16) n = 16;
-    memset(M + company + COMPANY_NAME, 0, 17);
-    memcpy(M + company + COMPANY_NAME, c, n);
+    memset(M + company + PLAYER_NAME, 0, 17); /* (the first: the field before the company's name) */
+    memcpy(M + company + PLAYER_NAME, c, n);
     if (colon != NULL) {
         n = strlen(colon + 1);
         if (n > 16) n = 16;
-        memset(M + company + PLAYER_NAME, 0, 17);
-        memcpy(M + company + PLAYER_NAME, colon + 1, n);
+        memset(M + company + COMPANY_NAME, 0, 17);
+        memcpy(M + company + COMPANY_NAME, colon + 1, n);
     }
     guest_call(g_addrs->cheat_check, NULL, 0);
     rt_log("cheats: %s", c);
@@ -453,6 +454,7 @@ static void cheat_names(void)
 #define SC_A 0x1eu
 #define SC_S 0x1fu
 #define SC_D 0x20u
+#define SC_N 0x31u
 #define SC_B 0x30u                /* held in a mission: see inside the buildings */
 static volatile int g_see_inside;
 static int g_click_sx, g_click_sy; /* where on the picture the last click was (B held: the order goes to the floor seen
@@ -465,6 +467,8 @@ static int g_click_sx, g_click_sy; /* where on the picture the last click was (B
 #define SC_LBRACKET 0x1au
 #define SC_RBRACKET 0x1bu
 static volatile int g_editor;
+static volatile int g_cells; /* Ctrl+N: each tile top one can stand on labelled with its cell (x,y,height) */
+static volatile int g_debug_info = 1; /* the debug readout at the top right (Ctrl+D hides it, shows it again) */
 static volatile int g_edit_key;
 
 static volatile uint64_t g_tick_us;   /* the last tick of a mission */
@@ -575,6 +579,16 @@ uint32_t game_key_filter(uint32_t sc, int down)
         } else {
             g_press_us[slot] = now;
         }
+        return 0;
+    }
+    /* Ctrl+N in a mission: the cells' numbers on or off */
+    if (k == SC_N && g_down[SC_CTRL] && in_mission()) {
+        if (down && !was_down) g_cells = !g_cells;
+        return 0;
+    }
+    /* Ctrl+D in a mission: the debug readout on or off */
+    if (k == SC_D && g_down[SC_CTRL] && in_mission()) {
+        if (down && !was_down) g_debug_info = !g_debug_info;
         return 0;
     }
     /* Ctrl+L in a mission: the light editor on or off; while it is on its keys are its own */
@@ -1331,6 +1345,46 @@ static void player_colour_load(void)
     fclose(f);
 }
 
+/* ---- the agents' coats: a colour of the player's choice for the coats of the squad (over every mission's own) ----
+ * 0: as the game draws it; the company's colour (COAT_COMPANY): the hats' */
+#define NB_COATS 15
+#define COAT_SUBTLE 0x1000000u /* with a coat's colour: its highlights subtle (the renderer's and the shader's bit 24) */
+#define COAT_COMPANY 13
+static const uint32_t k_coats[NB_COATS] = {
+    0, 0x101012, 0x2A2C30, 0x4E5560, 0x1C2840, 0x2E3A2A, 0x4A5236, 0x4A3020, 0x8A6A44, 0x4C0608 /* dark blood red */, 0x8C2A22,
+    0xC8C4BC, 0x6A5A7A, 0 /* the company's */, 0x34050A | COAT_SUBTLE /* a darker red, its highlights subtle */};
+#define AGENT_COAT_FILE "agent_coat.txt"
+static volatile int g_coat_pick; /* 0: as drawn */
+
+static uint32_t coat_rgb(int k)
+{
+    if (k == COAT_COMPANY) return g_player_colour != 0 ? g_player_colour & 0xFFFFFFu : k_pick_colours[g_player_pick];
+    return k > 0 && k < NB_COATS ? k_coats[k] | (k_coats[k] == 0 ? 1u : 0u) : 0;
+}
+
+static void coat_save(void)
+{
+    char path[1200];
+    FILE *f;
+    snprintf(path, sizeof path, "%s/%s", rt_user_dir, AGENT_COAT_FILE);
+    f = fopen(path, "w");
+    if (f == NULL) return;
+    fprintf(f, "%d\n", g_coat_pick);
+    fclose(f);
+}
+
+static void coat_load(void)
+{
+    char path[1200];
+    FILE *f;
+    int k = 0;
+    snprintf(path, sizeof path, "%s/%s", rt_user_dir, AGENT_COAT_FILE);
+    f = fopen(path, "r");
+    if (f == NULL) return;
+    if (fscanf(f, "%d", &k) == 1 && k >= 0 && k < NB_COATS) g_coat_pick = k;
+    fclose(f);
+}
+
 /* the game's own colour nearest to colour k */
 static int nearest_game_colour(int k)
 {
@@ -1383,13 +1437,14 @@ static int on_draw_logo(uint32_t addr)
 #define PICK_BRIGHT 0x61FF24u
 #define PANEL_MID 223
 #define PICK_ROW (NB_PICK_COLOURS / 2) /* the colours in 2 rows */
-#define PICK_X (PANEL_MID - (PICK_ROW * (SWATCH + 1) - 1) / 2)
-#define PICK_Y 80
+#define GRID_X 146 /* the panel's labels and grids: all from the same left edge */
+#define PICK_X GRID_X
+#define PICK_Y 25
 #define SWATCH 10
-#define LOGO_CELL 15   /* a logo 14 x 14 and a gap: the 4 rows end above the MENU button (172) */
-#define LOGO_SIZE 14
-#define LOGOS_X (PANEL_MID - (10 * LOGO_CELL - 1) / 2)
-#define LOGOS_Y (PICK_Y + 2 * (SWATCH + 1) + 3)
+#define LOGO_CELL 16   /* a logo 15 x 15 and a gap */
+#define LOGO_SIZE 15
+#define LOGOS_X GRID_X
+#define LOGOS_Y (PICK_Y + 2 * (SWATCH + 1) + 14)
 
 /* ---- the menus as wide as the window: the game's 320 x 200 picture in the middle of a wider one; on the green menus
  * (the desk photo and the frame round it, in all of them: its bright line, palette entry FRAME_INDEX, at columns 3
@@ -1649,18 +1704,166 @@ static int config_shown(void)
     return g_config_logos != 0 && (uint32_t)(host_time_us() / 1000u) - g_config_us < 300u;
 }
 
-/* a click on Configure Company: in a grid, the choice */
-static void config_click(void)
+/* ---- Configure Company laid out again: one panel at the right (COMPANY COLOUR, LOGO, COAT COLOUR, each a grid, over
+ * the game's SELECT DETAIL TO CHANGE box, which is not shown); at the left the logo, the company's name in a box
+ * (a click on it: the name typed there, with the game's own CHANGE COMPANY NAME behind the panel; Enter or a click
+ * elsewhere ends it) and an agent in the hat and the coat chosen.  The player's name is not asked for ---- */
+#define CFG_PANEL_X0 140
+#define CFG_PANEL_Y0 11
+#define CFG_PANEL_X1 314
+#define CFG_PANEL_Y1 163
+#define PANEL_BG 0x031C03u
+#define PANEL_LINE 0x38C818u
+#define COAT_ROW 15
+#define COAT_X GRID_X
+#define COAT_Y 147
+#define PREVIEW_X 40 /* the agent's feet: seen from the front, from behind */
+#define PREVIEW_X2 98
+#define PREVIEW_Y 162
+#define PREVIEW_FRAME 378 /* an agent standing: its front, its back */
+#define PREVIEW_FRAME2 377
+#define NAMEBOX_X0 14
+#define NAMEBOX_X1 126
+#define NAMEBOX_Y0 46
+#define NAMEBOX_Y1 58
+#define GAME_BOXES_X0 12 /* the game's two name boxes: covered */
+#define GAME_BOXES_X1 92
+#define GAME_BOXES_Y0 44
+#define GAME_BOXES_Y1 68
+#define NAME_CLICK_X 400 /* the game's COMPANY NAME item (behind the panel), in its mouse's coordinates: clicked for the player */
+#define NAME_CLICK_Y 98
+#define DETAILS_DOT_X 169 /* its bullet: the game shows its list of details (no name is being typed) */
+#define DETAILS_DOT_Y 49
+static int g_details_shown;
+static volatile int g_name_edit; /* the name is being typed: 1 asked for, 2 the game is in it */
+static uint8_t g_name_old[17];   /* the name before it */
+static uint8_t *load_data(const char *name, size_t *size);
+static void frame_box(uint32_t *rgb, int w, int h, int x0, int y0, int x1, int y1, uint32_t c);
+static void menu_text_fit(uint32_t *pic, int w, int x, int y, const char *t, uint32_t c, int width);
+static int g_font_loaded;
+static void load_menu_font(void);
+static void fill_box(uint32_t *rgb, int w, int x0, int y0, int x1, int y1, uint32_t c, int alpha);
+
+/* where the game keeps the name being typed, and the screen's copy of the company's name (the function's locals:
+ * the same place in every visit) */
+static uint32_t name_typed(void)
+{
+    switch (g_addrs->game) {
+    case GAME_SYN: return 0x453cf0u;
+    case GAME_SYN_S: return 0x4514f4u;
+    case GAME_SYN_G: return 0x451554u;
+    case GAME_AR: return 0x46949cu;
+    case GAME_AR_S: return 0x466b8cu;
+    case GAME_AR_G: return 0x466bfcu;
+    default: return 0;
+    }
+}
+
+static uint32_t name_kept(void)
+{
+    return g_addrs->ar ? name_typed() - 0x14u : name_typed() + 0x14u;
+}
+
+/* before the grids: the game's own state seen (its list of details shown or not), then the panel over its box */
+static void config_panel(uint32_t *rgb, int w, int h)
+{
+    uint32_t b = rgb[DETAILS_DOT_Y * w + DETAILS_DOT_X], o = rgb[DETAILS_DOT_Y * w + DETAILS_DOT_X - 5];
+    int x, y;
+    g_details_shown = ((b >> 8) & 255) > 60 && ((b >> 16) & 255) < 100 && ((o >> 8) & 255) < 60; /* the dot, dark round it */
+    if (g_name_edit == 1 && !g_details_shown) g_name_edit = 2;
+    else if (g_name_edit == 2 && g_details_shown) {
+        g_name_edit = 0;
+        if (M[name_kept()] == 0) memcpy(M + name_kept(), g_name_old, 17); /* nothing typed: as it was */
+    }
+    for (y = CFG_PANEL_Y0 - 2; y < CFG_PANEL_Y1; y++)
+        for (x = CFG_PANEL_X0 - 2; x < CFG_PANEL_X1 + 2; x++) rgb[y * w + x] = PANEL_BG;
+    frame_box(rgb, w, h, CFG_PANEL_X0, CFG_PANEL_Y0, CFG_PANEL_X1, CFG_PANEL_Y1, PANEL_LINE);
+    if (!g_font_loaded) load_menu_font();
+    menu_text_fit(rgb, w, PICK_X, PICK_Y - 10, "COMPANY COLOUR", PICK_BRIGHT, 150);
+    menu_text_fit(rgb, w, LOGOS_X, LOGOS_Y - 10, "LOGO", PICK_BRIGHT, 150);
+    menu_text_fit(rgb, w, COAT_X, COAT_Y - 10, "COAT COLOUR", PICK_BRIGHT, 150);
+}
+
+/* after them: the coats' grid, the name's box, the agent */
+static void config_coats(uint32_t *rgb, int w, int h, uint32_t hat)
+{
+    static int loaded;
+    char name[24];
+    const uint8_t *src = M + (g_name_edit == 2 ? name_typed() : name_kept());
+    int k, x, y, n;
+    if (!loaded) {
+        size_t n1, n2, n3, n4;
+        uint8_t *tab = load_data("HSPR-0.TAB", &n1), *dat = load_data("HSPR-0.DAT", &n2);
+        uint8_t *fra = load_data("HFRA-0.ANI", &n3), *ele = load_data("HELE-0.ANI", &n4);
+        loaded = 1;
+        if (tab && dat && fra && ele) render_preview_files(tab, n1, dat, n2, fra, n3, ele, n4);
+    }
+    for (k = 0; k < NB_COATS; k++) {
+        int x0 = COAT_X + (k % COAT_ROW) * (SWATCH + 1), y0 = COAT_Y + (k / COAT_ROW) * (SWATCH + 1);
+        uint32_t c = k == 0 ? 0x6A5434u : coat_rgb(k) & 0xFFFFFFu;
+        for (y = y0; y < y0 + SWATCH; y++)
+            for (x = x0; x < x0 + SWATCH; x++) {
+                uint32_t v = c;
+                if (k == 0 && (x - x0 == y - y0 || x - x0 == SWATCH - 1 - (y - y0))) v = 0x0A1A0Au; /* as drawn: a cross */
+                if (k == COAT_COMPANY && x - x0 >= 3 && x - x0 < SWATCH - 3 && y - y0 >= 3 && y - y0 < SWATCH - 3) v = 0;
+                rgb[y * w + x] = v;
+            }
+        frame_box(rgb, w, h, x0, y0, x0 + SWATCH, y0 + SWATCH, k == g_coat_pick ? PICK_BRIGHT : 0x082800u);
+    }
+    /* the game's name boxes: the picture's row under them over them; then the company's name in its box */
+    for (y = GAME_BOXES_Y0; y < GAME_BOXES_Y1; y++)
+        for (x = GAME_BOXES_X0; x < GAME_BOXES_X1; x++) rgb[y * w + x] = rgb[(GAME_BOXES_Y1 + 1) * w + x];
+    fill_box(rgb, w, NAMEBOX_X0, NAMEBOX_Y0, NAMEBOX_X1, NAMEBOX_Y1, PANEL_BG, 210);
+    frame_box(rgb, w, h, NAMEBOX_X0, NAMEBOX_Y0, NAMEBOX_X1, NAMEBOX_Y1, g_name_edit ? PICK_BRIGHT : PANEL_LINE);
+    for (n = 0; n < 16 && src[n] >= 32 && src[n] < 127; n++) name[n] = (char)src[n];
+    if (g_name_edit && ((host_time_us() / 350000u) & 1u)) name[n++] = '_';
+    name[n] = '\0';
+    if (n > 0)
+        menu_text_fit(rgb, w, NAMEBOX_X0 + 4, NAMEBOX_Y0 + 3, name, PICK_BRIGHT, NAMEBOX_X1 - NAMEBOX_X0 - 8);
+    else if (!g_name_edit)
+        menu_text_fit(rgb, w, NAMEBOX_X0 + 4, NAMEBOX_Y0 + 3, "COMPANY NAME", 0x1C9200u, NAMEBOX_X1 - NAMEBOX_X0 - 8);
+    render_preview(rgb, w, h, PREVIEW_X, PREVIEW_Y, 3, PREVIEW_FRAME, hat, coat_rgb(g_coat_pick));
+    render_preview(rgb, w, h, PREVIEW_X2, PREVIEW_Y, 3, PREVIEW_FRAME2, hat, coat_rgb(g_coat_pick));
+}
+
+/* a click on Configure Company: in a grid, the choice; on the name, its typing; 1: the click is not the game's (the
+ * game's own list is behind the panel) */
+static int config_click(void)
 {
     int x, y;
     menu_mouse(&x, &y);
-    if (y >= PICK_Y && y < PICK_Y + 2 * (SWATCH + 1) && x >= PICK_X) {
+    if (g_name_edit) { /* a click while the name is typed: it is done (Enter) */
+        rt_key_event(0x1Cu, 1);
+        rt_key_event(0x1Cu, 0);
+        return 1;
+    }
+    if (x >= NAMEBOX_X0 && x < NAMEBOX_X1 && y >= NAMEBOX_Y0 && y < NAMEBOX_Y1) {
+        if (g_details_shown) {
+            /* typed anew (the game's own typing puts the letters before the name there is) */
+            memcpy(g_name_old, M + name_kept(), 17);
+            memset(M + name_kept(), 0, 17);
+            memset(M + name_typed(), 0, 17);
+            g_name_edit = 1;
+            rt_mouse_click_at(NAME_CLICK_X, NAME_CLICK_Y);
+        }
+        return 1;
+    }
+    if (x >= GAME_BOXES_X0 && x < GAME_BOXES_X1 && y >= GAME_BOXES_Y0 && y < GAME_BOXES_Y1) return 1;
+    if (x < CFG_PANEL_X0 || x >= CFG_PANEL_X1 || y < CFG_PANEL_Y0 || y >= CFG_PANEL_Y1) return 0;
+    if (x >= COAT_X && x < COAT_X + COAT_ROW * (SWATCH + 1) && y >= COAT_Y && y < COAT_Y + SWATCH + 1) {
+        int k = (x - COAT_X) / (SWATCH + 1);
+        if (k < NB_COATS) {
+            g_coat_pick = k;
+            coat_save();
+        }
+    } else if (y >= PICK_Y && y < PICK_Y + 2 * (SWATCH + 1) && x >= PICK_X) {
         int k = (y - PICK_Y) / (SWATCH + 1) * PICK_ROW + (x - PICK_X) / (SWATCH + 1);
         if ((x - PICK_X) / (SWATCH + 1) < PICK_ROW && k < NB_PICK_COLOURS) g_pick_colour = k;
     } else if (y >= LOGOS_Y && y < LOGOS_Y + 4 * LOGO_CELL && x >= LOGOS_X) {
         int k = (y - LOGOS_Y) / LOGO_CELL * 10 + (x - LOGOS_X) / LOGO_CELL;
         if ((x - LOGOS_X) / LOGO_CELL < 10 && k < NB_LOGOS) g_pick_logo = k;
     }
+    return 1;
 }
 
 static void frame_box(uint32_t *rgb, int w, int h, int x0, int y0, int x1, int y1, uint32_t c)
@@ -1730,6 +1933,7 @@ static void config_grids(uint32_t *rgb, int w, int h, const uint8_t *index, cons
     uint32_t c;
     if (colour < 0 || colour >= NB_PICK_COLOURS) colour = 0;
     c = k_pick_colours[colour];
+    config_panel(rgb, w, h);
     for (k = 0; k < NB_PICK_COLOURS; k++) {
         int x0 = PICK_X + (k % PICK_ROW) * (SWATCH + 1), y0 = PICK_Y + (k / PICK_ROW) * (SWATCH + 1);
         for (y = y0; y < y0 + SWATCH; y++)
@@ -1746,6 +1950,7 @@ static void config_grids(uint32_t *rgb, int w, int h, const uint8_t *index, cons
             }
         if (k == g_config_logo) frame_box(rgb, w, h, x0 - 1, y0 - 1, x0 + LOGO_SIZE + 1, y0 + LOGO_SIZE + 1, PICK_BRIGHT);
     }
+    config_coats(rgb, w, h, c);
     config_pointer(rgb, w, h, index, pal);
 }
 
@@ -1772,6 +1977,13 @@ static uint32_t hat_colour(int ped)
     /* the company's colour as the panel shows it (the same palette entry) */
     c = company_rgb(company, g_overlay_pal);
     return c;
+}
+
+/* the coat of an agent of the mission: the player's agents' the coat chosen (0: as drawn) */
+static uint32_t agent_coat(int ped)
+{
+    if (g_coat_pick == 0 || ped < 0 || ped >= NB_PEDS || PED_KIND(g_addrs->peds + (uint32_t)ped * PED_SIZE) != 2) return 0;
+    return agent_company(ped) == (int16_t)RD16(g_addrs->player) ? coat_rgb(g_coat_pick) : 0;
 }
 
 /* a colour from hue (0-359), saturation and value (0-1) */
@@ -1855,6 +2067,7 @@ static void smooth_city(const uint8_t *index, const uint32_t *pal, uint32_t *rgb
     g_overlay_pal = pal;
     render_hat_colour = hat_colour;
     render_ped_look = ped_look;
+    render_agent_coat = agent_coat;
     move_view();
     /* B held: the buildings from the squad's level up see-through */
     {
@@ -2001,6 +2214,91 @@ static void light_editor(uint32_t *rgb, int w)
     draw_text(rgb, w, VIEW_LEFT + 10, VIEW_TOP + 42, line, 0xFFFFFF);
 }
 
+/* Ctrl+D: the game and mission, the view's place and the tile under the pointer (its id, its place in the map:
+ * x, y across, z up), at the top right: a screenshot tells where it was taken */
+/* Ctrl+N: the top of each tile one can stand on (nothing on it but stairs or a handrail) labelled x,y,height (its
+ * cell in the map; the height's colour: 0 white, 1 green, 2 yellow, 3 orange, 4+ red) */
+static void draw_text_small(uint32_t *rgb, int w, int x, int y, const char *t, uint32_t c)
+{
+    for (; *t; t++, x += 4) {
+        const char *k = strchr(k_font_chars, *t >= 'a' && *t <= 'z' ? *t - 32 : *t);
+        int gx, gy, bits;
+        if (*t == ' ' || k == NULL) continue;
+        bits = k_font[k - k_font_chars];
+        for (gy = 0; gy < 5; gy++)
+            for (gx = 0; gx < 3; gx++)
+                if (bits & (1 << (gy * 3 + gx))) plot(rgb, w, x + gx, y + gy, c, 255);
+    }
+}
+
+static void cell_labels(uint32_t *rgb, int w)
+{
+    static const uint32_t colours[5] = {0xFFFFFFu, 0x8CFF8Cu, 0xFFFF60u, 0xFFA040u, 0xFF6060u};
+    static int16_t box[4096][4];
+    int i, n = render_drawn_count(), nb = 0;
+    for (i = n - 1; i >= 0; i--) { /* front first: a label behind one already drawn is left out */
+        int id, tx, ty, tz, sx, sy, t, above, len, k, x0, x1, y0, y1;
+        char s[24];
+        render_drawn_tile(i, &id, &tx, &ty, &tz, &sx, &sy);
+        t = path_tile_type(tx, ty, tz);
+        above = path_tile_type(tx, ty, tz + 1);
+        if (t == 0 || t == 0x0A || (above != 0 && (above < 1 || above > 4) && above != 0x0C)) continue;
+        snprintf(s, sizeof s, "%d,%d,%d", tx, ty, tz);
+        len = (int)strlen(s) * 4;
+        x0 = sx - len / 2 - 1, x1 = sx + len / 2 + 1, y0 = sy - 4, y1 = sy + 4;
+        if (x0 < VIEW_LEFT || x1 >= w - 2 || y0 < 2 || y1 > 478) continue;
+        for (k = 0; k < nb; k++)
+            if (x0 < box[k][2] && x1 > box[k][0] && y0 < box[k][3] && y1 > box[k][1]) break;
+        if (k < nb) continue;
+        if (nb < 4096) box[nb][0] = (int16_t)x0, box[nb][1] = (int16_t)y0, box[nb][2] = (int16_t)x1, box[nb][3] = (int16_t)y1, nb++;
+        fill_box(rgb, w, x0, y0, x1, y1, 0, 160);
+        draw_text_small(rgb, w, x0 + 1, y0 + 2, s, colours[tz < 4 ? tz : 4]);
+    }
+}
+
+static void debug_info(uint32_t *rgb, int w)
+{
+    static const char *const names[] = {"SYNDICATE", "SYNDICATE S", "SYNDICATE G", "AMERICAN REVOLT", "AMERICAN REVOLT S",
+                                        "AMERICAN REVOLT G"};
+    static const char *const times[] = {"MISSION", "DAY", "DUSK", "NIGHT", "DAWN"};
+    char line[4][80], logs[3][96], part[40];
+    int mx, my, id, tx, ty, tz, n = 0, nl, k, width = 0, x0, y, fps, slow, worst, even, late, lit, time, sun, atlas;
+    int32_t vx, vy;
+    int g = g_addrs->game, info = rt_render_info(&lit, &time, &sun, &atlas);
+    snprintf(line[n++], sizeof line[0], "%s  MISSION %d  %s", g >= GAME_SYN && g <= GAME_AR_G ? names[g - GAME_SYN] : "?",
+             (int)RD16(g_addrs->mission), info && time >= 0 && time < 5 ? times[time] : "NO TIME");
+    rt_debug_stats(&fps, &slow, &worst, &even, &late); /* slow, even, late: in the last 5 s */
+    if (even >= 0)
+        snprintf(line[n++], sizeof line[0], "FPS %d  SLOW %d/%d MS  EVEN %d LATE %d", fps, slow, worst, even, late);
+    else
+        snprintf(line[n++], sizeof line[0], "FPS %d  SLOW %d/%d MS", fps, slow, worst);
+    game_camera(&vx, &vy);
+    canvas_mouse(&mx, &my);
+    snprintf(line[n], sizeof line[0], "VIEW %d,%d", (int)vx / 2, (int)vy / 2); /* in tiles (world / 256) */
+    if (mx >= VIEW_LEFT && my >= VIEW_TOP && my < VIEW_BOTTOM && render_tile_place(mx, my, &id, &tx, &ty, &tz)) {
+        snprintf(part, sizeof part, "  TILE %d T%X AT %d,%d,%d", id, path_tile_type(tx, ty, tz), tx, ty, tz); /* T: its type */
+        strncat(line[n], part, sizeof line[0] - strlen(line[n]) - 1);
+    }
+    if (mx >= VIEW_LEFT && my >= VIEW_TOP && my < VIEW_BOTTOM && render_sprite_at(mx, my, &id)) {
+        snprintf(part, sizeof part, "  SPRITE %d", id);
+        strncat(line[n], part, sizeof line[0] - strlen(line[n]) - 1);
+    }
+    n++;
+    if (info)
+        snprintf(line[n++], sizeof line[0], "LIT %s  SHADOWS %s  ATLAS %d", lit ? "ON" : "OFF", sun ? "ON" : "OFF", atlas);
+    nl = rt_log_lines(logs, 3);
+    for (k = 0; k < nl; k++) logs[k][44] = 0; /* the log's last lines, as much of them as fits */
+    for (k = 0; k < n; k++)
+        if ((int)strlen(line[k]) * 8 > width) width = (int)strlen(line[k]) * 8;
+    for (k = 0; k < nl; k++)
+        if ((int)strlen(logs[k]) * 8 > width) width = (int)strlen(logs[k]) * 8;
+    x0 = w - width - 10;
+    if (x0 < VIEW_LEFT + 4) x0 = VIEW_LEFT + 4;
+    fill_box(rgb, w, x0 - 4, 58, w - 4, 58 + 4 + n * 13 + (nl ? 3 + nl * 12 : 0) + 2, 0, 170);
+    for (k = 0, y = 61; k < n; k++, y += 13) draw_text(rgb, w, x0, y, line[k], 0x8CFF8Cu);
+    for (k = 0, y += 3; k < nl; k++, y += 12) draw_text(rgb, w, x0, y, logs[k], 0x4CA84Cu);
+}
+
 /* ---- the mission's menu (Escape): the game's briefing look, its menu font (MFNT-0: each character a few rows
  * of runs: a count of pixels that follow, a negative one of see-through ones, 0 the end of a row), twice its size,
  * its greens ---- */
@@ -2143,7 +2441,10 @@ int game_mouse_buttons(int buttons)
             last_y = y;
         }
     }
-    if (pressed && g_addrs != NULL && config_shown()) config_click();
+    if (pressed && g_addrs != NULL && config_shown() && config_click()) {
+        g_menu_hold = 1; /* the click is not the game's */
+        return 1;
+    }
     if (pressed && g_addrs != NULL && reload_clicked()) {
         g_menu_hold = 1; /* the click is not the game's */
         return 1;
@@ -2674,29 +2975,30 @@ static void funds_text(char *s, size_t n, int32_t funds)
     snprintf(s, n, "$%ld", (long)funds);
 }
 
-/* the main menu: the player's company under its items */
+/* the main menu: the player's company between the title and the items (the same place in both games: American
+ * Revolt's 6 items leave no room under them), as short as it can be: the funds, the countries and how much is
+ * done on one line, the save loaded (if one was) on a second */
 #define INFO_X0 58
 #define INFO_X1 262
-#define INFO_Y0(ar) ((ar) ? 166 : 156) /* under the items (American Revolt has 6), a gap above */
-#define INFO_Y1(ar) ((ar) ? 196 : 190)
+#define INFO_Y0 37
 #define INFO_LINE 8
 static void main_menu_company(uint32_t *pic)
 {
     CompanyInfo ci;
     char s[96], f[24];
-    int ar = g_addrs->ar, y0 = INFO_Y0(ar), y1 = INFO_Y1(ar), logo = y1 - y0 - 8;
-    int x = INFO_X0 + logo + 10, width = INFO_X1 - x - 4, y = y0 + 3;
+    int lines = g_autoload_name[0] ? 2 : 1, y0 = INFO_Y0, y1 = y0 + 4 + lines * INFO_LINE, logo = y1 - y0 - 4;
+    int x = INFO_X0 + 3 + logo + 5, width = INFO_X1 - x - 3, y = y0 + 3;
     if (!g_font_loaded) load_menu_font();
+    { /* a new game's company: EUROCORP (the player can rename it) */
+        uint32_t co = g_addrs->companies + (uint32_t)(int16_t)RD16(g_addrs->player) * g_addrs->company_size;
+        if (M[co + COMPANY_NAME] == 0) memcpy(M + co + COMPANY_NAME, "EUROCORP", 9);
+    }
     live_company(&ci);
     fill_box(pic, 320, INFO_X0, y0, INFO_X1, y1, MENU_BG, 200);
     frame_box(pic, 320, 200, INFO_X0, y0, INFO_X1, y1, MENU_INFO_DIM);
-    draw_company_logo(pic, 320, INFO_X0 + 5, y0 + 4, logo, ci.logo, info_rgb(ci.colour, g_player_pick));
-    (void)ar; /* (the company's and the player's names: not here, the summary short) */
+    draw_company_logo(pic, 320, INFO_X0 + 3, y0 + 2, logo, ci.logo, info_rgb(ci.colour, g_player_pick));
     funds_text(f, sizeof f, ci.funds);
-    snprintf(s, sizeof s, "%s   %d/%d COUNTRIES", f, ci.held, NB_COUNTRIES);
-    menu_text_fit(pic, 320, x, y, s, MENU_INFO, width);
-    y += INFO_LINE;
-    snprintf(s, sizeof s, "%d%% COMPLETE", completion(&ci));
+    snprintf(s, sizeof s, "%s   %d/%d COUNTRIES   %d%%", f, ci.held, NB_COUNTRIES, completion(&ci));
     menu_text_fit(pic, 320, x, y, s, MENU_INFO, width);
     y += INFO_LINE;
     if (g_autoload_name[0]) {
@@ -2902,6 +3204,8 @@ int game_overlay(const uint8_t *index, const uint32_t *palette, uint32_t *rgb, i
     }
     draw_drops(rgb, w);
     if (g_editor && renderer_on()) light_editor(rgb, w);
+    if (g_cells && renderer_on()) cell_labels(rgb, w);
+    if (g_debug_info && renderer_on()) debug_info(rgb, w);
     if (g_menu_key == 0xFFFFu) { /* Escape: the menu opens */
         g_menu_key = 0;
         g_menu = 1;
@@ -2961,6 +3265,16 @@ void game_set_routes(int on)
 void game_set_hd(int on)
 {
     render_set_hd(on);
+}
+
+void game_set_cells(int on)
+{
+    g_cells = on != 0;
+}
+
+void game_set_debug_info(int on)
+{
+    g_debug_info = on != 0;
 }
 
 void game_set_shadows(int on)
@@ -3057,6 +3371,9 @@ static void route_order(int slot, uint32_t ped, int32_t tx, int32_t ty, int32_t 
     g_route[slot].stuck = 0;
     if (g_route[slot].n > 0) rt_log("route: agent %d, %d points", slot + 1, g_route[slot].n);
 }
+
+
+
 
 /* the agent in `slot` on a route sent on along it (at each tick, and at once when the route is made) */
 static void follow_route(int slot, uint32_t ped)
@@ -3624,6 +3941,7 @@ void additions_install(int game)
     hook_add(g_addrs->load_game, on_load_game);
     hook_add(g_addrs->draw_logo, on_draw_logo);
     player_colour_load();
+    coat_load();
     hook_add(g_addrs->frame_wait, on_frame_wait);
     hook_add(g_addrs->draw_scanner, on_draw_scanner);
 }

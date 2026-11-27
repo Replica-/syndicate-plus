@@ -197,6 +197,22 @@ static uint32_t g_image_pal[256]; /* the palette the GPU's images were made with
 static int is_head(int id);
 
 /* a hat's colour where the light catches it */
+/* the agents' heads seen from the side (41, 42 and the same of their other sets): the pale pixel at the hat's edge is
+ * its brim catching the light (the hat's colour, lighter), not the red hat's pink */
+#define HAT_BRIM 4
+static int hat_brim(int id, uint8_t c)
+{
+    return c == HAT_BRIM && id >= 41 && is_head(id);
+}
+
+/* the agents' heads (41 on): their rows from COLLAR_ROW down are the coat's collar and the shoulders (black and dark
+ * grey: lost in the game's dark coat, a black line on a coat of another colour): the coat's colour, dark */
+#define COLLAR_ROW 3
+static int collar(int id, int row, uint8_t c)
+{
+    return id >= 41 && is_head(id) && row >= COLLAR_ROW && (c == 0 || c == 2 || c == 8);
+}
+
 static uint32_t shine(uint32_t c)
 {
     uint32_t r = 0;
@@ -214,6 +230,8 @@ static uint32_t shine(uint32_t c)
  * skin, 250 clothes, 249 trousers (255: none); their colour channels the pixel's shade (128: the colour itself): its
  * brightness against the part's main colour in that sprite, so the folds and lights stay */
 #define LOOK_SKIN 9
+#define LOOK_REF 85 /* the brightness a part's own colour is drawn at (its shades: lighter or darker than it) */
+#define PEOPLE_SPRITES 458 /* the people's sprites: 1 to 457 (450-457: the upper bodies of those holding a weapon) */
 static uint32_t g_obj_look[3]; /* the person being drawn: hair, skin, clothes (0: as drawn) */
 static uint8_t g_look_main[NB_SPRITES]; /* a sprite's main colour of its part (+1; 0: not known yet) */
 
@@ -230,7 +248,7 @@ static int look_code(int id, uint8_t c)
         if (c == 11 || ((id <= 24 && id > 16) && (c == 10 || c == 4)) || (id > 24 && c == 8)) return 252;
         return 255;
     }
-    if (id > 32 && id < 450 && !is_head(id) && c != HAT_INDEX && c != 14 && c != 12) return is_leg(id) ? 249 : 250;
+    if (id > 32 && id < PEOPLE_SPRITES && !is_head(id) && c != HAT_INDEX && c != 14 && c != 12) return is_leg(id) ? 249 : 250;
     return 255;
 }
 
@@ -240,6 +258,8 @@ static int lum8(uint32_t c)
 }
 
 /* the shade (128: 1) of colour c in sprite id (its pixels px): against the part's most used colour */
+/* (the people in their own palette in every mission: person_colour) */
+static uint32_t person_colour(int sprite, uint8_t c, const uint32_t *pal);
 static int look_shade(int id, const uint8_t *px, int n, uint8_t c)
 {
     int k, s;
@@ -251,17 +271,24 @@ static int look_shade(int id, const uint8_t *px, int n, uint8_t c)
             if (count[k] > 0 && (best < 0 || count[k] > count[best])) best = k;
         g_look_main[id] = (uint8_t)(best < 0 ? c : best) + 1;
     }
-    s = lum8(g_image_pal[c]) * 128 / (lum8(g_image_pal[g_look_main[id] - 1]) + 1);
-    return s < 40 ? 40 : s > 176 ? 176 : s; /* 0.3 .. 1.375 */
+    /* (against one brightness for every sprite, LOOK_REF: a colour is as light in each frame of an animation) */
+    s = lum8(person_colour(id, c, g_image_pal)) * 128 / LOOK_REF;
+    return s < 40 ? 40 : s > 230 ? 230 : s; /* 0.3 .. 1.8 */
 }
 
 /* a look's colour at a shade */
 static uint32_t look_colour(uint32_t c, int shade)
 {
     uint32_t r = 0;
-    int k;
+    int k, mx = 5;
+    if ((c & 0x1000000u) && shade > 102) shade = 102 + (shade - 102) * 35 / 100; /* (bit 24: its highlights subtle) */
+    for (k = 0; k < 24; k += 8)
+        if ((int)((c >> k) & 255) > mx) mx = (int)((c >> k) & 255);
     for (k = 0; k < 24; k += 8) {
-        int v = (int)((c >> k) & 255) * shade / 128;
+        /* (the pixels lighter than the main colour add light too: a black coat keeps its highlights; that light in
+         * the colour's own hue mostly: a dark red's are red, not pink) */
+        int ch = (int)((c >> k) & 255), add = shade > 102 ? (shade - 102) * 9 / 10 * (30 + 70 * ch / mx) / 100 : 0;
+        int v = ch * shade / 128 + add;
         r |= (uint32_t)(v > 255 ? 255 : v) << k;
     }
     return r;
@@ -276,7 +303,7 @@ static const uint32_t k_people_pal[16] = {0x000000u, 0xAE5D3Cu, 0x3C4945u, 0xFFA
     0x4D5979u, 0x343841u, 0xCB8651u, 0x656565u, 0xFFBE00u, 0xDFFFFFu, 0x967918u, 0xFF3C08u, 0x008EBAu};
 static uint32_t person_colour(int sprite, uint8_t c, const uint32_t *pal)
 {
-    return sprite >= 1 && sprite < 450 && c < 16 && g_hd ? k_people_pal[c] : pal[c];
+    return sprite >= 1 && sprite < PEOPLE_SPRITES && c < 16 && g_hd ? k_people_pal[c] : pal[c];
 }
 
 static int hd_define(int image, const uint8_t *px);
@@ -290,9 +317,10 @@ static void define_image(int image, const uint8_t *px, int w, int h)
     if (image < IMAGE_SPRITES && hd_define(image, px)) return;
     if (image >= IMAGE_SPRITES && !head && hd_sprite(image, px, w, h)) return;
     for (i = 0; i < w * h; i++) {
-        uint32_t a = px[i] == HAT_INDEX ? 0xFE000000u : head && px[i] == HAT_SHINE ? 0xFD000000u : 0xFF000000u;
+        uint32_t a = px[i] == HAT_INDEX ? 0xFE000000u
+                     : head && (px[i] == HAT_SHINE || hat_brim(image - IMAGE_SPRITES, px[i])) ? 0xFD000000u : 0xFF000000u;
         if (image >= IMAGE_SPRITES && a == 0xFF000000u && px[i] != 255) {
-            int code = look_code(image - IMAGE_SPRITES, px[i]);
+            int code = collar(image - IMAGE_SPRITES, i / w, px[i]) ? 250 : look_code(image - IMAGE_SPRITES, px[i]);
             if (code != 255) { /* alpha 160 + 16 x part (hair, skin, clothes, trousers) + shade (0.3 + 0.1 x it) */
                 int s = look_shade(image - IMAGE_SPRITES, px, w * h, px[i]), b = (s * 10 / 128 - 3);
                 b = b < 0 ? 0 : b > 15 ? 15 : b;
@@ -317,6 +345,90 @@ static uint32_t trousers(uint32_t c)
     return c != 0 ? r : 0;
 }
 
+/* ---- an agent drawn on Configure Company (the menus have no sprites loaded): a frame from the game's own files
+ * (HSPR-0.TAB/.DAT, HFRA-0.ANI, HELE-0.ANI, unpacked: render_preview_files), its hat and coat in the colours chosen,
+ * the rest in the people's colours, as a mission draws it ---- */
+static uint8_t *g_pv_tab, *g_pv_dat, *g_pv_fra, *g_pv_ele;
+static size_t g_pv_ntab, g_pv_ndat, g_pv_nfra, g_pv_nele;
+
+void render_preview_files(uint8_t *tab, size_t ntab, uint8_t *dat, size_t ndat, uint8_t *fra, size_t nfra, uint8_t *ele,
+                          size_t nele)
+{
+    g_pv_tab = tab, g_pv_ntab = ntab, g_pv_dat = dat, g_pv_ndat = ndat;
+    g_pv_fra = fra, g_pv_nfra = nfra, g_pv_ele = ele, g_pv_nele = nele;
+}
+
+static unsigned pv16(const uint8_t *p) { return (unsigned)p[0] | (unsigned)p[1] << 8; }
+
+static uint32_t trousers(uint32_t c);
+
+/* frame `frame`, `scale` times its size, into rgb (w x h) with its feet's middle at bx, by; 0 if it cannot be */
+int render_preview(uint32_t *rgb, int w, int h, int bx, int by, int scale, int frame, uint32_t hat, uint32_t coat)
+{
+    static uint8_t px[128 * 128];
+    int pass, x0 = 1 << 30, y0 = 1 << 30, x1 = -(1 << 30), y1 = -(1 << 30);
+    if (g_pv_tab == NULL || g_pv_dat == NULL || g_pv_fra == NULL || g_pv_ele == NULL || (size_t)frame * 8u + 8u > g_pv_nfra)
+        return 0;
+    for (pass = 0; pass < 2; pass++) { /* the frame's box, then its sprites drawn round its feet */
+        unsigned e = pv16(g_pv_fra + (size_t)frame * 8u);
+        int guard = 0;
+        while (e != 0 && (size_t)e * 10u + 10u <= g_pv_nele && guard++ < 32) {
+            const uint8_t *ea = g_pv_ele + (size_t)e * 10u;
+            int id = (int)pv16(ea) / 6, ox = (int16_t)pv16(ea + 2), oy = (int16_t)pv16(ea + 4), flip = pv16(ea + 6) != 0;
+            const uint8_t *te = g_pv_tab + (size_t)id * 6u;
+            int sw, sh, x, y, stride, main = -1;
+            uint32_t off;
+            e = pv16(ea + 8);
+            if ((size_t)id * 6u + 6u > g_pv_ntab) continue;
+            off = (uint32_t)te[0] | (uint32_t)te[1] << 8 | (uint32_t)te[2] << 16 | (uint32_t)te[3] << 24;
+            sw = te[4], sh = te[5], stride = (sw + 7) / 8;
+            if (sw == 0 || sh == 0 || sw * sh > (int)sizeof px || off + (uint32_t)(stride * sh * 5) > g_pv_ndat) continue;
+            if (pass == 0) {
+                if (ox < x0) x0 = ox;
+                if (oy < y0) y0 = oy;
+                if (ox + sw > x1) x1 = ox + sw;
+                if (oy + sh > y1) y1 = oy + sh;
+                continue;
+            }
+            for (y = 0; y < sh; y++)
+                for (x = 0; x < stride; x++) {
+                    uint8_t block[8];
+                    int i;
+                    decode_bits(g_pv_dat + off + (uint32_t)((y * stride + x) * 5), g_pv_dat + off + (uint32_t)((y * stride + x) * 5) + 1, 1, block);
+                    for (i = 0; i < 8 && x * 8 + i < sw; i++) px[y * sw + x * 8 + i] = block[i];
+                }
+            { /* the coat's main colour in this sprite: its shades against it */
+                int count[16] = {0}, k;
+                for (k = 0; k < sw * sh; k++)
+                    if (px[k] < 16 && look_code(id, px[k]) != 255) count[px[k]]++;
+                for (k = 0; k < 16; k++)
+                    if (count[k] > 0 && (main < 0 || count[k] > count[main])) main = k;
+            }
+            for (y = 0; y < sh; y++)
+                for (x = 0; x < sw; x++) {
+                    uint8_t c = px[y * sw + (flip ? sw - 1 - x : x)];
+                    uint32_t col;
+                    int code, a, b, X, Y;
+                    if (c == 255 || c >= 16) continue;
+                    code = collar(id, y, c) ? 250 : look_code(id, c);
+                    if (is_head(id) && c == HAT_INDEX) col = hat;
+                    else if (is_head(id) && (c == HAT_SHINE || hat_brim(id, c))) col = shine(hat);
+                    else if (coat != 0 && (code == 250 || code == 249)) {
+                        int s = lum8(k_people_pal[c]) * 128 / LOOK_REF;
+                        col = look_colour(code == 249 ? trousers(coat) | (coat & 0x1000000u) : coat, s < 40 ? 40 : s > 230 ? 230 : s);
+                    } else col = k_people_pal[c];
+                    X = bx + (ox + x - (x0 + x1) / 2) * scale;
+                    Y = by + (oy + y - y1) * scale;
+                    for (b = 0; b < scale; b++)
+                        for (a = 0; a < scale; a++)
+                            if (X + a >= 0 && X + a < w && Y + b >= 0 && Y + b < h) rgb[(Y + b) * w + X + a] = col;
+                }
+        }
+        if (x1 <= x0) return 0;
+    }
+    return 1;
+}
+
 /* a pixel of a sprite drawn on the CPU: the hat's colours in `hat`'s top rows (head: a head sprite) */
 static int g_put_head; /* the sprite being put is a head (sprite_colour) */
 static int g_put_sprite = -1; /* the sprite being put (-1: a tile) */
@@ -324,12 +436,13 @@ static uint32_t sprite_colour(const uint32_t *pal, uint8_t c, int row, uint32_t 
 {
     int code;
     if (row < (int)(hat >> 24) && c == HAT_INDEX) return hat & 0xFFFFFFu;
-    if (row < (int)(hat >> 24) && head && c == HAT_SHINE) return shine(hat & 0xFFFFFFu);
-    if (g_put_sprite >= 0 && g_look_main[g_put_sprite] != 0 && (code = look_code(g_put_sprite, c)) != 255) {
+    if (row < (int)(hat >> 24) && head && (c == HAT_SHINE || hat_brim(g_put_sprite, c))) return shine(hat & 0xFFFFFFu);
+    if (g_put_sprite >= 0 && g_look_main[g_put_sprite] != 0 &&
+        (code = collar(g_put_sprite, row, c) ? 250 : look_code(g_put_sprite, c)) != 255) {
         uint32_t l = g_obj_look[code == 252 ? 0 : code == 251 ? 1 : 2];
-        int s = lum8(pal[c]) * 128 / (lum8(pal[g_look_main[g_put_sprite] - 1]) + 1);
-        if (code == 249) l = trousers(l);
-        if (l != 0) return look_colour(l, s < 40 ? 40 : s > 176 ? 176 : s);
+        int s = lum8(person_colour(g_put_sprite, c, pal)) * 128 / LOOK_REF;
+        if (code == 249) l = trousers(l) | (l & 0x1000000u);
+        if (l != 0) return look_colour(l, s < 40 ? 40 : s > 230 ? 230 : s);
     }
     return person_colour(g_put_sprite, c, pal);
 }
@@ -440,9 +553,28 @@ static void blit_scaled(const Target *t, const uint8_t *src, int sw, int sh, flo
 /* a tile or a sprite (image number): on the GPU at its exact place, else as blit (both zoomed) */
 static int tile_glow(int image);
 
+/* the sprites drawn in the last frame, in order (unzoomed places): the debug readout's sprite under the pointer */
+#define NB_SDRAWN 8192
+static struct {
+    int16_t id, x, y, w, h;
+    uint8_t flipped;
+    const uint8_t *px;
+} g_sdrawn[NB_SDRAWN];
+static int g_nsdrawn;
+
 static void put(const Target *t, int image, const uint8_t *src, int sw, int sh, int dx, int dy, float fx, float fy,
                 int flipped, uint32_t hat)
 {
+    if (image >= IMAGE_SPRITES && g_nsdrawn < NB_SDRAWN) {
+        g_sdrawn[g_nsdrawn].id = (int16_t)(image - IMAGE_SPRITES);
+        g_sdrawn[g_nsdrawn].x = (int16_t)dx;
+        g_sdrawn[g_nsdrawn].y = (int16_t)dy;
+        g_sdrawn[g_nsdrawn].w = (int16_t)sw;
+        g_sdrawn[g_nsdrawn].h = (int16_t)sh;
+        g_sdrawn[g_nsdrawn].flipped = (uint8_t)(flipped != 0);
+        g_sdrawn[g_nsdrawn].px = src;
+        g_nsdrawn++;
+    }
     if (t->gpu)
         emit(image, src, sw, sh, g_zoom == 1.0 ? fx : zoom_x(fx), g_zoom == 1.0 ? fy : zoom_y(fy), flipped, hat,
              tile_glow(image));
@@ -671,7 +803,7 @@ static int hd_sprite(int image, const uint8_t *px, int w, int h)
     static uint32_t rgb[256 * HD_SCALE * 256 * HD_SCALE];
     int id = image - IMAGE_SPRITES, i;
     dump_sprite(id, px, w, h);
-    if (!g_hd || id < 0 || id >= NB_SPRITES || w * h > 256 * 256) return 0;
+    if (!g_hd || id < PEOPLE_SPRITES || id >= NB_SPRITES || w * h > 256 * 256) return 0; /* (the people: never the pack's) */
     if (g_hd_sprite_state[id] == 0) {
         char path[1200];
         int iw, ih, n;
@@ -723,6 +855,7 @@ static int hat_rows(int id, const uint8_t *s, int sw, int sh)
     return g_hat_rows[id];
 }
 static void add_light(float fx, float fy, float rx, float ry, uint32_t colour);
+static void project_f(int32_t x, int32_t y, int32_t z, float *fx, float *fy);
 
 #define FLASH_LIGHT_R 56.0f          /* a flash's light (a muzzle flash, an explosion): its radius */
 #define FLASH_LIGHT_COLOUR 0xFFC878u
@@ -760,6 +893,139 @@ static int flash_sprite(int id, const uint8_t *s, int sw, int sh)
     return flash[id];
 }
 
+/* ---- the GPU's effects (HD): each burning thing's fire and smoke, each explosion, kept by where it is in the world
+ * (the game's sprites only say where, and roughly how big: each frame of their animation its own size, so the effect
+ * eases to it) and drawn at the display's rate, moving smoothly (no sprite); an explosion runs its own time ---- */
+#define NB_FX 96
+#define FX_EXPLODE_US 1800000u /* an explosion's life: flash, fireball, smoke rising and thinning */
+enum { FX_FIRE = 1, FX_SMOKE, FX_EXPLODE };
+typedef struct Fx {
+    int kind, wx, wy, wz;
+    uint64_t start, seen;           /* when it was first, last seen (its sprites drawn) */
+    float bx, by, w, h;             /* its base (from its anchor: frame pixels), half width, height: as drawn */
+    float tbx, tby, tw, th;         /* as its sprites are now (what it eases to) */
+    uint32_t seed;
+} Fx;
+static Fx g_fx[NB_FX];
+static uint64_t g_fx_now, g_fx_last;
+static int g_obj_wx, g_obj_wy, g_obj_wz; /* the object being drawn: its place in the world */
+static int g_obj_person;                 /* it is a person (its flash sprites: a muzzle flash) */
+#define MUZZLE_FX 0 /* 1: the people's muzzle flashes drawn by the GPU (off: the game's sprites) */
+
+static float saturate_f(float v)
+{
+    return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v;
+}
+
+/* an explosion's sprites (its fireball, its smoke) */
+static int explode_sprite(int id)
+{
+    return id >= 765 && id <= 779;
+}
+
+/* a burning thing's (or an explosion's) sprites drawn this frame: x0..x1, y0..y1 from its anchor */
+static void fx_seen(int kind, float x0, float y0, float x1, float y1)
+{
+    Fx *f = NULL;
+    int i, free_i = -1, old_i = -1;
+    uint64_t oldest = ~0ull;
+    for (i = 0; i < NB_FX; i++) {
+        Fx *e = &g_fx[i];
+        if (e->kind == 0) {
+            if (free_i < 0) free_i = i;
+            continue;
+        }
+        if (e->kind == kind && abs(e->wx - g_obj_wx) <= 64 && abs(e->wy - g_obj_wy) <= 64 && abs(e->wz - g_obj_wz) <= 96) {
+            f = e;
+            break;
+        }
+        if (e->seen < oldest) oldest = e->seen, old_i = i;
+    }
+    if (f == NULL) {
+        if (free_i < 0) free_i = old_i; /* none free: the one seen longest ago */
+        if (free_i < 0) return;
+        f = &g_fx[free_i];
+        memset(f, 0, sizeof *f);
+        f->kind = kind;
+        f->start = g_fx_now;
+        f->seed = (uint32_t)((g_obj_wx / 48) * 73856093 ^ (g_obj_wy / 48) * 19349663 ^ g_obj_wz * 83492791);
+        f->bx = (x0 + x1) / 2.0f;
+        f->by = y1;
+        f->w = (x1 - x0) / 2.0f;
+        f->h = y1 - y0;
+    }
+    f->wx = g_obj_wx;
+    f->wy = g_obj_wy;
+    f->wz = g_obj_wz;
+    f->seen = g_fx_now;
+    f->tbx = (x0 + x1) / 2.0f;
+    f->tby = y1;
+    f->tw = (x1 - x0) / 2.0f;
+    f->th = y1 - y0;
+}
+
+static uint32_t fx_colour(uint32_t kind, uint32_t seed, float strong, float progress)
+{
+    int s = (int)(strong * 255.0f + 0.5f), p = (int)(progress * 255.0f + 0.5f);
+    s = s < 0 ? 0 : s > 255 ? 255 : s;
+    p = p < 0 ? 0 : p > 255 ? 255 : p;
+    return kind | (seed & 255u) << 16 | (uint32_t)s << 8 | (uint32_t)p;
+}
+
+/* the effects of this frame, each where its thing is now on the screen */
+static void fx_draw(void)
+{
+    float dt = g_fx_last != 0 && g_fx_now > g_fx_last ? (float)(g_fx_now - g_fx_last) / 1e6f : 0.016f;
+    float ease = 1.0f - expf(-dt / 0.2f); /* to the sprites' size in about 0.2 s */
+    int i;
+    g_fx_last = g_fx_now;
+    for (i = 0; i < NB_FX; i++) {
+        Fx *f = &g_fx[i];
+        float ffx, ffy, ax, ay, since, strong;
+        if (f->kind == 0) continue;
+        since = (float)(g_fx_now - f->seen) / 1e6f;
+        project_f(f->wx, f->wy, f->wz, &ffx, &ffy);
+        ax = ffx + (float)render_obj_dx;
+        ay = ffy + (float)render_obj_dy;
+        if (f->kind == FX_EXPLODE) {
+            float pr = (float)(g_fx_now - f->start) / (float)FX_EXPLODE_US, r;
+            if (pr >= 1.0f) {
+                f->kind = 0;
+                continue;
+            }
+            r = f->w > f->h * 0.5f ? f->w : f->h * 0.5f;
+            r = (r < 30.0f ? 30.0f : r) * 1.6f;
+            add_light(ax + f->bx, ay + f->by, r, r * 2.0f, fx_colour(HOST_LIGHT_EXPLODE, f->seed, 1.0f, pr));
+            if (pr < 0.45f) { /* its light: a flash, then the fireball's glow dying */
+                float k = 1.0f - pr / 0.45f, lr = r * (2.0f + 3.0f * (pr < 0.08f ? 1.0f : k));
+                add_light(ax + f->bx, ay + f->by - r * 0.6f, lr, lr * 0.6f, pr < 0.1f ? 0xFFF0D0u : FIRE_LIGHT_COLOUR);
+            }
+            continue;
+        }
+        /* a fire or smoke: in as its sprites come, out a moment after they go */
+        strong = since < 0.25f ? 1.0f : 1.0f - (since - 0.25f) / 0.6f;
+        if (strong <= 0.0f) { /* gone */
+            f->kind = 0;
+            continue;
+        }
+        strong *= 0.15f + 0.85f * saturate_f((float)(g_fx_now - f->start) / 3e5f);
+        f->bx += (f->tbx - f->bx) * ease;
+        f->by += (f->tby - f->by) * ease;
+        f->w += (f->tw - f->w) * ease;
+        f->h += (f->th - f->h) * ease;
+        if (f->kind == FX_FIRE) {
+            /* (its sprites' box takes in the bits rising from it: the flames lower than it) */
+            float fw = f->w * 1.15f + 2.0f, fh = f->h * 0.8f + 6.0f;
+            if (f->h < 16.0f) fw = f->w * 0.9f + 1.0f, fh = f->h * 1.1f + 2.0f; /* a small flame: about its sprite's size */
+            add_light(ax + f->bx, ay + f->by + fh * 0.08f, fw, fh, fx_colour(HOST_LIGHT_FIRE, f->seed, strong, fw / fh / 4.0f));
+            /* its smoke rising from the flames' tops */
+            add_light(ax + f->bx, ay + f->by - fh * 0.55f, fw * 1.7f, fh * 2.2f, fx_colour(HOST_LIGHT_SMOKE, f->seed * 7u, strong * 0.85f, 0));
+        } else {
+            add_light(ax + f->bx, ay + f->by, f->w * 1.2f + 2.0f, f->h * 1.5f + 4.0f, fx_colour(HOST_LIGHT_SMOKE, f->seed, strong, 0));
+        }
+    }
+}
+
 static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, float fay, uint32_t hat)
 {
     uint32_t frames = rd32(P_FRAMES), elements = rd32(P_ELEMENTS), f = frames + (uint32_t)frame * 8u;
@@ -776,6 +1042,11 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
         }
     e = e0;
     guard = 0;
+    {
+    /* the frame's fire, smoke, explosion sprites: their boxes (from the anchor), one effect each (fx_seen) */
+    float bx0[4] = {1e9f, 1e9f, 1e9f, 1e9f}, by0[4] = {1e9f, 1e9f, 1e9f, 1e9f}, bx1[4] = {-1e9f, -1e9f, -1e9f, -1e9f};
+    float by1[4] = {-1e9f, -1e9f, -1e9f, -1e9f};
+    int fx_on = t->gpu && g_hd, kind;
     for (;;) {
         uint32_t ea = elements + e * 10u;
         int sw, sh, id = rd16(ea) / 6, ox = (int16_t)rd16(ea + 2u), oy = (int16_t)rd16(ea + 4u);
@@ -785,17 +1056,52 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
             g_put_head = is_head(id);
             g_put_sprite = id;
             g_quad_z = g_obj_z - 8.0f * (float)oy; /* its feet at the anchor, 8 world units a pixel up */
-            if (t->gpu && g_hd && fire_sprite(id)) { /* the GPU draws the fire (no sprite): over where it was */
-                float fw2 = (float)sw * (id >= 1756 ? 0.7f : id == 1552 || id >= 1562 ? 0.5f : 0.95f), fh2 = (float)sh * (id >= 1005 && id <= 1008 ? 0.75f : 1.3f);
-                float bx = fax + (float)ox + (float)sw / 2.0f, by = fay + (float)oy + (float)sh * (id >= 1005 && id <= 1008 ? 0.95f : 0.98f);
-                by += fh2 * 0.15f;  /* its base below the sprite's: it fades in there (no edge) */
-                fh2 *= 1.15f;
-                add_light(bx, by, fw2, fh2, HOST_LIGHT_FIRE | (uint32_t)((id * 37 + ox * 13 + oy * 7) & 255) << 16);
-                if ((id >= 1005 && id <= 1008) || id == 1552 || (id >= 1562 && id <= 1565)) /* its smoke rising from the flame's top */
-                    add_light(bx, by - fh2 * 0.55f, fw2 * 1.6f, (float)sh * 1.1f,
-                              HOST_LIGHT_SMOKE | (uint32_t)((id * 53 + ox * 11) & 255) << 16);
+            kind = !fx_on ? 0 : explode_sprite(id) ? FX_EXPLODE : fire_sprite(id) ? FX_FIRE : smoke_sprite(id) ? FX_SMOKE : 0;
+            if (kind) { /* the GPU draws it (no sprite) */
+                float x0 = (float)ox, y0 = (float)oy, x1 = (float)(ox + sw), y1 = (float)(oy + sh);
+                if (kind == FX_FIRE && id >= 1756) x0 += (float)sw * 0.15f, x1 -= (float)sw * 0.15f; /* a blaze: its flames' width */
+                if (x0 < bx0[kind]) bx0[kind] = x0;
+                if (y0 < by0[kind]) by0[kind] = y0;
+                if (x1 > bx1[kind]) bx1[kind] = x1;
+                if (y1 > by1[kind]) by1[kind] = y1;
             }
-            int burning = fire_sprite(id);
+            /* a person's muzzle flash: the GPU draws it (a small teardrop of fire pointing away from the gun, from the
+             * person's middle through the flash sprite's), no sprite */
+            int muzzle = MUZZLE_FX && fx_on && !kind && g_obj_person && id >= PEOPLE_SPRITES && flash_sprite(id, s, sw, sh);
+            if (muzzle) {
+                /* (the flash's own pixels: the one nearest the person's middle is at the gun's tip, the teardrop's
+                 * point there; it points away from the person) */
+                int px, py, n = 0, flip = rd16(ea + 6u) != 0, turn;
+                float cx = 0, cy = 0, tx = 0, ty = 0, best = 1e9f, far2 = 0, dx, dy, r, len;
+                for (py = 0; py < sh; py++)
+                    for (px = 0; px < sw; px++)
+                        if (s[py * sw + px] != 255) {
+                            float X = (float)ox + (float)(flip ? sw - 1 - px : px) + 0.5f, Y = (float)oy + (float)py + 0.5f;
+                            float d2 = X * X + (Y + 14.0f) * (Y + 14.0f);
+                            cx += X, cy += Y, n++;
+                            if (d2 < best) best = d2, tx = X, ty = Y;
+                        }
+                if (n == 0) n = 1, tx = (float)ox + (float)sw / 2.0f, ty = (float)oy + (float)sh / 2.0f, cx = tx, cy = ty;
+                cx /= (float)n, cy /= (float)n;
+                dx = cx, dy = cy + 21.0f; /* away from the person: from its shoulders through the flash's (whatever the
+                                           * flash's own shape: a streak, a star) */
+                len = sqrtf(dx * dx + dy * dy);
+                if (len < 0.01f) dx = 1.0f, dy = 0.0f, len = 1.0f;
+                dx /= len, dy /= len;
+                for (py = 0; py < sh; py++)
+                    for (px = 0; px < sw; px++)
+                        if (s[py * sw + px] != 255) {
+                            float X = (float)ox + (float)(flip ? sw - 1 - px : px) + 0.5f - tx, Y = (float)oy + (float)py + 0.5f - ty;
+                            if (X * X + Y * Y > far2) far2 = X * X + Y * Y;
+                        }
+                r = sqrtf(far2) * 0.6f + 2.5f; /* a little longer than the flash drawn */
+                if (r > 8.0f) r = 8.0f;
+                turn = (int)(atan2f(dy, dx) / 6.2831853f * 256.0f) & 255;
+                cx = tx + dx * r * 0.9f, cy = ty + dy * r * 0.9f; /* (its point 0.9 of its radius from its middle) */
+                add_light(fax + cx, fay + cy, r, r, HOST_LIGHT_FLASH | (uint32_t)turn << 16 |
+                                                     (uint32_t)((g_obj_wx * 7 + g_obj_wy * 13) & 255) << 8);
+            }
+            int burning = fire_sprite(id) && !explode_sprite(id);
             if (t->gpu && (id < 729 || id > 733) && (burning || flash_sprite(id, s, sw, sh))) {
                 /* it lights what is round it (by night most): two or three pools a little apart, changing each
                  * frame (a flicker, not a disc); the impacts' sparks light themselves (LIST_EFFECTS) */
@@ -817,10 +1123,7 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
                 }
             }
             if ((id >= 729 && id <= 738) || flash_sprite(id, s, sw, sh)) g_obj_shade |= HOST_SHADE_LIGHT; /* no shadow */
-            if (t->gpu && g_hd && smoke_sprite(id)) /* the GPU draws the smoke (no sprite) */
-                add_light(fax + (float)ox + (float)sw / 2.0f, fay + (float)oy + (float)sh, (float)sw * 1.1f,
-                          (float)sh * 1.4f, HOST_LIGHT_SMOKE | (uint32_t)((id * 53 + ox * 11) & 255) << 16);
-            if (!(t->gpu && g_hd && (fire_sprite(id) || smoke_sprite(id))))
+            if (!kind && !muzzle)
             put(t, IMAGE_SPRITES + id, s, sw, sh, ax + ox, ay + oy, fax + (float)ox, fay + (float)oy, rd16(ea + 6u) != 0,
                 rows > 0 ? (hat & 0xFFFFFFu) | (uint32_t)rows << 24 : 0);
             g_put_head = 0;
@@ -829,6 +1132,9 @@ static void draw_frame(const Target *t, int frame, int ax, int ay, float fax, fl
         }
         e = rd16(ea + 8u);
         if (e == 0 || ++guard > 64) break;
+    }
+    for (kind = FX_FIRE; kind <= FX_EXPLODE; kind++)
+        if (bx1[kind] > bx0[kind]) fx_seen(kind, bx0[kind], by0[kind], bx1[kind], by1[kind]);
     }
 }
 
@@ -1309,9 +1615,42 @@ static const TileLight *tile_light(int id)
 
 static int g_obj_glow; /* how the object being drawn glows */
 
+/* a station platform's edge by the track (tiles 128, 129, one the other's mirror): its white edge lights and its
+ * red lights shine; its signal lamp red, or green while a train stands at the platform (platform_lights) */
+#define PLATFORM_TILE 128
+#define PLATFORM_TILE_M 129
 static int tile_glow(int image)
 {
+    if (image == PLATFORM_TILE || image == PLATFORM_TILE_M) return RENDER_GLOW_BRIGHT | RENDER_GLOW_SIGNAL;
     return image < IMAGE_SPRITES ? tile_light(image)->glow : g_obj_glow;
+}
+
+/* the train's carriages this frame (cars drawn with the train's sprites): where, and whether they move */
+#define NB_TRAIN 32
+static struct {
+    int x, y, moving;
+} g_train[NB_TRAIN];
+static int g_ntrain;
+
+static int train_sprite(int id)
+{
+    return id >= 1683 && id <= 1687;
+}
+
+/* tile id (PLATFORM_TILE or its mirror) at tx, ty, tz, its picture's top left fx, fy: its signal lamp (on its end, at
+ * the left of 128, the right of 129) red, green while a carriage stands still within 2 tiles of it */
+static void platform_lights(int id, int tx, int ty, int tz, float fx, float fy)
+{
+    int i, green = 0, next = id == PLATFORM_TILE ? render_map_tile(tx, ty + 1, tz) : render_map_tile(tx + 1, ty, tz);
+    float lx = id == PLATFORM_TILE ? 5.0f : 59.0f, ly = 26.0f;
+    /* (the lamp at the platform's end only: the next of its tiles covers this one's end) */
+    if (next == PLATFORM_TILE || next == PLATFORM_TILE_M) return;
+    for (i = 0; i < g_ntrain; i++)
+        if (!g_train[i].moving && abs(g_train[i].x - (tx * 256 + 128)) < 640 && abs(g_train[i].y - (ty * 256 + 128)) < 640)
+            green = 1;
+    if (green) ly += 5.0f; /* the lower lamp */
+    add_light(fx + lx, fy + ly, 5.0f, 4.0f, HOST_LIGHT_GLOW | (green ? 0x30FF60u : 0xFF2A18u)); /* the lamp, by day too */
+    add_light(fx + lx, fy + ly + 6.0f, 44.0f, 26.0f, green ? 0x40FF70u : 0xFF3020u);     /* its light round it */
 }
 
 /* a light at fx, fy of the unzoomed picture */
@@ -1443,8 +1782,9 @@ static void object_lights(int li, int i, int32_t x, int32_t y, int32_t z, int32_
 /* the tiles drawn in the last frame, in order (unzoomed places) */
 #define NB_DRAWN 12288
 static struct {
-    uint8_t id;
+    uint8_t id, tz;
     int16_t x, y;
+    int16_t tx, ty; /* its place in the map */
 } g_drawn[NB_DRAWN];
 static int g_ndrawn;
 
@@ -1512,6 +1852,59 @@ int render_map_tile(int x, int y, int z)
     if (x < 0 || y < 0 || z < 0 || x >= mx || y >= my || z >= mz) return -1;
     col = rd32(map + 12u + (uint32_t)(x + y * mx) * 4u);
     return M[col + (uint32_t)z];
+}
+
+/* the tiles drawn in the last frame: how many; tile i: its id, its place in the map, the middle of its top on the
+ * frame (zoomed) */
+int render_drawn_count(void)
+{
+    return g_ndrawn;
+}
+
+void render_drawn_tile(int i, int *id, int *tx, int *ty, int *tz, int *sx, int *sy)
+{
+    *id = g_drawn[i].id;
+    *tx = g_drawn[i].tx;
+    *ty = g_drawn[i].ty;
+    *tz = g_drawn[i].tz;
+    *sx = (int)floorf(zoom_x((float)g_drawn[i].x + 32.0f));
+    *sy = (int)floorf(zoom_y((float)g_drawn[i].y + 16.0f));
+}
+
+/* the sprite drawn at the frame's point sx, sy (in front): its number; 0 none */
+int render_sprite_at(int sx, int sy, int *id)
+{
+    float lx = g_zcx + ((float)sx - g_zcx) / (float)g_zoom, ly = g_zcy + ((float)sy - g_zcy) / (float)g_zoom;
+    int i;
+    for (i = g_nsdrawn - 1; i >= 0; i--) {
+        int x = (int)floorf(lx) - g_sdrawn[i].x, y = (int)floorf(ly) - g_sdrawn[i].y;
+        if (x < 0 || y < 0 || x >= g_sdrawn[i].w || y >= g_sdrawn[i].h || g_sdrawn[i].px == NULL) continue;
+        if (g_sdrawn[i].flipped) x = g_sdrawn[i].w - 1 - x;
+        if (g_sdrawn[i].px[y * g_sdrawn[i].w + x] == 255) continue;
+        *id = g_sdrawn[i].id;
+        return 1;
+    }
+    return 0;
+}
+
+/* the tile drawn at the frame's point sx, sy (in front): its id and its place in the map; 0 none */
+int render_tile_place(int sx, int sy, int *id, int *tx, int *ty, int *tz)
+{
+    float lx = g_zcx + ((float)sx - g_zcx) / (float)g_zoom, ly = g_zcy + ((float)sy - g_zcy) / (float)g_zoom;
+    int i;
+    for (i = g_ndrawn - 1; i >= 0; i--) {
+        int x = (int)floorf(lx) - g_drawn[i].x, y = (int)floorf(ly) - g_drawn[i].y;
+        const uint8_t *px;
+        if (x < 0 || y < 0 || x >= TILE_W || y >= TILE_H) continue;
+        px = tile(g_drawn[i].id);
+        if (px == NULL || px[y * TILE_W + x] == 255) continue;
+        *id = g_drawn[i].id;
+        *tx = g_drawn[i].tx;
+        *ty = g_drawn[i].ty;
+        *tz = g_drawn[i].tz;
+        return 1;
+    }
+    return 0;
 }
 
 int render_tile_at(int sx, int sy, int *id, int *rx, int *ry, int *rw, int *rh)
@@ -1809,6 +2202,7 @@ int render_tile_dx = 96, render_tile_dy = 40; /* a tile's top left corner from i
 int render_obj_dx = 128, render_obj_dy = 56;  /* a frame's anchor from the projected position */
 uint32_t (*render_hat_colour)(int ped);       /* the colour of an agent's hat (0: as drawn) */
 int (*render_ped_look)(int ped, uint32_t look[3]); /* a pedestrian's hair, skin, clothes (0: not one) */
+uint32_t (*render_agent_coat)(int ped);
 
 typedef struct Obj {
     int key;      /* the diagonal row of tiles it stands in (tile x + tile y) */
@@ -1890,10 +2284,17 @@ static void draw_obj(const Target *t, const Obj *o)
          * and clothes */
         if (hat == 0 && render_ped_look != NULL && o->ped < 256 && render_ped_look(o->ped, g_obj_look))
             hat = g_obj_look[0];
+        else if (hat != 0 && render_agent_coat != NULL && o->ped < 256) /* the player's agents: the coat chosen */
+            g_obj_look[2] = render_agent_coat(o->ped);
     }
     g_obj_glow = o->glow;
-    g_obj_shade = (uint32_t)(g_sun * 255.0f) << 8 | (render_shadows ? HOST_SHADE_ON : 0);
+    g_obj_shade = (uint32_t)(g_sun * 255.0f) << 8 | (render_shadows ? HOST_SHADE_ON : 0) |
+                  (uint32_t)(render_mission_time & 7) << 24; /* the mission's time: every quad carries it */
     g_obj_z = (float)o->zw;
+    g_obj_wx = o->x;
+    g_obj_wy = o->y;
+    g_obj_wz = o->zw;
+    g_obj_person = o->ped >= 0 && o->ped < 256;
     draw_frame(t, o->frame, fx + render_obj_dx, fy + render_obj_dy, ffx + (float)render_obj_dx, ffy + (float)render_obj_dy,
                hat);
     g_obj_glow = 0;
@@ -1906,6 +2307,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     static Obj objs[2048];
     uint32_t map, cols;
     if (g_ra.map == 0) return;
+    g_fx_now = now_us; /* the effects' clock: when this frame is shown */
     if (g_dump_tiles != NULL && g_have_types) dump_tiles(pal);
     if (g_hd != g_hd_want) {
         /* HD textures on or off: the GPU's images made again */
@@ -1916,9 +2318,11 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     }
     if (rgb == NULL && memcmp(g_image_pal, pal, sizeof g_image_pal) != 0) {
         /* another palette: the GPU's images are made again in its colours */
+        static int resets;
         memcpy(g_image_pal, pal, sizeof g_image_pal);
         memset(g_defined, 0, sizeof g_defined);
         host_city_reset();
+        if (++resets <= 20 || resets % 100 == 0) rt_log("city images made again: another palette (%d)", resets);
     }
     map = rd32(P_MAP);
     sun_at(now_us, map);
@@ -1940,6 +2344,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
     g_my = my;
     g_mz = mz;
     g_ndrawn = 0;
+    g_nsdrawn = 0;
     if (t.gpu) {
         /* a new palette: the lamps are found again */
         uint32_t hash = 2166136261u;
@@ -1962,6 +2367,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         t256 = -1;
         read_view(&g_vx, &g_vy);
     }
+    g_ntrain = 0;
     /* the things on the map, by tile column then height */
     for (li = 0; li < (int)(sizeof k_lists / sizeof k_lists[0]); li++) {
         const ObjList *l = &k_lists[li];
@@ -2001,6 +2407,15 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                 project_f(x, y, z, &sfx, &sfy);
                 add_light(sfx + (float)render_obj_dx, sfy + (float)render_obj_dy - 2.0f, SHOT_LIGHT_RX, SHOT_LIGHT_RX * 0.6f,
                           SHOT_LIGHT_COLOUR);
+            }
+            if (li == LIST_CARS && g_ntrain < NB_TRAIN) { /* a carriage of the train: where, moving or not */
+                uint32_t fr = rd32(P_FRAMES) + (uint32_t)frame * 8u;
+                if (train_sprite(rd16(rd32(P_ELEMENTS) + rd16(fr) * 10u) / 6)) {
+                    g_train[g_ntrain].x = x;
+                    g_train[g_ntrain].y = y;
+                    g_train[g_ntrain].moving = t256 >= 0 && (sb->pos[n][0] != sa->pos[n][0] || sb->pos[n][1] != sa->pos[n][1]);
+                    g_ntrain++;
+                }
             }
             if (t.gpu && li == LIST_CARS)
                 object_lights(li, (int)i, x, y, z, t256 >= 0 ? sb->pos[n][0] - sa->pos[n][0] : 0,
@@ -2075,10 +2490,15 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
                         g_tile_shade = 0;
                         g_translucent = 0;
                         if (t.gpu) tile_lights_at(tid, ffx + (float)render_tile_dx, ffy + (float)render_tile_dy);
+                        if (t.gpu && (tid == PLATFORM_TILE || tid == PLATFORM_TILE_M))
+                            platform_lights(tid, tx, ty, tz, ffx + (float)render_tile_dx, ffy + (float)render_tile_dy);
                         if (g_ndrawn < NB_DRAWN) {
                             g_drawn[g_ndrawn].id = (uint8_t)tid;
                             g_drawn[g_ndrawn].x = (int16_t)(fx + render_tile_dx);
                             g_drawn[g_ndrawn].y = (int16_t)(fy + render_tile_dy);
+                            g_drawn[g_ndrawn].tx = (int16_t)tx;
+                            g_drawn[g_ndrawn].ty = (int16_t)ty;
+                            g_drawn[g_ndrawn].tz = (uint8_t)tz;
                             g_ndrawn++;
                         }
                     }
@@ -2099,6 +2519,7 @@ void render_city(uint32_t *rgb, int w, int h, const uint32_t *pal, int x0, int y
         for (i = 0; i < n; i++) hash = (hash ^ b[i]) * 16777619u;
         render_gpu_changed = hash != prev_hash;
         prev_hash = hash;
+        if (g_hd) fx_draw();
         host_city_frame(g_quads, g_nquads, x0, y0, x1, y1, (float)g_zoom, g_lights, g_nlights);
     }
 }

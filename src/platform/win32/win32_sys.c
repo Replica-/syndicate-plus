@@ -69,6 +69,7 @@ void host_unlock(void)
 
 void host_log(const char *line)
 {
+    rt_log_ring(line);
     init();
     if (g_logfile != NULL) {
         fprintf(g_logfile, "%s\n", line);

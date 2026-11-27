@@ -41,6 +41,8 @@ int game_pick_first(int revolt);
 void game_set_hd(int on);
 /* the sun's shadows in missions (FreeSynd's: by map cell; on by default) */
 void game_set_shadows(int on);
+void game_set_debug_info(int on);
+void game_set_cells(int on); /* each tile top one can stand on labelled with its cell (Ctrl+N) */ /* the debug readout at the top right of missions (on unless set off) */
 
 #ifdef __cplusplus
 }

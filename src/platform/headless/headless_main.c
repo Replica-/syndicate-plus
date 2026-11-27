@@ -24,7 +24,8 @@
  * tools/hd_pack.py.
  *
  * --cycles N limits the emulated CPU to N instructions a ms, as the window does (8000; without it the game runs as
- * fast as it can, as the tests want); --fps shows the frames a second at the top right.
+ * fast as it can, as the tests want); --fps shows the frames a second at the top right; --debug-info the debug
+ * readout of missions (the window shows it unless Ctrl+D hides it).
  *
  * --record DIR records the run as an MP4 video into DIR (src/video/record.c, needs ffmpeg).  --music-dir plays
  * the songs from the files of DIR (src/rt/music.c); without it the FM music plays, so test runs do not depend on
@@ -395,7 +396,7 @@ int host_should_quit(void)
 int main(int argc, char **argv)
 {
     GameOptions opt;
-    int i, rc;
+    int i, rc, debug_info = 0;
     double seconds = 0;
     memset(&opt, 0, sizeof opt);
     opt.game_dir = "_references/dos";
@@ -442,6 +443,8 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--hd")) g_opt_hd = strcmp(v, "off") != 0, game_set_hd(g_opt_hd), i++;
         else if (!strcmp(a, "--wide")) g_canvas_w = atoi(v) < 640 ? 640 : atoi(v) > HOST_CANVAS_MAX ? HOST_CANVAS_MAX : atoi(v) & ~1, i++;
         else if (!strcmp(a, "--fps")) rt_set_show_fps(1);
+        else if (!strcmp(a, "--debug-info")) debug_info = 1;
+        else if (!strcmp(a, "--cells")) game_set_cells(1);
         else if (!strcmp(a, "--mem-dump") && g_ndumps < 16 && strchr(v, ':')) {
             g_dumps[g_ndumps].ms = (uint32_t)atoi(v);
             g_dumps[g_ndumps].file = strchr(v, ':') + 1;
@@ -474,6 +477,7 @@ int main(int argc, char **argv)
     opt.fixed_clock = g_virtual_step != 0; /* a virtual-time run repeats exactly */
     g_start_us = host_time_us();
     g_end_us = seconds > 0 ? g_start_us + (uint64_t)(seconds * 1e6) : 0;
+    game_set_debug_info(debug_info); /* off unless asked: the tests look at clean frames */
     rc = game_main(&opt);
     if (g_wav != NULL) {
         wav_header(g_wav, g_wav_frames);

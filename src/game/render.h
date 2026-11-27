@@ -1,6 +1,7 @@
 /* render.h - the city of a mission drawn by this program from the game's own data (render.c). */
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* where the running program keeps what the renderer reads */
@@ -56,6 +57,14 @@ extern int render_mission_time;
 int render_map_tile(int x, int y, int z);
 /* the tile seen at sx, sy of the frame in the last city drawn: its number and where it is drawn */
 int render_tile_at(int sx, int sy, int *id, int *rx, int *ry, int *rw, int *rh);
+int render_tile_place(int sx, int sy, int *id, int *tx, int *ty, int *tz);
+int render_sprite_at(int sx, int sy, int *id);
+int render_drawn_count(void);
+void render_preview_files(uint8_t *tab, size_t ntab, uint8_t *dat, size_t ndat, uint8_t *fra, size_t nfra, uint8_t *ele,
+                          size_t nele);
+int render_preview(uint32_t *rgb, int w, int h, int bx, int by, int scale, int frame, uint32_t hat, uint32_t coat);
+extern uint32_t (*render_agent_coat)(int ped); /* the coat of an agent of the player's (0: as drawn) */
+void render_drawn_tile(int i, int *id, int *tx, int *ty, int *tz, int *sx, int *sy);
 /* a tick of the mission: where things are now */
 void render_tick(uint64_t now_us);
 /* a new mission: no tick before */

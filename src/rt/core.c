@@ -634,7 +634,8 @@ static void cpu_speed_limit(uint64_t *now)
 }
 
 /* ---- the frames made: at most 60 a second, each a little before the display's refresh that shows it ---- */
-#define FRAME_LEAD_US 5000u /* made this long before the refresh */
+#define FRAME_LEAD_US 5000u /* made this long before the refresh (no display timing; at least) */
+#define FRAME_LEAD_MAX_US 12000u
 #define MIN_FRAME_US 16667u /* at most 60 frames a second */
 static volatile uint32_t g_frame_us = 16667u;
 uint64_t rt_display_us; /* when the frame being made is shown */
@@ -650,11 +651,15 @@ void rt_set_frame_rate(int hz)
 static uint64_t next_frame_time(uint64_t now, uint64_t *shown)
 {
     static uint64_t last; /* the refresh the last frame was shown at */
-    uint64_t vblank, period, k, t, refresh;
+    uint64_t vblank, period, k, t, refresh, lead;
     if (!host_display_timing(&vblank, &period) || period < 2000u || period > 100000u) {
         *shown = now + g_frame_us;
         return now + g_frame_us;
     }
+    /* made as early before its refresh as can be without it being ready before the refresh ahead of that one
+     * (shown a refresh early): a refresh less 1.5 ms (at 120 Hz 6.8 ms, for the game's frame and the GPU's) */
+    lead = period > FRAME_LEAD_US + 1500u ? period - 1500u : FRAME_LEAD_US;
+    if (lead > FRAME_LEAD_MAX_US) lead = FRAME_LEAD_MAX_US;
     /* the refreshes to use: every one, or every 2nd, 3rd ... to stay at 60 a second at most */
     k = (MIN_FRAME_US + period - 1000u) / period;
     if (k < 1) k = 1;
@@ -662,12 +667,12 @@ static uint64_t next_frame_time(uint64_t now, uint64_t *shown)
     period *= k;
     /* the first refresh far enough ahead to make the frame before it */
     t = vblank;
-    if (t < now + FRAME_LEAD_US) t += ((now + FRAME_LEAD_US - t) / period + 1) * period;
+    if (t < now + lead) t += ((now + lead - t) / period + 1) * period;
     /* and k refreshes after the last frame at least (the refresh DWM tells is the next one, not every k-th) */
     while (last != 0 && t + refresh / 2 < last + period) t += refresh;
     last = t;
     *shown = t;
-    return t - FRAME_LEAD_US;
+    return t - lead;
 }
 
 /* ---- frames a second ---- */
@@ -678,6 +683,71 @@ static uint64_t g_fps_next;
 void rt_set_show_fps(int on)
 {
     g_show_fps = on;
+}
+
+/* ---- what the debug readout shows (additions.c's, Ctrl+D): the frames made (slow ones: more than 25 ms after
+ * the one before), how evenly the window showed them (rt_set_pacing), the last lines logged ---- */
+static volatile int g_slow_frames, g_slow_worst_ms, g_slow_shown, g_slow_worst_shown;
+static volatile int g_pacing_even = -1, g_pacing_late;
+#define LOG_RING 6
+#define LOG_RING_W 96
+static char g_log_ring[LOG_RING][LOG_RING_W];
+static volatile long g_log_n;
+
+static volatile int g_render_lit = -1, g_render_time, g_render_sun, g_render_atlas;
+
+void rt_set_render_info(int lit, int time, int sun, int atlas_pct)
+{
+    g_render_lit = lit;
+    g_render_time = time;
+    g_render_sun = sun;
+    g_render_atlas = atlas_pct;
+}
+
+int rt_render_info(int *lit, int *time, int *sun, int *atlas_pct)
+{
+    *lit = g_render_lit;
+    *time = g_render_time;
+    *sun = g_render_sun;
+    *atlas_pct = g_render_atlas;
+    return g_render_lit >= 0;
+}
+
+void rt_set_pacing(int even, int late)
+{
+    g_pacing_even = even;
+    g_pacing_late = late;
+}
+
+void rt_log_ring(const char *line)
+{
+    long n = g_log_n;
+    char *d = g_log_ring[n % LOG_RING];
+    size_t k;
+    /* not the pacing (shown in the readout as figures), nor the agents' routes (many) */
+    if (strncmp(line, "pacing:", 7) == 0 || strncmp(line, "route:", 6) == 0) return;
+    for (k = 0; k + 1 < LOG_RING_W && line[k] && line[k] != '\n'; k++) d[k] = line[k];
+    d[k] = 0;
+    g_log_n = n + 1;
+}
+
+int rt_debug_stats(int *fps, int *slow, int *worst_ms, int *even, int *late)
+{
+    *fps = g_fps;
+    *slow = g_slow_shown;
+    *worst_ms = g_slow_worst_shown;
+    *even = g_pacing_even;
+    *late = g_pacing_late;
+    return 1;
+}
+
+/* the last `max` lines logged, the newest last; how many */
+int rt_log_lines(char (*out)[LOG_RING_W], int max)
+{
+    long n = g_log_n, k, first = n - max < 0 ? 0 : n - max;
+    if (n - first > LOG_RING) first = n - LOG_RING;
+    for (k = first; k < n; k++) memcpy(out[k - first], g_log_ring[k % LOG_RING], LOG_RING_W);
+    return (int)(n - first);
 }
 
 /* 3 x 5 pixels: 0-9, F, P, S */
@@ -754,6 +824,21 @@ static void present(void)
             memcpy(prev, rgb, sizeof(uint32_t) * (size_t)(w * h));
             prev_n = w * h;
             if (getenv("SYND_PACING_TRACE")) rt_log("T %llu frame %d", (unsigned long long)now, w);
+        }
+        {
+            static uint64_t last, window_end;
+            if (last != 0 && now - last > 25000u) {
+                int ms = (int)((now - last) / 1000u);
+                g_slow_frames++;
+                if (ms > g_slow_worst_ms) g_slow_worst_ms = ms;
+            }
+            last = now;
+            if (now >= window_end) { /* counted over 5 seconds */
+                g_slow_shown = g_slow_frames;
+                g_slow_worst_shown = g_slow_worst_ms;
+                g_slow_frames = g_slow_worst_ms = 0;
+                window_end = now + 5000000u;
+            }
         }
         if (now >= g_fps_next) {
             g_fps = g_fps_count;
